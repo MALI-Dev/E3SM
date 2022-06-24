@@ -409,7 +409,8 @@ contains
       err_tmp = 0
 
       ! initialize interpolation
-      call interpolate_init(domain, err_tmp)
+      !call interpolate_init(domain, err_tmp)
+      call interpolate_init_mpasio(domain, err_tmp)
       err = ior(err, err_tmp)
 
       ! Set needed variables for using MPI
@@ -834,6 +835,7 @@ contains
          err = ior(err, err_tmp)
          call check( nf90_open(path = gridToMpasFile, mode = nf90_nowrite, ncid = fromNcId), err_tmp)
          err = ior(err, err_tmp)
+         !call mpas_log_write("interp toNcId=$i, fromNcId=$i", intArgs=(/toNcId, fromNcId/))
 
          ! Get dimension ID
          call check( nf90_inq_dimid(toNcId, "n_a", nMpasDimId), err_tmp)
@@ -896,6 +898,142 @@ contains
    !--------------------------------------------------------------------
    end subroutine interpolate_init
 
+   subroutine interpolate_init_mpasio(domain, err)
+      use mpas_io
+      use mpas_dmpar
+      use pio
+      use piolib_mod
+      use pionfatt_mod
+      use pio_types
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+
+      type (domain_type), intent(inout) :: domain    !< Input/output: Domain
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+
+      integer, intent(out) :: err !< Output: error flag
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+
+      integer :: err_tmp
+      character (len=StrKIND), pointer :: config_MALI_to_SLM_weights_file
+      character (len=StrKIND), pointer :: config_SLM_to_MALI_weights_file
+
+      ! NetCDF and weights file variables
+      integer :: toNcId, toNsDimId, toRowId, toColId, toSId
+      integer :: fromNcId, fromNsDimId, fromRowId, fromColId, fromSId
+      integer:: nMpasDimId, nGridDimId, toNsLen, fromNsLen
+      character (len = NF90_MAX_NAME) :: toNsName, fromNsName, nMpasName, nGridName
+      integer, pointer :: n_s
+      character(len=StrKIND) :: mpasToGridFile, gridToMpasFile
+
+      ! MPI variables
+      integer :: curProc
+
+      ! MPAS IO vars
+      type (mpas_io_context_type), pointer :: ioContext
+      type (MPAS_IO_Handle_type) :: ioHandleMpasToGrid, ioHandleGridToMpas
+
+      err = 0
+      err_tmp = 0
+      call mpas_log_write("starting interp init---")
+
+      call mpas_pool_get_config(liConfigs, 'config_MALI_to_SLM_weights_file', config_MALI_to_SLM_weights_file)
+      call mpas_pool_get_config(liConfigs, 'config_SLM_to_MALI_weights_file', config_SLM_to_MALI_weights_file)
+
+      ! Begin MPI portion
+      call MPI_COMM_RANK( domain % dminfo % comm, curProc, err_tmp)
+      err = ior(err, err_tmp)
+
+      !initialize interpolation
+      if (curProc.eq.0) then
+
+      call mpas_log_write("interp init--- on proc 0")
+         mpasToGridFile = trim(config_MALI_to_SLM_weights_file)
+         gridToMpasFile = trim(config_SLM_to_MALI_weights_file)
+
+         allocate(ioContext)
+         allocate(ioContext % dminfo)
+         call mpas_dmpar_init(ioContext % dminfo, MPI_COMM_SELF)
+         call MPAS_io_init(ioContext, io_task_count=1, io_task_stride=1, ierr=err_tmp)
+         err = ior(err, err_tmp)
+
+         call mpas_log_write("interp init--- did mpas_io_init")
+         ! Open netcdf weights files
+         ioHandleMpasToGrid = MPAS_io_open(mpasToGridFile, mode=MPAS_IO_READ, ioformat=MPAS_IO_NETCDF, ioContext=ioContext, ierr=err_tmp)
+         err = ior(err, err_tmp)
+         ioHandleGridToMpas = MPAS_io_open(gridToMpasFile, mode=MPAS_IO_READ, ioformat=MPAS_IO_NETCDF, ioContext=ioContext, ierr=err_tmp)
+         err = ior(err, err_tmp)
+         call mpas_log_write("interp init--- opened files")
+
+         err_tmp = PIO_inq_dimid(ioHandleMpasToGrid % pio_file, "n_s", toNsDimId)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_inq_dimlen(ioHandleMpasToGrid % pio_file, toNsDimId, toNsLen)
+         err = ior(err, err_tmp)
+
+         err_tmp = PIO_inq_dimid(ioHandleGridToMpas % pio_file, "n_s", fromNsDimId)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_inq_dimlen(ioHandleGridToMpas % pio_file, fromNsDimId, fromNsLen)
+         err = ior(err, err_tmp)
+
+         err_tmp = PIO_inq_varid(ioHandleMpasToGrid % pio_file, "row", toRowId)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_inq_varid(ioHandleMpasToGrid % pio_file, "col", toColId)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_inq_varid(ioHandleMpasToGrid % pio_file, "S", toSId)
+         err = ior(err, err_tmp)
+
+         err_tmp = PIO_inq_varid(ioHandleGridToMpas % pio_file, "row", fromRowId)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_inq_varid(ioHandleGridToMpas % pio_file, "col", fromColId)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_inq_varid(ioHandleGridToMpas % pio_file, "S", fromSId)
+         err = ior(err, err_tmp)
+
+         call mpas_log_write("interp init--- finsihed inq_varid")
+         ! Allocate matrices to read data into
+         allocate ( toRowValues (toNsLen) )
+         allocate ( toColValues (toNsLen) )
+         allocate ( toSValues (toNsLen) )
+         allocate ( fromRowValues (fromNsLen) )
+         allocate ( fromColValues (fromNsLen) )
+         allocate ( fromSValues (fromNsLen) )
+
+         call mpas_log_write("interp init--- allocated")
+         ! Retrieve data
+         err_tmp = PIO_get_var(ioHandleMpasToGrid % pio_file, toColId, (/1/), (/toNsLen/), toColValues)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_get_var(ioHandleMpasToGrid % pio_file, toRowId, (/1/), (/toNsLen/), toRowValues)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_get_var(ioHandleMpasToGrid % pio_file, toSId, (/1/), (/toNsLen/), toSValues)
+         err = ior(err, err_tmp)
+
+         err_tmp = PIO_get_var(ioHandleGridToMpas % pio_file, fromColId, (/1/), (/fromNsLen/), fromColValues)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_get_var(ioHandleGridToMpas % pio_file, fromRowId, (/1/), (/fromNsLen/), fromRowValues)
+         err = ior(err, err_tmp)
+         err_tmp = PIO_get_var(ioHandleGridToMpas % pio_file, fromSId, (/1/), (/fromNsLen/), fromSValues)
+         err = ior(err, err_tmp)
+
+         call mpas_io_close(ioHandleMpasToGrid)
+         call mpas_io_close(ioHandleGridToMpas)
+         call mpas_log_write("interp init--- done")
+      endif
+
+   !--------------------------------------------------------------------
+   end subroutine interpolate_init_mpasio
 
 
 !***********************************************************************
