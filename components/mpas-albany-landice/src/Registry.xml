@@ -104,6 +104,10 @@
 		            description="An optional maximum limit on effective pressure passed to the velocity solver."
 		            possible_values="Any positive, real number."
 		/>
+                <nml_option name="config_tune_mu" type="logical" default_value=".false."
+		            description="Adjust mu before each velocity solve to better batch observations"
+		            possible_values=".true. or .false."
+		/>
 	</nml_record>
 
 

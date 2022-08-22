@@ -451,6 +451,8 @@ contains
       endif
 
 
+      call tune_friction(domain, err_tmp)
+      err = ior(err, err_tmp)
 
       ! External solvers do not support multiple blocks but the MPAS SIA solver does.
       block => domain % blocklist
@@ -850,6 +852,108 @@ contains
 
    !--------------------------------------------------------------------
    end subroutine calculate_beta
+
+
+!***********************************************************************
+!
+!  routine tune_friction
+!
+!> \brief  Iteratively adjust the friction value to match observed velocity
+!> \author Matt Hoffman
+!> \date   3 October 2013
+!> \details
+!>  This routine adjusts mu locally based on the misfit from the observed velocity
+!>  It is an ad hoc adjustment that can be applied on top of an optimization
+!>  result.  It should be used as a separate run with thickness evolution and
+!>  other physics disabled.  Each time step is then an iteration, but the time
+!>  step itself is meaningless
+!
+!-----------------------------------------------------------------------
+
+   subroutine tune_friction(domain, err)
+
+      use li_mask
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain  !< Input/Output: domain object
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: err !< Output: error flag
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: geometryPool
+      type (mpas_pool_type), pointer :: velocityPool
+      type (mpas_pool_type), pointer :: thermalPool
+      type (mpas_pool_type), pointer :: meshPool
+      type (mpas_pool_type), pointer :: obsPool
+      real (kind=RKIND), dimension(:), pointer :: muFriction
+      real (kind=RKIND), dimension(:), pointer :: surfaceSpeed
+      real (kind=RKIND), dimension(:), pointer :: observedSurfaceVelocityX, observedSurfaceVelocityY
+      integer, dimension(:), pointer :: cellMask
+      logical, pointer :: config_tune_mu
+      integer, pointer :: nCells
+      real (kind=RKIND) :: cutoffSpeed, m, alpha
+      real (kind=RKIND) :: errSquareSum
+      real (kind=RKIND) :: muGuess
+      real (kind=RKIND) :: obsVelo
+      real (kind=RKIND), dimension(2) :: globalResult
+      integer :: iCell
+      integer :: cnt
+
+      err = 0
+
+      call mpas_pool_get_config(liConfigs, 'config_tune_mu', config_tune_mu)
+
+      if (config_tune_mu) then
+
+         call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+         call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
+         call mpas_pool_get_subpool(domain % blocklist % structs, 'observations', obsPool)
+         call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+         call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+
+         call mpas_pool_get_array(velocityPool, 'muFriction', muFriction)
+         call mpas_pool_get_array(velocityPool, 'surfaceSpeed', surfaceSpeed)
+         call mpas_pool_get_array(obsPool, 'observedSurfaceVelocityX', observedSurfaceVelocityX)
+         call mpas_pool_get_array(obsPool, 'observedSurfaceVelocityY', observedSurfaceVelocityY)
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+
+         ! Could become namelist options
+         cutoffSpeed = 200.0 / 3.15e7_RKIND  ! Only tweak friction in places faster than this
+         m = 1.0_RKIND  ! basal friction law exponent
+         alpha = 0.25_RKIND ! relaxation parameter - fraction of the new guess to take
+
+         cnt = 0
+         errSquareSum = 0.0_RKIND
+         do iCell = 1, nCells
+            obsVelo = sqrt(observedSurfaceVelocityX(iCell)**2 + observedSurfaceVelocityY(iCell)**2)
+            if (obsVelo > cutoffSpeed .and. surfaceSpeed(iCell) > 0.0_RKIND) then
+               cnt = cnt + 1
+               !veloErr = (surfaceSpeed(iCell) - obsVelo) / obsVelo
+               errSquareSum = errSquareSum + (surfaceSpeed(iCell) - obsVelo)**2
+               muGuess = muFriction(iCell) * (surfaceSpeed(iCell) / obsVelo)**m
+               muFriction(iCell) =  alpha * muGuess + (1.0_RKIND - alpha) * muFriction(iCell)
+            endif
+         enddo
+
+         call mpas_dmpar_sum_real_array(domain % dminfo, 2, (/real(cnt, RKIND), errSquareSum/), globalResult)
+         call mpas_log_write("Mu Adjustment: velo RMS=$r", realArgs=(/sqrt(globalResult(2)/globalResult(1))/))
+      endif
+
+   !--------------------------------------------------------------------
+   end subroutine tune_friction
+
 
 
 !***********************************************************************
