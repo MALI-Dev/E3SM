@@ -891,21 +891,21 @@ contains
       !-----------------------------------------------------------------
       ! local variables
       !-----------------------------------------------------------------
-      type (mpas_pool_type), pointer :: hydroPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: velocityPool
-      type (mpas_pool_type), pointer :: thermalPool
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: obsPool
       real (kind=RKIND), dimension(:), pointer :: muFriction
+      real (kind=RKIND), dimension(:), pointer :: stiffnessFactor
       real (kind=RKIND), dimension(:), pointer :: surfaceSpeed
       real (kind=RKIND), dimension(:), pointer :: observedSurfaceVelocityX, observedSurfaceVelocityY
       integer, dimension(:), pointer :: cellMask
       logical, pointer :: config_tune_mu
       integer, pointer :: nCells
-      real (kind=RKIND) :: cutoffSpeed, m, alpha
+      real (kind=RKIND) :: cutoffSpeed, m, alpha, alpha2
       real (kind=RKIND) :: errSquareSum
       real (kind=RKIND) :: muGuess
+      real (kind=RKIND) :: stiffGuess
       real (kind=RKIND) :: obsVelo
       real (kind=RKIND), dimension(2) :: globalResult
       integer :: iCell
@@ -917,6 +917,8 @@ contains
 
       if (config_tune_mu) then
 
+         call mpas_log_write("Mu Adjustment Starting")
+
          call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
          call mpas_pool_get_subpool(domain % blocklist % structs, 'observations', obsPool)
@@ -924,31 +926,44 @@ contains
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
 
          call mpas_pool_get_array(velocityPool, 'muFriction', muFriction)
+         call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
          call mpas_pool_get_array(velocityPool, 'surfaceSpeed', surfaceSpeed)
          call mpas_pool_get_array(obsPool, 'observedSurfaceVelocityX', observedSurfaceVelocityX)
          call mpas_pool_get_array(obsPool, 'observedSurfaceVelocityY', observedSurfaceVelocityY)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
          ! Could become namelist options
-         cutoffSpeed = 200.0 / 3.15e7_RKIND  ! Only tweak friction in places faster than this
+         cutoffSpeed = 50.0 / 3.15e7_RKIND  ! Only tweak friction in places faster than this
          m = 1.0_RKIND  ! basal friction law exponent
-         alpha = 0.25_RKIND ! relaxation parameter - fraction of the new guess to take
+         alpha = 0.25_RKIND ! relaxation parameter - fraction of the new guess to take, mu
+         alpha2 = 0.05_RKIND ! relaxation parameter - fraction of the new guess to take, stiff
 
          cnt = 0
          errSquareSum = 0.0_RKIND
          do iCell = 1, nCells
             obsVelo = sqrt(observedSurfaceVelocityX(iCell)**2 + observedSurfaceVelocityY(iCell)**2)
+!            call mpas_log_write('iCell=$i, obsVelo=$r, sfcSpd=$r, mu=$r', intArgs=(/iCell/), realArgs=(/obsVelo, surfaceSpeed(iCell), muFriction(iCell)/))
             if (obsVelo > cutoffSpeed .and. surfaceSpeed(iCell) > 0.0_RKIND) then
-               cnt = cnt + 1
-               !veloErr = (surfaceSpeed(iCell) - obsVelo) / obsVelo
-               errSquareSum = errSquareSum + (surfaceSpeed(iCell) - obsVelo)**2
-               muGuess = muFriction(iCell) * (surfaceSpeed(iCell) / obsVelo)**m
-               muFriction(iCell) =  alpha * muGuess + (1.0_RKIND - alpha) * muFriction(iCell)
+               if (li_mask_is_grounded_ice(cellMask(iCell))) then
+                  cnt = cnt + 1
+                  !veloErr = (surfaceSpeed(iCell) - obsVelo) / obsVelo
+                  errSquareSum = errSquareSum + (surfaceSpeed(iCell) - obsVelo)**2
+                  muGuess = muFriction(iCell) * (surfaceSpeed(iCell) / obsVelo)**m
+                  muFriction(iCell) =  alpha * muGuess + (1.0_RKIND - alpha) * muFriction(iCell)
+               elseif (li_mask_is_floating_ice(cellMask(iCell))) then
+                  errSquareSum = errSquareSum + (surfaceSpeed(iCell) - obsVelo)**2
+                  stiffGuess = stiffnessFactor(iCell) * (surfaceSpeed(iCell) / obsVelo)  ! trying proportional
+                  stiffnessFactor(iCell) =  alpha2 * stiffGuess + (1.0_RKIND - alpha2) * stiffnessFactor(iCell)
+               endif
             endif
          enddo
 
+         call mpas_log_write("Mu Adjustment Complete.  Adjusted $i cells on this proc", intArgs=(/cnt/))
          call mpas_dmpar_sum_real_array(domain % dminfo, 2, (/real(cnt, RKIND), errSquareSum/), globalResult)
-         call mpas_log_write("Mu Adjustment: velo RMS=$r", realArgs=(/sqrt(globalResult(2)/globalResult(1))/))
+         call mpas_log_write("Mu Adjustment Complete.  Adjusted $i cells globally", intArgs=(/int(globalResult(1))/))
+         if (int(globalResult(1)) > 0) then
+            call mpas_log_write("Mu Adjustment: velo RMS=$r", realArgs=(/sqrt(globalResult(2)/globalResult(1))/))
+         endif
       endif
 
    !--------------------------------------------------------------------
