@@ -154,6 +154,7 @@ module li_core_interface
          call mpas_log_write("The 'observations' package and assocated variables have been enabled because " // &
               "'config_write_albany_ascii_mesh' is set to .true.")
       endif
+      observationsActive = .true.
 
       if (trim(config_basal_mass_bal_float) == 'ismip6') then
          ismip6ShelfMeltActive = .true.
