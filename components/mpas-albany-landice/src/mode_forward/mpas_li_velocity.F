@@ -900,6 +900,8 @@ contains
       real (kind=RKIND), dimension(:), pointer :: surfaceSpeed
       real (kind=RKIND), dimension(:), pointer :: observedSurfaceVelocityX, observedSurfaceVelocityY
       integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: cellsOnCell
       logical, pointer :: config_tune_mu
       integer, pointer :: nCells
       real (kind=RKIND) :: cutoffSpeed, m, alpha, alpha2
@@ -908,8 +910,10 @@ contains
       real (kind=RKIND) :: stiffGuess
       real (kind=RKIND) :: obsVelo
       real (kind=RKIND), dimension(2) :: globalResult
-      integer :: iCell
+      integer :: iCell, jEdge
       integer :: cnt
+      logical :: atGL
+      real (kind=RKIND) :: maxStiff, maxMu
 
       err = 0
 
@@ -931,12 +935,16 @@ contains
          call mpas_pool_get_array(obsPool, 'observedSurfaceVelocityX', observedSurfaceVelocityX)
          call mpas_pool_get_array(obsPool, 'observedSurfaceVelocityY', observedSurfaceVelocityY)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+         call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
 
          ! Could become namelist options
-         cutoffSpeed = 50.0 / 3.15e7_RKIND  ! Only tweak friction in places faster than this
-         m = 1.0_RKIND  ! basal friction law exponent
-         alpha = 0.25_RKIND ! relaxation parameter - fraction of the new guess to take, mu
-         alpha2 = 0.05_RKIND ! relaxation parameter - fraction of the new guess to take, stiff
+         cutoffSpeed = 10.0 / 3.15e7_RKIND  ! Only tweak friction in places faster than this
+         m = 0.2_RKIND  ! basal friction law exponent
+         alpha = 0.05_RKIND ! relaxation parameter - fraction of the new guess to take, mu
+         alpha2 = 0.01_RKIND ! relaxation parameter - fraction of the new guess to take, stiff
+         maxStiff = 10.0_RKIND
+         maxMu = 1000.0_RKIND
 
          cnt = 0
          errSquareSum = 0.0_RKIND
@@ -944,16 +952,24 @@ contains
             obsVelo = sqrt(observedSurfaceVelocityX(iCell)**2 + observedSurfaceVelocityY(iCell)**2)
 !            call mpas_log_write('iCell=$i, obsVelo=$r, sfcSpd=$r, mu=$r', intArgs=(/iCell/), realArgs=(/obsVelo, surfaceSpeed(iCell), muFriction(iCell)/))
             if (obsVelo > cutoffSpeed .and. surfaceSpeed(iCell) > 0.0_RKIND) then
-               if (li_mask_is_grounded_ice(cellMask(iCell))) then
+               atGL = .false.
+               do jEdge=1, nEdgesOnCell(iCell)
+                  if (li_mask_is_grounding_line(cellMask(cellsOnCell(jEdge, iCell)))) then
+                     atGL = .true. ! could either be floating or grounded - needed for GLP
+                  endif
+               enddo
+
+               if (li_mask_is_grounded_ice(cellMask(iCell)) .or. atGL) then
                   cnt = cnt + 1
                   !veloErr = (surfaceSpeed(iCell) - obsVelo) / obsVelo
                   errSquareSum = errSquareSum + (surfaceSpeed(iCell) - obsVelo)**2
                   muGuess = muFriction(iCell) * (surfaceSpeed(iCell) / obsVelo)**m
-                  muFriction(iCell) =  alpha * muGuess + (1.0_RKIND - alpha) * muFriction(iCell)
-               elseif (li_mask_is_floating_ice(cellMask(iCell))) then
+                  muFriction(iCell) =  min(maxMu, alpha * muGuess + (1.0_RKIND - alpha) * muFriction(iCell))
+               endif
+               if (li_mask_is_floating_ice(cellMask(iCell))) then
                   errSquareSum = errSquareSum + (surfaceSpeed(iCell) - obsVelo)**2
                   stiffGuess = stiffnessFactor(iCell) * (surfaceSpeed(iCell) / obsVelo)  ! trying proportional
-                  stiffnessFactor(iCell) =  alpha2 * stiffGuess + (1.0_RKIND - alpha2) * stiffnessFactor(iCell)
+                  stiffnessFactor(iCell) =  min(maxStiff, alpha2 * stiffGuess + (1.0_RKIND - alpha2) * stiffnessFactor(iCell))
                endif
             endif
          enddo
