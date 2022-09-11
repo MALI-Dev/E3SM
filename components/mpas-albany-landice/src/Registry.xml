@@ -331,6 +331,10 @@
                             description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'seroussi' use hardcoded fields defined in the code applicable to Thwaites Glacier. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
                             possible_values="'none', 'file', 'constant', 'mismip', 'seroussi', 'temperature_profile', 'ismip6'"
                 />
+                <nml_option name="config_ismip6shelfMelt_use_slope" type="logical" default_value=".false." units=""
+		            description="Whether to include a factor for ice-shelf basal surface slope in the ISMIP6 subshelf melt calculation.  Note that a different value for gamma0 is necessary when using this option."
+		            possible_values=".true. or .false."
+		/>
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^{-2}"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."
 		            possible_values="Any positive real value"
@@ -1176,6 +1180,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="floatingBasalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="Potential basal mass balance on floating regions"
+                />
+                <var name="shelfBaseSlope" type="real" dimensions="nCells Time" units=""
+                     description="Slope of the ice-shelf lower surface"
                 />
                 <var name="basalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="applied basal mass balance"

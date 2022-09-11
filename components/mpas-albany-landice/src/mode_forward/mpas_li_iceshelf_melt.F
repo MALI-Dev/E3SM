@@ -1141,6 +1141,7 @@ module li_iceshelf_melt
       integer :: ksup, kk, kinf
       integer, pointer :: nCellsSolve
       real(kind=RKIND), pointer :: rhoi, rhosw
+      logical, pointer :: config_ismip6shelfMelt_use_slope
       real(kind=RKIND) :: cste
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: geometryPool, meshPool
@@ -1152,10 +1153,12 @@ module li_iceshelf_melt
       integer, dimension(:), pointer :: basinNumber
       real (kind=RKIND), dimension(:), pointer :: lowerSurface
       real (kind=RKIND), dimension(:), pointer :: areaCell
+      real (kind=RKIND), dimension(:), pointer :: shelfBaseSlope
       real (kind=RKIND), dimension(:), allocatable :: mean_TF, IS_area
+      real (kind=RKIND), dimension(:), allocatable :: meanSlope
       integer, parameter :: maxNumBasins = 32
       integer, dimension(:), pointer :: cellMask, indexToCellID
-      real(kind=RKIND), dimension(maxNumBasins*2) :: localSums, globalSums
+      real(kind=RKIND), dimension(maxNumBasins*3) :: localSums, globalSums
       real (kind=RKIND), pointer :: gamma0
       real (kind=RKIND), dimension(:), pointer :: floatingBasalMassBal
       real (kind=RKIND) :: coef
@@ -1167,8 +1170,11 @@ module li_iceshelf_melt
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', rhosw)
       cste = (rhosw*cp_seawater/(rhoi*latent_heat_ice))**2  ! in K^(-2)
 
+      call mpas_pool_get_config(liConfigs, 'config_ismip6shelfMelt_use_slope', config_ismip6shelfMelt_use_slope)
+
       allocate(mean_TF(maxNumBasins))
       allocate(IS_area(maxNumBasins))
+      allocate(meanSlope(maxNumBasins))
 
       block => domain % blocklist
       do while (associated(block))
@@ -1203,8 +1209,9 @@ module li_iceshelf_melt
          ! Get TFdraft field that we will calculate
          call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_TFdraft', TFdraft)
 
-         mean_TF(:) = 0.d0
-         IS_area(:) = 0.d0
+         mean_TF(:) = 0.0_RKIND
+         IS_area(:) = 0.0_RKIND
+         meanSlope(:) = 0.0_RKIND
 
          do iCell = 1, nCellsSolve
 
@@ -1234,23 +1241,40 @@ module li_iceshelf_melt
                IS_area(basinNumber(iCell)+1) = IS_area(basinNumber(iCell)+1) + areaCell(iCell)
 
             else
-               TFdraft(iCell) = 0.d0
+               TFdraft(iCell) = 0.0_RKIND
             endif
          enddo
 
+         call mpas_pool_get_array(geometryPool, 'shelfBaseSlope', shelfBaseSlope)
+         if (config_ismip6shelfMelt_use_slope) then
+            call calc_shelf_base_slope(geometryPool, meshPool)
+            do iCell = 1, nCellsSolve
+               if ( li_mask_is_floating_ice(cellMask(iCell)) ) then
+                  meanSlope(basinNumber(iCell)+1) = meanSlope(basinNumber(iCell)+1) + areaCell(iCell) * shelfBaseSlope(iCell)
+               endif
+            enddo
+         else
+            shelfBaseSlope(:) = 1.0_RKIND
+            meanSlope(:) = 1.0_RKIND
+         endif
          block => block % next
       enddo   ! associated(block)
 
       ! global sum mean_TF and IS_area
       localSums(1:maxNumBasins) = mean_TF(:)
       localSums(maxNumBasins+1:2*maxNumBasins) = IS_area(:)
-      call mpas_dmpar_sum_real_array(domain % dminfo, 2*maxNumBasins, localSums(:), globalSums(:))
+      localSums(2*maxNumBasins+1:3*maxNumBasins) = meanSlope(:)
+      call mpas_dmpar_sum_real_array(domain % dminfo, 3*maxNumBasins, localSums(:), globalSums(:))
       mean_TF(:) = globalSums(1:maxNumBasins)
       IS_area(:) = globalSums(maxNumBasins+1:2*maxNumBasins)
+      meanSlope(:) = globalSums(2*maxNumBasins+1:3*maxNumBasins)
       do i = 1, maxNumBasins
          if (IS_area(i) > 0.0_RKIND) then
             mean_TF(i) = mean_TF(i) / IS_area(i) ! actual mean TF per basin
             call mpas_log_write("basin=$i, mean_TF=$r", intArgs=(/i-1/), realArgs=(/mean_TF(i)/))
+
+            meanSlope(i) = meanSlope(i) / IS_area(i) ! actual mean TF per basin
+            call mpas_log_write("basin=$i, meanSlope=$r", intArgs=(/i-1/), realArgs=(/meanSlope(i)/))
          else ! avoid divide by zero for invalid indices
             mean_TF(i) = 0.0_RKIND
          endif
@@ -1270,6 +1294,7 @@ module li_iceshelf_melt
          call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_TFdraft', TFdraft)
          call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_deltaT', deltaT)
          call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_offset', ismip6shelfMelt_offset)
+         call mpas_pool_get_array(geometryPool, 'shelfBaseSlope', shelfBaseSlope)
          call mpas_pool_get_array(geometryPool, 'floatingBasalMassBal', floatingBasalMassBal)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
@@ -1278,7 +1303,7 @@ module li_iceshelf_melt
          coef = gamma0 * cste / scyr * rhoi
          do iCell = 1, nCellsSolve
             if ( li_mask_is_floating_ice(cellMask(iCell)) ) then
-               floatingBasalMassBal(iCell) = -1.0_RKIND * coef * (TFdraft(iCell) + deltaT(iCell)) * &
+               floatingBasalMassBal(iCell) = -1.0_RKIND * coef * shelfBaseSLope(iCell) * (TFdraft(iCell) + deltaT(iCell)) * &
                   abs(mean_TF(basinNumber(iCell)+1) + deltaT(iCell)) + ismip6shelfMelt_offset(iCell)
             endif
          enddo
@@ -1288,9 +1313,119 @@ module li_iceshelf_melt
 
       deallocate(mean_TF)
       deallocate(IS_area)
+      deallocate(meanSlope)
 
     end subroutine iceshelf_melt_ismip6
 !-----------------------------------------------------------------------
+
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!  !  routine calc_shelf_base_slope
+!
+!> \brief Calculate slope of base of ice shelf
+!> \author Matt Hoffman
+!> \date   September 2022
+!> \details For use by ISMIP6 melt routine for optional version that
+!> includes ice shelf slope.  Slope is calculated on edges and interpolated
+!> to cells, only considering edges and cells that are fully within the ice shelf.
+!> There also is a round of smoothing and a maximum allowable slope value
+!> to deter localized behavior. This makes use of the small angle approximation
+!> to assume that sin(alpha) is equal to tan(alpha) (the slope).  For a
+!> maximum slope of 0.1, this results in less than 1% error.
+!-----------------------------------------------------------------------
+
+
+    subroutine calc_shelf_base_slope(geometryPool, meshPool)
+       use li_mask
+
+       type (mpas_pool_type), pointer, intent(inout) :: geometryPool
+       type (mpas_pool_type), pointer, intent(in) :: meshPool
+
+       integer, pointer :: nEdges, nCells
+       integer, dimension(:), pointer :: nEdgesOnCell
+       integer, dimension(:,:), pointer :: edgesOnCell
+       integer, dimension(:,:), pointer :: cellsOnEdge
+       integer, dimension(:,:), pointer :: cellsOnCell
+       real(kind=RKIND), dimension(:), pointer :: lowerSurface
+       real(kind=RKIND), dimension(:), pointer :: shelfBaseSlope
+       real(kind=RKIND), dimension(:), pointer :: dcEdge
+       integer, dimension(:), pointer :: cellMask, edgeMask
+       real(kind=RKIND), dimension(:), allocatable :: slopeEdge, slopeCopy
+       integer :: iEdge, iCell, jEdge, jCell
+       integer :: nGoodEdges
+       real(kind=RKIND) :: slopeSum
+
+       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
+       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+       call mpas_pool_get_array(meshPool, 'edgesOnCell', edgesOnCell)
+       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
+       call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
+       call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
+       call mpas_pool_get_array(geometryPool, 'lowerSurface', lowerSurface)
+       call mpas_pool_get_array(geometryPool, 'shelfBaseSlope', shelfBaseSlope)
+       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
+
+       allocate(slopeEdge(nEdges))
+
+       do iEdge=1,nEdges
+          slopeEdge(iEdge) = abs((lowerSurface(cellsOnEdge(1,iEdge)) - lowerSurface(cellsOnEdge(2,iEdge))) / dcEdge(iEdge))
+       enddo
+       call mpas_log_write("slopeEdge min/max: $r, $r", realArgs=(/minval(slopeEdge), maxval(slopeEdge)/))
+       do iCell=1,nCells
+          if (li_mask_is_floating_ice(cellMask(iCell))) then
+             nGoodEdges = 0
+             slopeSum = 0.0_RKIND
+             do iEdge = 1, nEdgesOnCell(iCell)
+                jEdge = edgesOnCell(iEdge, iCell)
+                jCell = cellsOnCell(iEdge, iCell)
+                if (li_mask_is_floating_ice(cellMask(jCell))) then
+                   nGoodEdges = nGoodEdges + 1
+                   slopeSum = slopeSum + slopeEdge(jEdge)
+                endif
+             enddo
+             if (nGoodEdges > 0) then
+                shelfBaseSlope(iCell) = slopeSum / real(nGoodEdges, kind=RKIND)
+             endif
+          endif
+       enddo
+       call mpas_log_write("shelfBaseSlope min/max: $r, $r", realArgs=(/minval(shelfBaseSlope), maxval(shelfBaseSlope)/))
+
+       ! do a round of smoothing?
+       allocate(slopeCopy(nCells+1))
+       slopeCopy(:) = shelfBaseSlope(:)
+       do iCell=1, nCells
+          if (li_mask_is_floating_ice(cellMask(iCell))) then
+             nGoodEdges = 0
+             slopeSum = 0.0_RKIND
+             do iEdge = 1, nEdgesOnCell(iCell)
+                jCell = cellsOnCell(iEdge, iCell)
+                if (li_mask_is_floating_ice(cellMask(jCell))) then
+                   nGoodEdges = nGoodEdges + 1
+                   slopeSum = slopeSum + slopeCopy(jCell)
+                endif
+             enddo
+             slopeSum = slopeSum + slopeCopy(iCell) ! Don't forget the actual cell
+             nGoodEdges = nGoodEdges + 1 ! And update the counter
+             if (nGoodEdges > 0) then
+                shelfBaseSlope(iCell) = slopeSum / real(nGoodEdges, kind=RKIND)
+             endif
+          endif
+       enddo
+
+       ! Cap maximum value
+       do iCell=1,nCells
+          shelfBaseSlope(iCell) = min(shelfBaseSlope(iCell), 0.01_RKIND)
+       enddo
+
+       deallocate(slopeEdge)
+       deallocate(slopeCopy)
+
+    end subroutine calc_shelf_base_slope
+!-----------------------------------------------------------------------
+
 
 !-----------------------------------------------------------------------
 
