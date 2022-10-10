@@ -1121,31 +1121,31 @@ is the value of that variable from the *previous* time level!
 
 	<!--  Variables related to ice sheet geometry -->
         <var_struct name="geometry" time_levs="1">
-                <var name="bedTopography" type="real" dimensions="nCells Time" units="m above datum"
+                <var name="bedTopography" type="real" dimensions="nCells Time" units="m above datum" default_value="0.0" missing_value="FILLVAL"
                      description="Elevation of ice sheet bed.  Once isostasy is added to the model, this should become a state variable."
                 />
-                <var name="thickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                <var name="thickness" type="real" dimensions="nCells Time" units="m" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="ice thickness"
                 />
-                <var name="layerThickness" type="real" dimensions="nVertLevels nCells Time" units="m" time_levs="1"
+                <var name="layerThickness" type="real" dimensions="nVertLevels nCells Time" units="m" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="layer thickness"
                 />
-                <var name="lowerSurface" type="real" dimensions="nCells Time" units="m above datum"
+                <var name="lowerSurface" type="real" dimensions="nCells Time" units="m above datum" default_value="0.0" missing_value="FILLVAL"
                      description="elevation at bottom of ice"
                 />
-                <var name="upperSurface" type="real" dimensions="nCells Time" units="m above datum"
+                <var name="upperSurface" type="real" dimensions="nCells Time" units="m above datum" default_value="0.0" missing_value="FILLVAL"
                      description="elevation at top of ice"
                 />
-                <var name="layerThicknessEdge" type="real" dimensions="nVertLevels nEdges Time" units="m"
+                <var name="layerThicknessEdge" type="real" dimensions="nVertLevels nEdges Time" units="m" default_value="0.0" missing_value="FILLVAL"
                      description="layer thickness on cell edges"
                 />
-                <var name="dHdt" type="real" dimensions="nCells Time" units="m a^{-1}"
+                <var name="dHdt" type="real" dimensions="nCells Time" units="m a^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="diagnostic field of rate of thickness change with time (dH/dt). This includes all processes (flux divergence, SMB, BMB, calving, etc.) because it is calculated as the new thickness minus the old thickness divided by the time step."
                 />
-                <var name="thicknessOld" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                <var name="thicknessOld" type="real" dimensions="nCells Time" units="m" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="ice thickness from previous time level (only used to calculate thicknessTendency)"
                 />
-                <var name="dynamicThickening" type="real" dimensions="nCells Time" units="m a^{-1}"
+                <var name="dynamicThickening" type="real" dimensions="nCells Time" units="m a^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="diagnostic field of dynamic thickening rate (calculated as negative of flux divergence)"
                 />
                 <var name="cellMask" type="integer" dimensions="nCells Time" units="none"
@@ -1159,31 +1159,31 @@ is the value of that variable from the *previous* time level!
                 />
                 <!-- Note vertexMask has two time level to easily check if it changes - this is only used by the HO dycores -->
 
-                <var name="sfcMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="sfcMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="potential surface mass balance"
                 />
-                <var name="sfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="sfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="applied surface mass balance"
                 />
-                <var name="groundedSfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="groundedSfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="applied surface mass balance on grounded ice"
                 />
-                <var name="basalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="basalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="Potential basal mass balance"
                 />
-                <var name="groundedBasalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="groundedBasalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="Potential basal mass balance on grounded regions"
                 />
-                <var name="floatingBasalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="floatingBasalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="Potential basal mass balance on floating regions"
                 />
-                <var name="basalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="basalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="applied basal mass balance"
                 />
-                <var name="groundedBasalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="groundedBasalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="Applied basal mass balance on grounded regions"
                 />
-                <var name="floatingBasalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                <var name="floatingBasalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="Applied basal mass balance on floating regions"
                 />
                 <var name="calvingMask" type="integer" dimensions="nCells Time" units="m" time_levs="1"
@@ -1192,14 +1192,17 @@ is the value of that variable from the *previous* time level!
                 <var name="calvingFrontMask" type="integer" dimensions="nCells Time" units="none" time_levs="1"
                         description="mask of the calving front position on cells"
                 />
-                <var name="calvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                <var name="calvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                         description="thickness of ice that calves on a given timestep (less than or equal to ice thickness)"
                 />
-                <var name="calvingCFLdt" type="real" dimensions="Time" units="s" time_levs="1" default_value="1.0e16"
+                <var name="calvingCFLdt" type="real" dimensions="Time" units="s" time_levs="1" default_value="1.0e16" missing_value="FILLVAL"
                         description="approximation of maximum allowable timestep based on calvingVelocity"
                 />
-                <var name="dtCalvingCFLratio" type="real" dimensions="Time" units="none" time_levs="1" default_value="0.0"
+                <var name="dtCalvingCFLratio" type="real" dimensions="Time" units="none" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                         description="ratio of timestep being used to the maximum timestep calculated for the calving CFL condition.  This metric can be used to assess the accuracy of the calving CFL calculation being lagged by a timestep."
+                />
+                <var name="eigencalvingParameter" type="real" dimensions="nCells Time" units="m s" time_levs="1" default_value="0.0" missing_value="FILLVAL"
+                     description="proportionality constant K2+- used in eigencalving formulation"
                 />
                 <var name="totalRatebasedCalvedVolume" type="real" dimensions="Time" units="m^3" time_levs="1"
                         description="total calved volume calculated by li_apply_front_ablation_velocity for a rate-based calving law"
@@ -1207,160 +1210,157 @@ is the value of that variable from the *previous* time level!
                 <var name="totalRatebasedUncalvedVolume" type="real" dimensions="Time" units="m^3" time_levs="1"
                         description="total uncalved volume calculated by li_apply_front_ablation_velocity for a rate-based calving law"
                 />
-                <var name="eigencalvingParameter" type="real" dimensions="nCells Time" units="m s" time_levs="1"
-                     description="proportionality constant K2+- used in eigencalving formulation"
-                />
-                <var name="groundedVonMisesThresholdStress" type="real" dimensions="nCells Time" units="Pa" time_levs="1"
+                <var name="groundedVonMisesThresholdStress" type="real" dimensions="nCells Time" units="Pa" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="Threshold stress for von Mises calving from grounded ice."
                 />
-                <var name="floatingVonMisesThresholdStress" type="real" dimensions="nCells Time" units="Pa" time_levs="1"
+                <var name="floatingVonMisesThresholdStress" type="real" dimensions="nCells Time" units="Pa" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="Threshold stress for von Mises calving from floating ice."
                 />
-                <var name="calvingVelocity" type="real" dimensions="nCells Time" units="m s^{-1}" time_levs="1"
+                <var name="calvingVelocity" type="real" dimensions="nCells Time" units="m s^{-1}" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="rate of calving front retreat due to calving, represented as a velocity normal to the calving front (in the x-y plane)."
                 />
-                <var name="unablatedVolumeNonDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
+                <var name="unablatedVolumeNonDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="volume of ice that was left uncalved or unmelted from required calving or melting flux at non-dynamic cells"
                 />
-                <var name="unablatedVolumeDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
+                <var name="unablatedVolumeDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="volume of ice that was left uncalved or unmelted from required calving or melting flux at dynamic cells"
                 />
-                <var name="ablatedVolumeNonDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
+                <var name="ablatedVolumeNonDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="volume of ice that was ablated from non-dynamic cells"
                 />
-                <var name="ablatedVolumeDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
+                <var name="ablatedVolumeDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="volume of ice that was ablated from dynamic cells"
                 />
-                <var name="requiredAblationVolumeNonDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
+                <var name="requiredAblationVolumeNonDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="bookkeeping field for how much volume should be removed from a non-dynamic cell"
                 />
-                <var name="requiredAblationVolumeNonDynEdge" type="real" dimensions="nEdges Time" units="m^3" time_levs="1"
+                <var name="requiredAblationVolumeNonDynEdge" type="real" dimensions="nEdges Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="bookkeeping field for how much volume should be removed from a non-dynamic edge"
                 />
-                <var name="requiredAblationVolumeDynEdge" type="real" dimensions="nEdges Time" units="m^3" time_levs="1"
+                <var name="requiredAblationVolumeDynEdge" type="real" dimensions="nEdges Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="bookkeeping field for how much volume should be removed from a dynamic edge"
                 />
-                <var name="requiredAblationVolumeDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
+                <var name="requiredAblationVolumeDynCell" type="real" dimensions="nCells Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="bookkeeping field for how much volume should be removed from a dynamic edge"
                 />
-                <var name="calvingVelocityData" type="real" dimensions="nCells Time" units="m s^{-1}" time_levs="1"
+                <var name="calvingVelocityData" type="real" dimensions="nCells Time" units="m s^{-1}" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="rate of calving front retreat due to calving, represented as a velocity normal to the calving front (in the x-y plane), given by the input netCDF file."
                 />
-                <var name="damage" type="real" dimensions="nCells Time" units="none" time_levs="1"
+                <var name="damage" type="real" dimensions="nCells Time" units="none" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="Damage is parameterized as the local ice thickness divided by the fracture depth, such that unfractured ice has damage=0 and ice fractured through its full thickness has damage=1"
                 />
-                <var name="ddamagedt" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1"
+                <var name="ddamagedt" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="damage change rate"
                 />
-                <var name="damageNye" type="real" dimensions="nCells Time" units="none" time_levs="1"
+                <var name="damageNye" type="real" dimensions="nCells Time" units="none" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="Nye zero-stress (Nye, 1957, Proc. R. Soc. A, 239) damage value"
                 />
-                <var name="damageMax" type="real" dimensions="nCells Time" units="none" time_levs="1"
+                <var name="damageMax" type="real" dimensions="nCells Time" units="none" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="maximum damage number kept constant"
                 />
-                <var name="s0" type="real" dimensions="nCells Time" units="none" time_levs="1"
+                <var name="s0" type="real" dimensions="nCells Time" units="none" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="a ratio between hydrostatic pressure and the largest principal tensile stress within ice shelf, rho_i * (rho_w - rho_i) * g * h / ( 2 * Tau_xx * rho_w ), where h is the ice thickness."
                 />
-                <var name="nstar" type="real" dimensions="nCells Time" units="none" time_levs="1"
+                <var name="nstar" type="real" dimensions="nCells Time" units="none" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="n∗ denotes the usual parameter n from Glen’s flow law, adjusted by including the ratio of the principal horizontal strain rates:  epsilon Dot_yy / epsilon Dot_xx"
                 />
-            <var name="effectiveViscosity" type="real" dimensions="nCells Time" units="Pa s" time_levs="1"
+            <var name="effectiveViscosity" type="real" dimensions="nCells Time" units="Pa s" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="effective viscosity"
                      persistence="persistent"
                 />
-                <var name="epsmax" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1"
+                <var name="epsmax" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="strain rate along the direction of maximum deviatoric principal stress"
                 />
-                <var name="damageSource" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1"
+                <var name="damageSource" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="damage source term"
                 />
                 />
-                <var name="basalWaterThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                <var name="basalWaterThickness" type="real" dimensions="nCells Time" units="m" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="thickness of basal water"
                 />
-                <var name="restoreThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                <var name="restoreThickness" type="real" dimensions="nCells Time" units="m" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="thickness of ice added when the config_restore_calving_front option is set to .true. (in order to maintain the calving front at its initial position)"
                 />
                 <!-- Variables only needed for calculating diffusivity at cell centers - this is always done now so no package is attached here -->
-                <var name="normalSlopeEdge"            type="real"     dimensions="nEdges Time"
+                <var name="normalSlopeEdge"            type="real"     dimensions="nEdges Time" default_value="0.0" missing_value="FILLVAL"
                      units="m m^{-1}"  description="normal surface slope on edges"
                 />
-                <var name="apparentDiffusivity" type="real" dimensions="nCells Time"
+                <var name="apparentDiffusivity" type="real" dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                         units="m^2 s^{-1}"  description="apparent diffusivity at cell centers (estimated based on the local ice flux and surface slope)"
                 />
-                <var name="groundedToFloatingThickness" type="real" dimensions="nCells Time"
+                <var name="groundedToFloatingThickness" type="real" dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                         units="m"  description="ice thickness that changed from grounded to floating due to grounding line movement during this time step.  Negative values indicate floating to grounded transition."
                 />
 		<!-- Variables only needed by SIA solver -->
-                <var name="upperSurfaceVertex" type="real" dimensions="nVertices Time" units="m above datum"
+                <var name="upperSurfaceVertex" type="real" dimensions="nVertices Time" units="m above datum" default_value="0.0" missing_value="FILLVAL"
                      description="elevation at top of ice on vertices" packages="SIAvelocity"
                 />
-                <var name="tangentSlopeEdge"            type="real"     dimensions="nEdges Time"
+                <var name="tangentSlopeEdge"            type="real"     dimensions="nEdges Time" default_value="0.0" missing_value="FILLVAL"
                      units="m m^{-1}"  description="tangent surface slope on edges" packages="SIAvelocity"
                 />
-                <var name="slopeEdge"            type="real"     dimensions="nEdges Time"
+                <var name="slopeEdge"            type="real"     dimensions="nEdges Time" default_value="0.0" missing_value="FILLVAL"
                      units="m m^{-1}"  description="surface slope magnitude on edges" packages="SIAvelocity"
                />
                 <!-- Variables only needed by ISMIP6 ice-shelf melt method -->
-                <var name="ismip6shelfMelt_basin" type="integer" dimensions="nCells" units="" default_value="1" 
+                <var name="ismip6shelfMelt_basin" type="integer" dimensions="nCells" units="" default_value="1" missing_value="FILLVAL"
                      packages="ismip6ShelfMelt" description="basin number mask for ISMIP6 melt forcing, input to model"
                 />
-                <var name="ismip6shelfMelt_gamma0" type="real" dimensions="" units="m yr^{-1}" default_value="0.0"
+                <var name="ismip6shelfMelt_gamma0" type="real" dimensions="" units="m yr^{-1}" default_value="0.0" missing_value="FILLVAL"
                      packages="ismip6ShelfMelt"
                      description="gamma0 value prescribed for ISMIP6 ice-shelf melting method, input to model.  Defaults to 0 so that missing input value will zero melt field."
                 />
-                <var name="ismip6shelfMelt_deltaT" type="real" dimensions="nCells" units="K" default_value="0.0"
+                <var name="ismip6shelfMelt_deltaT" type="real" dimensions="nCells" units="K" default_value="0.0" missing_value="FILLVAL"
                      packages="ismip6ShelfMelt"
                      description="basin-by-basin temperature bias correction for ISMIP6 ice-shelf melting method, input to model"
                 />
-                <var name="ismip6shelfMelt_TFdraft" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6ShelfMelt"
+                <var name="ismip6shelfMelt_TFdraft" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6ShelfMelt" default_value="0.0" missing_value="FILLVAL"
                      description="thermal forcing at ice shelf draft used for ISMIP6 ice-shelf melting method, calculated by param."
                 />
-                <var name="ismip6shelfMelt_3dThermalForcing" type="real" dimensions="nISMIP6OceanLayers nCells Time" units="deg. C" 
+                <var name="ismip6shelfMelt_3dThermalForcing" type="real" dimensions="nISMIP6OceanLayers nCells Time" units="deg. C" missing_value="FILLVAL"
                      default_value="2.0" packages="ismip6ShelfMelt"
                      description="thermal forcing for ISMIP6 ice-shelf melting method, input to model"
                 />
-                <var name="ismip6shelfMelt_zOcean" type="real" dimensions="nISMIP6OceanLayers" units="m" packages="ismip6ShelfMelt"
+                <var name="ismip6shelfMelt_zOcean" type="real" dimensions="nISMIP6OceanLayers" units="m" packages="ismip6ShelfMelt" default_value="0.0" missing_value="FILLVAL"
                      description="depth coordinate associated with ismip6shelfMelt_3dThermalForcing field, input to model"
                 />
-                <var name="ismip6shelfMelt_offset" type="real" dimensions="nCells" units="kg m^{-2} s^{-1}" packages="ismip6ShelfMelt" default_value="0.0"
+                <var name="ismip6shelfMelt_offset" type="real" dimensions="nCells" units="kg m^{-2} s^{-1}" packages="ismip6ShelfMelt" default_value="0.0" missing_value="FILLVAL"
                      description="Optional field of offset that should be applied to the melt field calculated by the ISMIP6 melt method.  Can be used to run in anomaly mode, but this is not the anomaly.  See Registry.xml for details."
                 />
                 <!-- Variables needed for ISMIP6 grounded face melt parameterization -->
                 <var name="frontAblationMask" type="integer" dimensions="nCells Time" units="none" time_levs="1" 
                      description="mask of grid cells at which front ablation will be applied. Determined by settings of applyToGrounded, applyToFloating, and applyToGroundingLine in routines that call li_apply_front_ablation_velocity."
                 />
-		<var name="faceMeltSpeed" type="real" dimensions="nCells Time" units="m s^{-1}" time_levs="1"
+		<var name="faceMeltSpeed" type="real" dimensions="nCells Time" units="m s^{-1}" time_levs="1" default_value="0.0" missing_value="FILLVAL"
 		     description="linear speed of submarine melting at grounded glacier front"
   		/>
-                <var name="ismip6Runoff" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" packages="ismip6GroundedFaceMelt" default_value="0.0"
+                <var name="ismip6Runoff" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" packages="ismip6GroundedFaceMelt" default_value="0.0" missing_value="FILLVAL"
                      description="Runoff forcing for ISMIP6 grounded ice melting method, input to model" 
                 />
-		<var name="ismip6_2dThermalForcing" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6GroundedFaceMelt" default_value="2.0"
+		<var name="ismip6_2dThermalForcing" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6GroundedFaceMelt" default_value="2.0" missing_value="FILLVAL"
 	 	     description="thermal forcing for ISMIP6 grounded marine melt method, input to model"
 		/>
-		<var name="faceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+		<var name="faceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="Equivalent plan-view averaged thickness of ice that melts on a given timestep from front ablation (less than or equal to ice thickness)"
 		/>
-               <var name="unmeltedVolume" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
+               <var name="unmeltedVolume" type="real" dimensions="nCells Time" units="m^3" time_levs="1" default_value="0.0" missing_value="FILLVAL"
                      description="volume of ice that was left unmelted from required facemelt flux due to only applying flux over immediate neighbors (diagnostic field to assess if this limitation is a problem)"
 	        />
-		<var name="ismip6_2dThermalForcingPrevious" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6GroundedFaceMelt" default_value="0.0"
+		<var name="ismip6_2dThermalForcingPrevious" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6GroundedFaceMelt" default_value="0.0" missing_value="FILLVAL"
 		     description="thermal forcing for ISMIP6 retreat paramterization, from previous input time."
 	        />
-                <var name="ismip6RunoffPrevious" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" packages="ismip6GroundedFaceMelt" default_value="0.0"
+                <var name="ismip6RunoffPrevious" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" packages="ismip6GroundedFaceMelt" default_value="0.0" missing_value="FILLVAL"
                      description="Runoff forcing for ISMIP6 grounded ice melting method, from previous input time" 
 	     />
-      	     <var name="ismip6_2dThermalForcingCurrent" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6GroundedFaceMelt" default_value="0.0"
+      	     <var name="ismip6_2dThermalForcingCurrent" type="real" dimensions="nCells Time" units="deg. C" packages="ismip6GroundedFaceMelt" default_value="0.0" missing_value="FILLVAL"
                      description="thermal forcing for ISMIP6 retreat parameterization, at current input time."
                 />
-                <var name="ismip6RunoffCurrent" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" packages="ismip6GroundedFaceMelt" default_value="0.0"
+                <var name="ismip6RunoffCurrent" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" packages="ismip6GroundedFaceMelt" default_value="0.0" missing_value="FILLVAL"
                      description="Runoff forcing for ISMIP6 grounded ice melting method, for current input time"
                 />
-                <var name="upliftRate"            type="real"     dimensions="nCells Time"
+                <var name="upliftRate"            type="real"     dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="time rate of change in bedTopography.  This field is prescribed as input and not currently calculated in the model."
                 />
-                <var name="bedTopographyChange" type="real" dimensions="nCells Time"
+                <var name="bedTopographyChange" type="real" dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m"  description="amount of change in bedTopography.  This field is calculated by the sea-level model over its time step. Positive values indicate bed uplift relative to sea level."
                 />
                <!-- Scratch variables related to geometry -->
@@ -1374,125 +1374,125 @@ is the value of that variable from the *previous* time level!
 
 	<!-- Variables related to velocity -->
         <var_struct name="velocity" time_levs="1">
-                <var name="flowParamA" type="real" dimensions="nVertLevels nCells Time" units="s^{-1} Pa^{-n}"
+                <var name="flowParamA" type="real" dimensions="nVertLevels nCells Time" units="s^{-1} Pa^{-n}" default_value="0.0" missing_value="FILLVAL"
                      description="flow law parameter, A, used by shallow-ice velocity solver"
                 />
-                <var name="normalVelocity" type="real" dimensions="nVertInterfaces nEdges Time" units="m s^{-1}"
+                <var name="normalVelocity" type="real" dimensions="nVertInterfaces nEdges Time" units="m s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="horizonal velocity, normal component to an edge, layer interface"
                 />
-                <var name="layerNormalVelocity" type="real" dimensions="nVertLevels nEdges Time" units="m s^{-1}"
+                <var name="layerNormalVelocity" type="real" dimensions="nVertLevels nEdges Time" units="m s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="horizonal velocity, normal component to an edge, layer midpoint"
                 />
-                <var name="normalVelocityInitial" type="real" dimensions="nVertInterfaces nEdges Time" units="m s^{-1}"
+                <var name="normalVelocityInitial" type="real" dimensions="nVertInterfaces nEdges Time" units="m s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="horizonal velocity, normal component to an edge, computed at initialization"
                 />
-                <var name="uReconstructX"                     type="real"     dimensions="nVertInterfaces nCells Time"
+                <var name="uReconstructX"                     type="real"     dimensions="nVertInterfaces nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="x-component of velocity reconstructed on cell centers.  Also, for higher-order dycores, on input: value of the x-component of velocity that should be applied where dirichletVelocityMask==1."
                 />
-                <var name="uReconstructY"                     type="real"     dimensions="nVertInterfaces nCells Time"
+                <var name="uReconstructY"                     type="real"     dimensions="nVertInterfaces nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="y-component of velocity reconstructed on cell centers.    Also, for higher-order dycores, on input: value of the y-component of velocity that should be applied where dirichletVelocityMask==1."
                 />
-                <var name="uReconstructZ"                     type="real"     dimensions="nVertInterfaces nCells Time"
+                <var name="uReconstructZ"                     type="real"     dimensions="nVertInterfaces nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="z-component of velocity reconstructed on cell centers"
                 />
-                <var name="uReconstructZonal"                 type="real"     dimensions="nVertInterfaces nCells Time"
+                <var name="uReconstructZonal"                 type="real"     dimensions="nVertInterfaces nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="zonal velocity reconstructed on cell centers"
                 />
-                <var name="uReconstructMeridional"            type="real"     dimensions="nVertInterfaces nCells Time"
+                <var name="uReconstructMeridional"            type="real"     dimensions="nVertInterfaces nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="meridional velocity reconstructed on cell centers"
                 />
-                <var name="surfaceSpeed"                     type="real"     dimensions="nCells Time"
+                <var name="surfaceSpeed"                     type="real"     dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="ice surface speed reconstructed at cell centers"
                 />
-                <var name="basalSpeed"                     type="real"     dimensions="nCells Time"
+                <var name="basalSpeed"                     type="real"     dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="ice basal speed reconstructed at cell centers"
                 />
-                <var name="xvelmean"                     type="real"     dimensions="nCells Time"
+                <var name="xvelmean"                     type="real"     dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="x-component of vertical mean ice velocity at cell centers"
                 />
-                <var name="yvelmean"                     type="real"     dimensions="nCells Time"
+                <var name="yvelmean"                     type="real"     dimensions="nCells Time" default_value="0.0" missing_value="FILLVAL"
                      units="m s^{-1}"  description="y-component of vertical mean ice velocity at cell centers"
                 />
-                <var name="beta" type="real" dimensions="nCells Time" units="Pa yr m^{-1}" default_value="1.0e8"
+                <var name="beta" type="real" dimensions="nCells Time" units="Pa yr m^{-1}" default_value="1.0e8" missing_value="FILLVAL"
                      description="input value of basal traction parameter for sliding law used with first-order momentum balance solver (NOTE non-SI units)"
                 />
-                <var name="betaSolve" type="real" dimensions="nCells Time" units="Pa yr m^{-1}"
+                <var name="betaSolve" type="real" dimensions="nCells Time" units="Pa yr m^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="value of basal traction parameter for sliding law used with first-order momentum balance solver (NOTE non-SI units); differs from beta due to any necessary adjustments made for internal consistency (e.g., zeroed out where the ice is found to be floating)"
                 />
-                <var name="effectivePressureLimited" type="real" dimensions="nCells Time" units="Pa" packages="higherOrderVelocity"
+                <var name="effectivePressureLimited" type="real" dimensions="nCells Time" units="Pa" packages="higherOrderVelocity" default_value="0.0" missing_value="FILLVAL"
                      description="effective ice pressure in subglacial hydrology system, limited with min/max for velocity solver" />
-                <var name="drivingStressVert" type="real" dimensions="nVertices Time" units="Pa" default_value="0.0"
+                <var name="drivingStressVert" type="real" dimensions="nVertices Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
                      description="driving stress calculated by Albany, on vertices"
                 />
-                <var name="drivingStress" type="real" dimensions="nCells Time" units="Pa" default_value="0.0"
+                <var name="drivingStress" type="real" dimensions="nCells Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
                      description="driving stress calculated by Albany, interpolated to cells"
                 />
-                <var name="muFriction" type="real" dimensions="nCells Time" units="(m yr^{-1})^(1-1/n) for Weertman, unitless for Schoof" default_value="1.0"
+                <var name="muFriction" type="real" dimensions="nCells Time" units="(m yr^{-1})^(1-1/n) for Weertman, unitless for Schoof" default_value="1.0" missing_value="FILLVAL"
                      description="input value of basal traction parameter for sliding law used with first-order momentum balance solver (NOTE non-SI units)"
                 />
-		<var name="stiffnessFactor" type="real" dimensions="nCells Time" units="none" default_value="1.0"
+		<var name="stiffnessFactor" type="real" dimensions="nCells Time" units="none" default_value="1.0" missing_value="FILLVAL"
 		     description="stiffness factor applied to effective viscosity in higher-order velocity solve"
 		/>
-                <var name="exx" type="real" dimensions="nCells Time" units="s^{-1}"
+                <var name="exx" type="real" dimensions="nCells Time" units="s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="x-component of depth-integrated strain rate"
                 />
-                <var name="eyy" type="real" dimensions="nCells Time" units="s^{-1}"
+                <var name="eyy" type="real" dimensions="nCells Time" units="s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="y-component of depth-integrated strain rate"
                 />
-                <var name="exy" type="real" dimensions="nCells Time" units="s^{-1}"
+                <var name="exy" type="real" dimensions="nCells Time" units="s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="shear component of depth-integrated strain rate"
                 />
-                <var name="dudy" type="real" dimensions="nCells Time" units="s^{-1}"
+                <var name="dudy" type="real" dimensions="nCells Time" units="s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="y-derivative of x-component of depth-integrated velocity"
                 />
-                <var name="dvdx" type="real" dimensions="nCells Time" units="s^{-1}"
+                <var name="dvdx" type="real" dimensions="nCells Time" units="s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="x-derivative of y-component of depth-integrated velocity"
                 />
-                <var name="eTheta" type="real" dimensions="nCells Time" units="radians"
+                <var name="eTheta" type="real" dimensions="nCells Time" units="radians" default_value="0.0" missing_value="FILLVAL"
                      description="orientation of principal depth-integrated strain rate"
                 />
-                <var name="eMax" type="real" dimensions="nCells Time" units="s^{-1}"
+                <var name="eMax" type="real" dimensions="nCells Time" units="s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="magnitude of first principal depth-integrated strain rate"
                 />
-                <var name="eMin" type="real" dimensions="nCells Time" units="s^{-1}"
+                <var name="eMin" type="real" dimensions="nCells Time" units="s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="magnitude of second principal depth-integrated strain rate"
                 />
-                <var name="tauxx" type="real" dimensions="nCells Time" units="Pa"
+                <var name="tauxx" type="real" dimensions="nCells Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
                      description="deviatoric stress xx"
                 />
-                <var name="tauyy" type="real" dimensions="nCells Time" units="Pa"
+                <var name="tauyy" type="real" dimensions="nCells Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
                      description="deviatoric stress yy"
                 />
-                <var name="tauxy" type="real" dimensions="nCells Time" units="Pa"
+                <var name="tauxy" type="real" dimensions="nCells Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
                      description="deviatoric stress xy=yx"
                 />
-                <var name="tauMax" type="real" dimensions="nCells Time" units="Pa"
+                <var name="tauMax" type="real" dimensions="nCells Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
                      description="maximum deviatoric principal stress"
                 />
-                <var name="tauMin" type="real" dimensions="nCells Time" units="Pa"
+                <var name="tauMin" type="real" dimensions="nCells Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
                      description="minimum deviatoric principal stress"
                 />
-	        <var name="principalStrainRateRatio" type="real" dimensions="nCells Time" units="none"
+	        <var name="principalStrainRateRatio" type="real" dimensions="nCells Time" units="none" default_value="0.0" missing_value="FILLVAL"
 	             description="the ratio of the minimum and maximum principal horizontal strain rates"
 	        />
-                <var name="fluxAcrossGroundingLine" type="real" dimensions="nEdges Time" units="m^2 s^{-1}"
+                <var name="fluxAcrossGroundingLine" type="real" dimensions="nEdges Time" units="m^2 s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="flux across grounding line per unit width.  Positive means flux goes from grounded to floating ice."
                 />
-		<var name="vonMisesStress" type="real" dimensions="nCells Time" units="Pa"
+		<var name="vonMisesStress" type="real" dimensions="nCells Time" units="Pa" default_value="0.0" missing_value="FILLVAL"
 		     description="von Mises stress used for calving law"
 		/>
 
 		<!-- Variables only needed by HO solver -->
-                <var name="anyDynamicVertexMaskChanged"              type="integer"  dimensions="Time"
+                <var name="anyDynamicVertexMaskChanged"              type="integer"  dimensions="Time" default_value="0.0" missing_value="FILLVAL"
                      units="none"  description="flag needed by external velocity solvers that indicates if the region to solve on the block's domain has changed (treated as a logical)"
                         packages="higherOrderVelocity"
                 />
-                <var name="dirichletVelocityMask"            type="integer"     dimensions="nVertInterfaces nCells Time"
+                <var name="dirichletVelocityMask"            type="integer"     dimensions="nVertInterfaces nCells Time" default_value="0.0" missing_value="FILLVAL"
                         units="none"  time_levs="2"
                         description="mask of where Dirichlet boundary conditions should be applied to the velocity solution.  1 means apply a Dirichlet boundary condition, 0 means do not. (higher-order dycores only)"
                         packages="higherOrderVelocity"
                 />
-                <var name="dirichletMaskChanged"              type="integer"  dimensions="Time"
+                <var name="dirichletMaskChanged"              type="integer"  dimensions="Time" default_value="0.0" missing_value="FILLVAL"
                      units="none"  description="flag needed by external velocity solvers that indicates if the Dirichlet boundary condition mask has changed (treated as a logical)"
                         packages="higherOrderVelocity"
                 />
@@ -1506,21 +1506,21 @@ is the value of that variable from the *previous* time level!
 
 	<!-- Variables related to observations -->
         <var_struct name="observations" time_levs="1" package="observations">
-                <var name="observedSurfaceVelocityX" type="real" dimensions="nCells Time" units="m s^{-1}"
+                <var name="observedSurfaceVelocityX" type="real" dimensions="nCells Time" units="m s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="X-component of observed surface velocity" />
-                <var name="observedSurfaceVelocityY" type="real" dimensions="nCells Time" units="m s^{-1}"
+                <var name="observedSurfaceVelocityY" type="real" dimensions="nCells Time" units="m s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="Y-component of observed surface velocity" />
-                <var name="observedSurfaceVelocityUncertainty" type="real" dimensions="nCells Time" units="m s^{-1}" default_value="1.0e20"
+                <var name="observedSurfaceVelocityUncertainty" type="real" dimensions="nCells Time" units="m s^{-1}" default_value="1.0e20" missing_value="FILLVAL"
                      description="uncertainty in observed surface velocity magnitude" />
-                <var name="observedThicknessTendency" type="real" dimensions="nCells Time" units="m s^{-1}"
+                <var name="observedThicknessTendency" type="real" dimensions="nCells Time" units="m s^{-1}" default_value="0.0" missing_value="FILLVAL"
                         description="observed tendency in thickness (dH/dt)" />
-                <var name="observedThicknessTendencyUncertainty" type="real" dimensions="nCells Time" units="m s^{-1}" default_value="1.0e20"
+                <var name="observedThicknessTendencyUncertainty" type="real" dimensions="nCells Time" units="m s^{-1}" default_value="1.0e20" missing_value="FILLVAL"
                         description="uncertainty in observed tendency in thickness (dH/dt)" />
-                <var name="sfcMassBalUncertainty" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="1.0e20"
+                <var name="sfcMassBalUncertainty" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="1.0e20" missing_value="FILLVAL"
                         description="uncertainty in observed surface mass balance" />
-                <var name="thicknessUncertainty" type="real" dimensions="nCells Time" units="m" default_value="0.0"
+                <var name="thicknessUncertainty" type="real" dimensions="nCells Time" units="m" default_value="0.0" missing_value="FILLVAL"
                         description="uncertainty in observed thickness" />
-                <var name="floatingBasalMassBalUncertainty" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="1.0e20"
+                <var name="floatingBasalMassBalUncertainty" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="1.0e20" missing_value="FILLVAL"
                         description="uncertainty in observed floating basal mass balance" />
         </var_struct>
 
@@ -1528,43 +1528,43 @@ is the value of that variable from the *previous* time level!
 
 	<!-- Variables related to thermal state -->
         <var_struct name="thermal" time_levs="1">
-                <var name="temperature" type="real" dimensions="nVertLevels nCells Time" units="K" default_value="273.15"
+                <var name="temperature" type="real" dimensions="nVertLevels nCells Time" units="K" default_value="273.15" missing_value="FILLVAL"
                      description="interior ice temperature"
                 />
-                <var name="waterFrac" type="real" dimensions="nVertLevels nCells Time" units="unitless"
+                <var name="waterFrac" type="real" dimensions="nVertLevels nCells Time" units="unitless" default_value="0.0" missing_value="FILLVAL"
                      description="interior ice water fraction"
                 />
-                <var name="enthalpy" type="real" dimensions="nVertLevels nCells Time" units="J m^{-3}"
+                <var name="enthalpy" type="real" dimensions="nVertLevels nCells Time" units="J m^{-3}" default_value="0.0" missing_value="FILLVAL"
                      description="interior ice enthalpy"
                 />
-                <var name="surfaceAirTemperature" type="real" dimensions="nCells Time" units="K" default_value="273.15"
+                <var name="surfaceAirTemperature" type="real" dimensions="nCells Time" units="K" default_value="273.15" missing_value="FILLVAL"
                      description="air temperature at the ice sheet surface"
                 />
-                <var name="surfaceTemperature" type="real" dimensions="nCells Time" units="K" default_value="273.15"
+                <var name="surfaceTemperature" type="real" dimensions="nCells Time" units="K" default_value="273.15" missing_value="FILLVAL"
                      description="temperature at upper ice service"
                 />
-                <var name="basalTemperature" type="real" dimensions="nCells Time" units="K" default_value="273.15"
+                <var name="basalTemperature" type="real" dimensions="nCells Time" units="K" default_value="273.15" missing_value="FILLVAL"
                      description="temperature at lower ice surface"
                 />
-                <var name="pmpTemperature" type="real" dimensions="nVertLevels nCells Time" units="K"
+                <var name="pmpTemperature" type="real" dimensions="nVertLevels nCells Time" units="K" default_value="0.0" missing_value="FILLVAL"
                      description="pressure melt temperature"
                 />
-                <var name="basalPmpTemperature" type="real" dimensions="nCells Time" units="K"
+                <var name="basalPmpTemperature" type="real" dimensions="nCells Time" units="K" default_value="0.0" missing_value="FILLVAL"
                      description="pressure melt temperature at lower ice surface"
                 />
-                <var name="surfaceConductiveFlux" type="real" dimensions="nCells Time" units="W m^{-2}"
+                <var name="surfaceConductiveFlux" type="real" dimensions="nCells Time" units="W m^{-2}" default_value="0.0" missing_value="FILLVAL"
                      description="conductive heat flux at the upper ice surface (positive downward)"
                 />
-                <var name="basalConductiveFlux" type="real" dimensions="nCells Time" units="W m^{-2}"
+                <var name="basalConductiveFlux" type="real" dimensions="nCells Time" units="W m^{-2}" default_value="0.0" missing_value="FILLVAL"
                      description="conductive heat flux at the lower ice surface (positive downward)"
                 />
-                <var name="basalHeatFlux" type="real" dimensions="nCells Time" units="W m^{-2}" default_value="0.06"
+                <var name="basalHeatFlux" type="real" dimensions="nCells Time" units="W m^{-2}" default_value="0.06" missing_value="FILLVAL"
                      description="basal heat flux into the ice (positive upward)"
                 />
-                <var name="basalFrictionFlux" type="real" dimensions="nCells Time" units="W m^{-2}"
+                <var name="basalFrictionFlux" type="real" dimensions="nCells Time" units="W m^{-2}" default_value="0.0" missing_value="FILLVAL"
                      description="basal frictional heat flux into the ice (positive upward)"
                 />
-                <var name="heatDissipation" type="real" dimensions="nVertLevels nCells Time" units="deg s^{-1}"
+                <var name="heatDissipation" type="real" dimensions="nVertLevels nCells Time" units="deg s^{-1}" default_value="0.0" missing_value="FILLVAL"
                      description="interior heat dissipation rate, divided by rhoi*cp_ice"
                 />
         </var_struct>
