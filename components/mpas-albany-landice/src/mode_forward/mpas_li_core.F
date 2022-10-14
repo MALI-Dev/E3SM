@@ -386,6 +386,7 @@ module li_core
       logical :: isRinging
       integer :: restartTimestampUnit
 
+      integer, dimension(:), pointer :: cellMask, cellMaskPrevious
       integer :: err, err_tmp, err_tmp2, globalErr
 
 
@@ -441,6 +442,14 @@ module li_core
          ! === Perform Timestep
          ! ===
          call mpas_timer_start("time integration")
+
+         do while(associated(block))
+            call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+            call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+            call mpas_pool_get_array(geometryPool, 'cellMaskPrevious', cellMaskPrevious)
+            cellMaskPrevious = cellMask
+            block => block % next
+         end do
 
          call li_timestep(domain, err_tmp)
          err = ior(err,err_tmp)
@@ -725,6 +734,7 @@ module li_core
       character(len=StrKIND) :: timeStamp
       real(kind=RKIND), pointer :: deltat
       real(kind=RKIND) :: deltatTemp
+      integer, dimension(:), pointer :: cellMask, cellMaskPrevious
 
       integer :: err, err_tmp, globalErr
       logical :: solveVelo
@@ -773,8 +783,15 @@ module li_core
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         call mpas_pool_get_array(geometryPool, 'cellMaskPrevious', cellMaskPrevious)
 
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         if (config_do_restart) then
+            cellMaskPrevious = cellMask
+            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         else
+            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp, firstCall=.true.)
+         endif
          call li_update_geometry(geometryPool)
 
          block => block % next

@@ -1151,6 +1151,9 @@ is the value of that variable from the *previous* time level!
                 <var name="cellMask" type="integer" dimensions="nCells Time" units="none"
                      description="bitmask indicating various properties about the ice sheet on cells.  cellMask only needs to be a restart field if config_allow_additional_advance = false (to keep the mask of initial ice extent)"
                 />
+                <var name="cellMaskPrevious" type="integer" dimensions="nCells Time" units="none"
+                     description="cellMask from the previous timestep"
+                />
                 <var name="edgeMask" type="integer" dimensions="nEdges Time" units="none"
                      description="bitmask indicating various properties about the ice sheet on edges."
                 />
