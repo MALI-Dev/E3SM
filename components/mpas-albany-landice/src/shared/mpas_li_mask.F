@@ -392,6 +392,7 @@ contains
 
       ! Identify cells where the ice is above the ice dynamics thickness limit
       if (firstCall_local) then
+         call mpas_log_write("First call to li_calculate_mask:  Initializing floating dynamic mask.")
          where ( thickness > config_dynamic_thickness )
             cellMask = ior(cellMask, li_mask_ValueDynamicIce)
          end where

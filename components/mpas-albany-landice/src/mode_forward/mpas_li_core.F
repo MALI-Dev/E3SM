@@ -107,11 +107,12 @@ module li_core
       logical, pointer :: config_do_restart
       real (kind=RKIND), pointer :: deltat  ! variable in each block
       real (kind=RKIND) :: dtSeconds ! local variable
-      type (MPAS_Pool_type), pointer :: meshPool
+      type (MPAS_Pool_type), pointer :: meshPool, geometryPool, velocityPool
       type (MPAS_TimeInterval_type) :: timeStepInterval
       character (len=StrKIND), pointer :: xtime, simulationStartTime
       real (kind=RKIND), pointer :: daysSinceStart
       integer, dimension(:), pointer :: cellProcID
+      integer, dimension(:), pointer :: cellMask, cellMaskPrevious
       type (MPAS_Time_type) :: xtime_timeType, simulationStartTime_timeType
       type (MPAS_stream_list_type), pointer :: stream_cursor
       type (MPAS_Alarm_type), pointer :: alarm_cursor
@@ -222,9 +223,12 @@ module li_core
       block => domain % blocklist
       do while (associated(block))
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
-
+         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          ! Assign initial time stamp
          call mpas_pool_get_array(meshPool, 'xtime', xtime)
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         call mpas_pool_get_array(geometryPool, 'cellMaskPrevious', cellMaskPrevious)
          xtime = startTimeStamp
 
          ! Set simulationStartTime on a cold start only - it should have been read from restart otherwise
@@ -251,13 +255,19 @@ module li_core
          call mpas_pool_get_array(meshPool, 'deltat', deltat)
          deltat = dtSeconds
 
+         if (config_do_restart) then
+             cellMaskPrevious = cellMask
+             call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+          else
+             call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp, firstCall=.true.)
+          endif
+
          block => block % next
       end do
 
       ! ===
       ! === Initialize modules ===
       ! ===
-
       call li_velocity_init(domain, err_tmp)
       err = ior(err, err_tmp)
 
@@ -783,15 +793,8 @@ module li_core
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
-         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
-         call mpas_pool_get_array(geometryPool, 'cellMaskPrevious', cellMaskPrevious)
 
-         if (config_do_restart) then
-            cellMaskPrevious = cellMask
-            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
-         else
-            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp, firstCall=.true.)
-         endif
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
          call li_update_geometry(geometryPool)
 
          block => block % next
