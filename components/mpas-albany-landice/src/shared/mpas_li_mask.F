@@ -401,7 +401,7 @@ contains
             if (li_mask_is_margin(cellMask(i)) .and. li_mask_is_floating_ice(cellMask(i))) then
                 openOceanNeighbor = .false.
                 thinnestNeighborHeight = 1.0e36_RKIND
-                do j=1,nEdgesOnCell(i) ! Find height of thickest neighbor
+                do j=1,nEdgesOnCell(i) ! Find height of thinnest neighbor
                    iCellNeighbor = cellsOnCell(j,i)
                    if (thickness(iCellNeighbor) > 0.0_RKIND .and. .not. li_mask_is_margin(cellMask(iCellNeighbor))) then
                       thinnestNeighborHeight = min(thinnestNeighborHeight, thickness(iCellNeighbor))
@@ -431,7 +431,7 @@ contains
                ! If it was dynamic before, follow the rules on initialization
                if (.not. li_mask_is_dynamic_ice(cellMaskPrevious(i))) then
                   thinnestNeighborHeight = 1.0e36_RKIND
-                  do j=1,nEdgesOnCell(i) ! Find height of thickest neighbor
+                  do j=1,nEdgesOnCell(i) ! Find height of thinnest neighbor
                      iCellNeighbor = cellsOnCell(j,i)
                      if ((li_mask_is_floating_ice(cellMask(iCellNeighbor)) .and.  li_mask_is_dynamic_ice(cellMaskPrevious(iCellNeighbor))) .or. &
                          (li_mask_is_grounded_ice(cellMask(iCellNeighbor)) .and. thickness(iCellNeighbor) > config_dynamic_thickness)) then
@@ -447,7 +447,7 @@ contains
                   if (li_mask_is_margin(cellMask(i)) .and. li_mask_is_floating_ice(cellMask(i))) then
                      openOceanNeighbor = .false.
                      thinnestNeighborHeight = 1.0e36_RKIND
-                     do j=1,nEdgesOnCell(i) ! Find height of thickest neighbor
+                     do j=1,nEdgesOnCell(i) ! Find height of thinnest neighbor
                         iCellNeighbor = cellsOnCell(j,i)
                         if (thickness(iCellNeighbor) > 0.0_RKIND .and. .not. li_mask_is_margin(cellMask(iCellNeighbor))) then
                            thinnestNeighborHeight = min(thinnestNeighborHeight, thickness(iCellNeighbor))
