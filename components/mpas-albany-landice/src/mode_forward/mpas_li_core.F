@@ -112,7 +112,6 @@ module li_core
       character (len=StrKIND), pointer :: xtime, simulationStartTime
       real (kind=RKIND), pointer :: daysSinceStart
       integer, dimension(:), pointer :: cellProcID
-      integer, dimension(:), pointer :: cellMask, cellMaskPrevious
       type (MPAS_Time_type) :: xtime_timeType, simulationStartTime_timeType
       type (MPAS_stream_list_type), pointer :: stream_cursor
       type (MPAS_Alarm_type), pointer :: alarm_cursor
@@ -227,8 +226,6 @@ module li_core
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          ! Assign initial time stamp
          call mpas_pool_get_array(meshPool, 'xtime', xtime)
-         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
-         call mpas_pool_get_array(geometryPool, 'cellMaskPrevious', cellMaskPrevious)
          xtime = startTimeStamp
 
          ! Set simulationStartTime on a cold start only - it should have been read from restart otherwise
@@ -254,13 +251,6 @@ module li_core
          ! Initialize dt in seconds
          call mpas_pool_get_array(meshPool, 'deltat', deltat)
          deltat = dtSeconds
-
-         if (config_do_restart) then
-             cellMaskPrevious = cellMask
-             call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
-          else
-             call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp, firstCall=.true.)
-          endif
 
          block => block % next
       end do
@@ -955,6 +945,7 @@ module li_core
       !-----------------------------------------------------------------
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: geometryPool
+      type (mpas_pool_type), pointer :: velocityPool
       integer, dimension(:), pointer :: vertexMask
       real (kind=RKIND), dimension(:), pointer :: thickness, thicknessOld
       real (kind=RKIND), dimension(:,:), pointer :: layerThickness
@@ -970,6 +961,7 @@ module li_core
       ! Get pool stuff
       call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+      call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
       call mpas_pool_get_config(liConfigs, 'config_velocity_solver', config_velocity_solver)
       call mpas_pool_get_config(liConfigs, 'config_do_velocity_reconstruction_for_external_dycore', &
          config_do_velocity_reconstruction_for_external_dycore)
@@ -1024,7 +1016,7 @@ module li_core
       endif
 
       ! Mask init identifies initial ice extent
-      call li_calculate_mask_init(geometryPool, err=err_tmp)
+      call li_calculate_mask_init(meshPool, geometryPool, velocityPool, err=err_tmp)
       err = ior(err, err_tmp)
 
       ! Initialize thicknessOld variable used to calculate dHdt

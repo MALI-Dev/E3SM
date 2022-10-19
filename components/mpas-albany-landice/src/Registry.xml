@@ -792,6 +792,7 @@
                         <var name="heatDissipation" packages="thermal"/>
                         <var name="betaSolve" packages="thermal"/>
 			<var name="cellMask"/>
+			<var name="cellMaskPrevious"/>
 			<var name="bedTopography"/>
 			<var name="sfcMassBal"/>
                         <var name="floatingBasalMassBal"/>

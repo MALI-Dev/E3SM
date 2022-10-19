@@ -169,13 +169,18 @@ contains
 !
 !-----------------------------------------------------------------------
 
-   subroutine li_calculate_mask_init(geometryPool, err)
+   subroutine li_calculate_mask_init(meshPool, geometryPool, velocityPool, err)
 
       !-----------------------------------------------------------------
       !
       ! input variables
       !
       !-----------------------------------------------------------------
+      type (mpas_pool_type), intent(inout) :: &
+         meshPool          !< Input: mesh information
+
+      type (mpas_pool_type), intent(inout) :: &
+         velocityPool          !< Input: velocity information
 
       !-----------------------------------------------------------------
       !
@@ -198,6 +203,7 @@ contains
       !
       !-----------------------------------------------------------------
       integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMaskPrevious
       real(KIND=RKIND), dimension(:), pointer :: thickness
       logical, pointer :: config_do_restart
       integer, pointer :: config_num_halos, config_number_of_blocks
@@ -208,6 +214,7 @@ contains
 
       ! Assign pointers and variables
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask, timeLevel=1)
+      call mpas_pool_get_array(geometryPool, 'cellMaskPrevious', cellMaskPrevious)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
 
       call mpas_pool_get_config(liConfigs, 'config_do_restart', config_do_restart)
@@ -226,6 +233,12 @@ contains
          where (thickness > 0.0_RKIND)
             cellMask = ior(cellMask, li_mask_ValueInitialIceExtent)
          end where
+         ! calculate mask, indicating this is the first call to initialize the floating dynamic mask
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp, firstCall=.true.)
+      else
+         ! On a restart, set cellMaskPrevious to the cellMask field read from the restart file
+         !cellMaskPrevious = cellMask
+         !call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
       endif
 
    !--------------------------------------------------------------------
