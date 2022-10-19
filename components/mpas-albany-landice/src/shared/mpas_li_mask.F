@@ -442,27 +442,28 @@ contains
                      cellMask(i) = ior(cellMask(i), li_mask_ValueDynamicIce)
                   endif
                else ! this was already dynamic before, so follow the standard rules
-                 ! Exclude floating margin cells that are thinner than all their non-margin neighbors
-                    if (li_mask_is_margin(cellMask(i)) .and. li_mask_is_floating_ice(cellMask(i))) then
-                       openOceanNeighbor = .false.
-                       thinnestNeighborHeight = 1.0e36_RKIND
-                       do j=1,nEdgesOnCell(i) ! Find height of thickest neighbor
-                          iCellNeighbor = cellsOnCell(j,i)
-                          if (thickness(iCellNeighbor) > 0.0_RKIND .and. .not. li_mask_is_margin(cellMask(iCellNeighbor))) then
-                             thinnestNeighborHeight = min(thinnestNeighborHeight, thickness(iCellNeighbor))
-                          endif
-                          if ((bedTopography(iCellNeighbor) < config_sea_level) .and. (.not. li_mask_is_ice(cellMask(iCellNeighbor)))) then
-                             openOceanNeighbor = .true.
-                          endif
-                       enddo ! neigbors
-                       if ((openOceanNeighbor) .and. (thickness(i) < activeFraction * thinnestNeighborHeight)) then
-                          ! Consider this NOT dynamic if the ice shelf margin is not almost as tall as it's inland neighbors.
-                          ! Only do this for a non-dynamic cell adjacent to open ocean.
-                          ! (if the floating cell was marked as a margin because it is adjacent to ice-free land,
-                          !  we want to still consider it as dynamic)
-                          cellMask(i) = iand(cellMask(i), not(li_mask_ValueDynamicIce))  ! (turn off this bit)
-                       endif
-                    endif ! margin and floating
+                  cellMask(i) = ior(cellMask(i), li_mask_ValueDynamicIce)  ! initialize to dynamic, then disable below if appropriate
+                  ! Exclude floating margin cells that are thinner than all their non-margin neighbors
+                  if (li_mask_is_margin(cellMask(i)) .and. li_mask_is_floating_ice(cellMask(i))) then
+                     openOceanNeighbor = .false.
+                     thinnestNeighborHeight = 1.0e36_RKIND
+                     do j=1,nEdgesOnCell(i) ! Find height of thickest neighbor
+                        iCellNeighbor = cellsOnCell(j,i)
+                        if (thickness(iCellNeighbor) > 0.0_RKIND .and. .not. li_mask_is_margin(cellMask(iCellNeighbor))) then
+                           thinnestNeighborHeight = min(thinnestNeighborHeight, thickness(iCellNeighbor))
+                        endif
+                        if ((bedTopography(iCellNeighbor) < config_sea_level) .and. (.not. li_mask_is_ice(cellMask(iCellNeighbor)))) then
+                           openOceanNeighbor = .true.
+                        endif
+                     enddo ! neigbors
+                     if ((openOceanNeighbor) .and. (thickness(i) < activeFraction * thinnestNeighborHeight)) then
+                        ! Consider this NOT dynamic if the ice shelf margin is not almost as tall as it's inland neighbors.
+                        ! Only do this for a non-dynamic cell adjacent to open ocean.
+                        ! (if the floating cell was marked as a margin because it is adjacent to ice-free land,
+                        !  we want to still consider it as dynamic)
+                        cellMask(i) = iand(cellMask(i), not(li_mask_ValueDynamicIce))  ! (turn off this bit)
+                     endif
+                  endif ! margin and floating
               endif ! if already dynamic before
             endif ! if floating
          enddo ! loop over cells
