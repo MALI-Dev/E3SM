@@ -43,6 +43,7 @@ module li_mask
    integer, parameter :: li_mask_ValueInitialIceExtent      =   1
    integer, parameter :: li_mask_ValueAlbanyActive          =  64  ! These are locations that Albany includes in its solution
    integer, parameter :: li_mask_ValueAlbanyMarginNeighbor  = 128  ! This the first cell beyond the last active albany cell
+   integer, parameter :: li_mask_ValueAlbanyBoundary        = 512  ! Active albany cells that should be Albany boundary nodes
    integer, parameter :: li_mask_ValueGroundingLine         = 256
       !< This is grounded cell that has a floating neighbor, or vertex/edge on that boundary
 
@@ -290,7 +291,7 @@ contains
             config_sea_level, config_dynamic_thickness
       character (len=StrKIND), pointer :: config_velocity_solver
 
-      integer :: i, j, iCell
+      integer :: i, j, iCell, jCell
       logical :: isMargin
       logical :: isAlbanyMarginNeighbor
       logical :: aCellOnVertexHasIce, aCellOnVertexHasNoIce, aCellOnVertexHasDynamicIce, aCellOnVertexHasNoDynamicIce, &
@@ -302,6 +303,7 @@ contains
       logical :: aCellOnEdgeIsOpenOcean
       integer :: numCellsOnVertex
       integer :: numDiriDynamicCells, numDiriNondynamicCells, numExtendedCells
+      integer :: numAlbanyActiveCellsOnVertex, numUsableCellsOnVertex
       logical :: validVertex
       real (kind=RKIND) :: thinnestNeighborHeight
       integer :: iCellNeighbor
@@ -454,6 +456,31 @@ contains
          enddo
       endif
 
+      ! Identify Albany boundary cells
+      if ( (trim(config_velocity_solver) == 'L1L2') .or. &
+           (trim(config_velocity_solver) == 'FO') .or. &
+           (trim(config_velocity_solver) == 'Stokes') ) then
+         do iCell = 1, nCells
+            if ((.not. li_mask_is_dynamic_ice(cellMask(iCell))) .and. bedTopography(iCell) >= config_sea_level) then
+               do j = 1, nEdgesOnCell(iCell)
+                  jCell = cellsOnCell(j, iCell)
+                  if (li_mask_is_dynamic_ice(cellMask(jCell))) then
+                     cellMask(iCell) = ior(cellMask(iCell), li_mask_ValueAlbanyBoundary)
+                     exit
+                  endif
+               enddo
+            elseif (li_mask_is_floating_ice(cellMask(iCell)) .and. li_mask_is_dynamic_ice(cellMask(iCell))) then
+               do j = 1, nEdgesOnCell(iCell)
+                  jCell = cellsOnCell(j, iCell)
+                  if ((.not. li_mask_is_dynamic_ice(cellMask(jCell))) .and. bedTopography(jCell) < config_sea_level) then
+                     cellMask(iCell) = ior(cellMask(iCell), li_mask_ValueAlbanyBoundary)
+                     exit
+                  endif
+               enddo
+            endif
+         enddo
+      endif
+
       ! Identify the grounding line
       ! For a cell, we define the GL as a grounded cell with ice with at least one dynamic floating neighbor
       ! Note that this is a different definition that prior to Oct 2022. Earlier
@@ -550,12 +577,17 @@ contains
             numDiriDynamicCells = 0
             numDiriNondynamicCells = 0
             numExtendedCells = 0
+            numAlbanyActiveCellsOnVertex = 0
+            numUsableCellsOnVertex = 0
             do j = 1, vertexDegree  ! vertexDegree is usually 3 (e.g. CVT mesh) but could be something else (e.g. 4 for quad mesh)
                iCell = cellsOnVertex(j,i)
                if (iCell < nCells+1) then
                   numCellsOnVertex = numCellsOnVertex + 1
                endif
                aCellOnVertexIsAlbanyActive = (aCellOnVertexIsAlbanyActive .or. li_mask_is_albany_active(cellMask(iCell)))
+               if (li_mask_is_albany_active(cellMask(iCell)) .or. (bedTopography(iCell) > config_sea_level)) numUsableCellsOnVertex = numUsableCellsOnVertex + 1
+               if (li_mask_is_albany_active(cellMask(iCell))) numAlbanyActiveCellsOnVertex = numAlbanyActiveCellsOnVertex + 1
+
 
                !if (li_mask_is_dynamic_ice(cellMask(iCell)) .and. .not. li_mask_is_albany_active(cellMask(iCell))) then
                !!< this finds diri cells
@@ -571,7 +603,8 @@ contains
                endif
             end do
             if (numCellsOnVertex == vertexDegree) validVertex = .true.
-            if (aCellOnVertexIsAlbanyActive .and. validVertex)  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+            !if (aCellOnVertexIsAlbanyActive .and. validVertex)  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+            if (validVertex .and. (numAlbanyActiveCellsOnVertex >= 1) .and. (numUsableCellsOnVertex == vertexDegree))  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
             if ( (numDiriDynamicCells == 1) .and. (numDiriNondynamicCells == 1) .and. &
                  (numExtendedCells == 1) .and. validVertex) then
                ! This is a special case needed for MISMIP

@@ -75,7 +75,9 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         double const* flowLawExponent_F, double const* dynamic_thickness_F,
                         double const* clausius_clapeyron_coeff,
                         double const* thermal_thickness_limit_F,
-                        int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
+                        int const* li_mask_ValueDynamicIce,
+                        int const* li_mask_ValueAlbanyBoundary,
+                        int const* li_mask_ValueIce,
                         bool const* use_GLP_F);
 
 void velocity_solver_init_l1l2(double const* levelsRatio);

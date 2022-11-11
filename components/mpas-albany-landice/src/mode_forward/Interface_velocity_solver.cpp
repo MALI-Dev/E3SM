@@ -53,6 +53,7 @@ double rho_ocean;
 //unsigned char dynamic_ice_bit_value;
 //unsigned char ice_present_bit_value;
 int dynamic_ice_bit_value;
+int ice_boundary_bit_value;
 int ice_present_bit_value;
 
 // global variables used for handling logging
@@ -115,13 +116,16 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* flowLawExponent_F, double const* dynamic_thickness_F,
                          double const* clausius_clapeyron_coeff,
                          double const* thermal_thickness_limit_F,
-                         int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
+                         int const* li_mask_ValueDynamicIce,
+                         int const* li_mask_ValueAlbanyBoundary,
+                         int const* li_mask_ValueIce,
                          bool const* use_GLP_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
   thermal_thickness_limit = *thermal_thickness_limit_F / unit_length; // Import with Albany scaling
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
+  ice_boundary_bit_value = *li_mask_ValueAlbanyBoundary;
   ice_present_bit_value = *li_mask_ValueIce;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, *use_GLP_F, *clausius_clapeyron_coeff);
@@ -676,6 +680,7 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
         dirichletNodesIDs.push_back((nLayers-il)*vertexColumnShift+indexToVertexID[index]*vertexLayerShift);
     }
 
+    /*
     int nEdg = nEdgesOnCells_F[fCell];
     int j = 0;
     bool isBoundary;
@@ -684,6 +689,8 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
       isBoundary = !(verticesMask_F[fVertex] & dynamic_ice_bit_value);
     } while ((j < nEdg) && (!isBoundary));
     isVertexBoundary[index] = isBoundary;
+    */
+    isVertexBoundary[index] = (cellsMask_F[fCell] & ice_boundary_bit_value);
   }
 
   // because we change the ownership of some vertices, we need to first communicate back to the processors that used to own those vertices
@@ -1174,7 +1181,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,  dou
       }
     }
   }
-
+/*
   //extend thickness and elevation data to the border for marine vertices
   marineBdyExtensionMap.clear();
   marineBdyExtensionMap.reserve(nVertices);
@@ -1252,6 +1259,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,  dou
     }
 
   }
+*/
 }
 
 void import2DFieldsObservations(std::vector<std::pair<int, int> >& marineBdyExtensionMap,

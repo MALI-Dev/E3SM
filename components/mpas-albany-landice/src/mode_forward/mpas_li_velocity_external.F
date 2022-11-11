@@ -65,12 +65,13 @@ module li_velocity_external
          config_default_flowParamA, &
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
-         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp) &
+         li_mask_ValueDynamicIce, li_mask_ValueAlbanyBoundary, &
+         li_mask_ValueIce, config_use_glp) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE, C_BOOL
 
-         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce
+         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueAlbanyBoundary, li_mask_ValueIce
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
@@ -363,7 +364,8 @@ contains
          config_flowLawExponent, config_dynamic_thickness, &
          iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
-         li_mask_ValueAlbanyActive, li_mask_ValueIce, &
+         li_mask_ValueAlbanyActive, li_mask_ValueAlbanyBoundary, &
+         li_mask_ValueIce, &
          logical(config_use_glp, KIND=1) )
 
       call interface_reset_stdout()
