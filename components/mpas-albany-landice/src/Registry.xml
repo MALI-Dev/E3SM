@@ -339,6 +339,10 @@
                             description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'seroussi' use hardcoded fields defined in the code applicable to Thwaites Glacier. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
                             possible_values="'none', 'file', 'constant', 'mismip', 'seroussi', 'temperature_profile', 'ismip6'"
                 />
+                <nml_option name="config_TF_depth_adj" type="real" default_value="0.0" units="deg/m"
+		            description=""
+		            possible_values="Any negative real value"
+		/>
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^{-2}"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."
 		            possible_values="Any positive real value"

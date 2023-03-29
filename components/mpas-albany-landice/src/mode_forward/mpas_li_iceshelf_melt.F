@@ -1198,14 +1198,17 @@ module li_iceshelf_melt
       integer, dimension(:), pointer :: cellMask, indexToCellID
       real(kind=RKIND), dimension(maxNumBasins*2) :: localSums, globalSums
       real (kind=RKIND), pointer :: gamma0
+      real (kind=RKIND), pointer :: adjRate
       real (kind=RKIND), dimension(:), pointer :: floatingBasalMassBal
       real (kind=RKIND) :: coef
+      real (kind=RKIND) :: GLdepth, GLdepthProc
       integer :: i
 
       err = 0
 
       call mpas_pool_get_config(liConfigs, 'config_ice_density', rhoi)
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', rhosw)
+      call mpas_pool_get_config(liConfigs, 'config_TF_depth_adj', adjRate)
       cste = (rhosw*cp_seawater/(rhoi*latent_heat_ice))**2  ! in K^(-2)
 
       allocate(mean_TF(maxNumBasins))
@@ -1247,6 +1250,8 @@ module li_iceshelf_melt
          mean_TF(:) = 0.d0
          IS_area(:) = 0.d0
 
+         GLdepthProc = 0.0_RKIND
+
          do iCell = 1, nCellsSolve
 
             if ( li_mask_is_floating_ice(cellMask(iCell)) ) then
@@ -1274,6 +1279,8 @@ module li_iceshelf_melt
                mean_TF(basinNumber(iCell)+1) = mean_TF(basinNumber(iCell)+1) + areaCell(iCell) * TFdraft(iCell)
                IS_area(basinNumber(iCell)+1) = IS_area(basinNumber(iCell)+1) + areaCell(iCell)
 
+               GLdepthProc = min(GLdepthProc, lowerSurface(iCell))
+
             else
                TFdraft(iCell) = 0.d0
             endif
@@ -1296,6 +1303,7 @@ module li_iceshelf_melt
             mean_TF(i) = 0.0_RKIND
          endif
       enddo
+      call mpas_dmpar_min_real(domain % dminfo, GLdepthProc, GLdepth)
 
 
       ! Now calculate melt rate
@@ -1319,7 +1327,8 @@ module li_iceshelf_melt
          coef = gamma0 * cste / scyr * rhoi
          do iCell = 1, nCellsSolve
             if ( li_mask_is_floating_ice(cellMask(iCell)) ) then
-               floatingBasalMassBal(iCell) = -1.0_RKIND * coef * (TFdraft(iCell) + deltaT(iCell)) * &
+               floatingBasalMassBal(iCell) = -1.0_RKIND * coef * (TFdraft(iCell) + deltaT(iCell) + &
+                  adjRate * (lowerSurface(iCell) - GLdepth)  ) * &
                   abs(mean_TF(basinNumber(iCell)+1) + deltaT(iCell)) + ismip6shelfMelt_offset(iCell)
             endif
          enddo
