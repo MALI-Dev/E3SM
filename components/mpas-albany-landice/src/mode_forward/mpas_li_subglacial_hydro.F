@@ -1565,7 +1565,6 @@ module li_subglacial_hydro
       end select
 
       waterPressure = max(0.0_RKIND, waterPressure)
-      waterPressure = min(waterPressure, rhoi * gravity * iceThicknessHydro)
       
       do iCell = 1, nCells
         if ( li_mask_is_floating_ice(cellMask(iCell)) .or. &
@@ -1667,7 +1666,10 @@ module li_subglacial_hydro
       where (.not. li_mask_is_grounded_ice(cellmask))
          effectivePressure = 0.0_RKIND  ! zero effective pressure where no ice to avoid confusion
       end where
-      
+     
+      !Disallow negative effective pressure
+      effectivePressure = max(0.0_RKIND, effectivePressure)
+
       hydropotentialBase = rho_water * gravity * bedTopography + waterPressure
       ! This is still correct under ice shelves/open ocean because waterPressure has been set appropriately there already.
       ! Note this leads to a nonuniform hydropotential at sea level that is a function of the ocean depth.
