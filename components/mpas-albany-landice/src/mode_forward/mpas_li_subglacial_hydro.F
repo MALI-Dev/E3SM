@@ -1728,6 +1728,7 @@ module li_subglacial_hydro
       real (kind=RKIND), pointer :: rhoi
       real (kind=RKIND), pointer :: config_SGH_incipient_channel_width
       logical, pointer :: config_SGH_include_pressure_melt
+      real (kind=RKIND), pointer :: config_SGH_bed_roughness_max
 
       real (kind=RKIND), dimension(:), pointer :: channelArea
       real (kind=RKIND), dimension(:), pointer :: channelMelt
@@ -1745,6 +1746,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: channelEffectivePressure
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: channelDiffusivity
+      real (kind=RKIND), dimension(:), pointer :: waterThickness
       integer, dimension(:), pointer :: waterFluxMask
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: edgeMask
@@ -1772,7 +1774,7 @@ module li_subglacial_hydro
       call mpas_pool_get_config(liConfigs, 'config_SGH_chnl_creep_coefficient', creep_coeff)
       call mpas_pool_get_config(liConfigs, 'config_SGH_incipient_channel_width', config_SGH_incipient_channel_width)
       call mpas_pool_get_config(liConfigs, 'config_SGH_include_pressure_melt', config_SGH_include_pressure_melt)
-
+      call mpas_pool_get_config(liConfigs, 'config_SGH_bed_roughness_max', config_SGH_bed_roughness_max)
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
 
@@ -1796,8 +1798,9 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'waterFluxMask', waterFluxMask)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
       call mpas_pool_get_array(hydroPool, 'channelDiffusivity', channelDiffusivity)
+      call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
-
+  
       ! Calculate terms needed for opening (melt) rate
 
       where(gradMagPhiEdge < 0.01_RKIND)
@@ -1825,6 +1828,22 @@ module li_subglacial_hydro
          channelArea = 0.0_RKIND
          channelDischarge = 0.0_RKIND
       end where
+
+      !Disable channels within subglacial lake interiors
+      do iEdge = 1, nEdgesSolve
+         cell1 = cellsOnEdge(1, iEdge)
+         cell2 = cellsOnEdge(2, iEdge)
+         
+         !An edge in the interior of a subglacial lake is defined as an
+         !edge where both adjacent cells have a waterThickness above bed
+         !bump height.
+         if ((waterThickness(cell1) > config_SGH_bed_roughness_max) .and. &
+                 (waterThickness(cell2) > config_SGH_bed_roughness_max)) then
+                 
+                 channelDischarge = 0.0_RKIND
+                 channelArea = 0.0_RKIND
+         endif
+      enddo
 
       channelVelocity = channelDischarge / (channelArea + 1.0e-12_RKIND)
 
