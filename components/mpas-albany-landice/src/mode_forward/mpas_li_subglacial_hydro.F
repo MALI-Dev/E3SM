@@ -1754,7 +1754,7 @@ module li_subglacial_hydro
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, pointer :: nVertLevels
 
-      integer, pointer :: nEdgesSolve
+      integer, pointer :: nEdgesSolve, nEdges
       integer :: iEdge, cell1, cell2
 
 
@@ -1776,6 +1776,7 @@ module li_subglacial_hydro
       call mpas_pool_get_config(liConfigs, 'config_SGH_include_pressure_melt', config_SGH_include_pressure_melt)
       call mpas_pool_get_config(liConfigs, 'config_SGH_bed_roughness_max', config_SGH_bed_roughness_max)
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
+      call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
 
       call mpas_pool_get_array(hydroPool, 'channelArea', channelArea)
@@ -1830,7 +1831,7 @@ module li_subglacial_hydro
       end where
 
       !Disable channels within subglacial lake interiors
-      do iEdge = 1, nEdgesSolve
+      do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
          cell2 = cellsOnEdge(2, iEdge)
          
