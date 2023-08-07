@@ -1834,15 +1834,14 @@ module li_subglacial_hydro
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
          cell2 = cellsOnEdge(2, iEdge)
-         
          !An edge in the interior of a subglacial lake is defined as an
          !edge where both adjacent cells have a waterThickness above bed
          !bump height.
          if ((waterThickness(cell1) > config_SGH_bed_roughness_max) .and. &
                  (waterThickness(cell2) > config_SGH_bed_roughness_max)) then
-                 
-                 channelDischarge = 0.0_RKIND
-                 channelArea = 0.0_RKIND
+                 channelDischarge(iEdge) = 0.0_RKIND
+                 !channelVelocity = 0.0_RKIND
+                 !channelArea = 0.0_RKIND
          endif
       enddo
 
