@@ -123,7 +123,12 @@
         <nml_option name="config_SGH_basal_melt" type="character" default_value="file" units="none"
                             description="source for the basalMeltInput term.  'file' takes whatever field was input and performs no calculation.  'thermal' uses the groundedBasalMassBal field calculated by the thermal model.  'basal_heat' calculates a melt rate assuming the entirety of the basal heat flux (basalFrictionFlux+basalHeatFlux) goes to melting ice at the bed.  This is calculated in the SGH module and is independent of any calculations in the thermal model."
 		            possible_values="'file', 'thermal', 'basal_heat'"
-		/>
+                />
+
+                <nml_option name="config_SGH_max_chnl_lake_depth" type="real" default_value="0.0" units="m"
+                        description="Maximum radius a channel can achieve within a subglacial lake before the channel is allowed to drown and channel discharge ramps down. Once a channel radius exceeds this value, channel discharge will decrease proportional to the lake depth to channel radius ratio."
+                        possible_values="positive real number"
+                />
 
 	</nml_record>
 
