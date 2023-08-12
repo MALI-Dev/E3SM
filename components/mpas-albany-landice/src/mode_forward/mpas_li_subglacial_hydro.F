@@ -1753,6 +1753,16 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, pointer :: nVertLevels
+      real (kind=RKIND), pointer :: channelRadius
+      real (kind=RKIND), pointer :: config_SGH_max_chnl_lake_depth
+      real (kind=RKIND), pointer :: cellDistance1
+      real (kind=RKIND), pointer :: cellDistance2
+      real (kind=RKIND), pointer :: meanWaterThickness
+      real (kind=RKIND), pointer :: depthRatio
+      real (kind=RKIND), dimension(:), pointer :: xCell
+      real (kind=RKIND), dimension(:), pointer :: yCell
+      real (kind=RKIND), dimension(:), pointer :: xEdge
+      real (kind=RKIND), dimension(:), pointer :: yEdge
 
       integer, pointer :: nEdgesSolve, nEdges
       integer :: iEdge, cell1, cell2
@@ -1775,6 +1785,7 @@ module li_subglacial_hydro
       call mpas_pool_get_config(liConfigs, 'config_SGH_incipient_channel_width', config_SGH_incipient_channel_width)
       call mpas_pool_get_config(liConfigs, 'config_SGH_include_pressure_melt', config_SGH_include_pressure_melt)
       call mpas_pool_get_config(liConfigs, 'config_SGH_bed_roughness_max', config_SGH_bed_roughness_max)
+      call mpas_pool_get_config(liConfigs, 'config_SGH_max_chnl_lake_depth', config_SGH_max_chnl_lake_depth)
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
@@ -1801,7 +1812,11 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'channelDiffusivity', channelDiffusivity)
       call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
-  
+      call mpas_pool_get_array(meshPool, 'xCell', xCell)
+      call mpas_pool_get_array(meshPool, 'yCell', yCell)
+      call mpas_pool_get_array(meshPool, 'xEdge', xEdge)
+      call mpas_pool_get_array(meshPool, 'yEdge', yEdge)
+
       ! Calculate terms needed for opening (melt) rate
 
       where(gradMagPhiEdge < 0.01_RKIND)
@@ -1830,18 +1845,38 @@ module li_subglacial_hydro
          channelDischarge = 0.0_RKIND
       end where
 
-      !Disable channels within subglacial lake interiors
+      !Ramp down channel discharge within subglacial lake interiors
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
          cell2 = cellsOnEdge(2, iEdge)
          !An edge in the interior of a subglacial lake is defined as an
          !edge where both adjacent cells have a waterThickness above bed
          !bump height.
-         if ((waterThickness(cell1) > config_SGH_bed_roughness_max) .and. &
-                 (waterThickness(cell2) > config_SGH_bed_roughness_max)) then
-                 channelDischarge(iEdge) = 0.0_RKIND
-                 !channelVelocity = 0.0_RKIND
-                 !channelArea = 0.0_RKIND
+
+         channelRadius = (2*channelArea(iEdge) / pii)
+
+         !Ramp down channelDischarge only at non-margin edges where both adjacent cells have waterThickness greater than channelRadius 
+         ! and channelRadius is larger than threshold value config_SGH_max_chnl_lake_depth. Idea is that once waterThickness is greater
+         ! than channelRadius, then the channel will "drown" and flow will instead occur through the lake. channelDischarge is thus
+         !gradually shut off as subglacial lake depth approached channel depth (channelRadius). Threshold value keeps 
+         ! incipient channels from being shut off prematurely 
+
+         if (((waterThickness(cell1) - config_SGH_bed_roughness_max) > channelRadius) &
+                .and. ((waterThickness(cell2) - config_SGH_bed_roughness_max) > channelRadius) & 
+                 .and. (channelRadius .ge. config_SGH_max_chnl_lake_depth) &
+                  .and. (hydroMarineMarginMask(iEdge) .ne. 1)) then
+
+                  !Distances between edge and cell centers
+                  cellDistance1 = ((xEdge(iEdge) - xCell(cell1))**2 + (yEdge(iEdge) - yCell(cell1))**2)**0.5
+                  cellDistance2 = ((xEdge(iEdge) - xCell(cell2))**2 + (yEdge(iEdge) - yCell(cell2))**2)**0.5
+ 
+                  !Weighted mean water thickness at edge
+                  meanWaterThickness = (waterThickness(cell1)*cellDistance1 + waterThickness(cell2)*cellDistance2) / (cellDistance1 + cellDistance2)
+                  
+                  depthRatio = min(1, (meanWaterThickness - config_SGH_bed_roughness_max) / channelRadius)
+
+                  !Ramp down channelDischarge proportional to the ratio of lake depth to channelRadius
+                  channelDischarge(iEdge) = channelDischarge(iEdge) * (1 - depthRatio)
          endif
       enddo
 
