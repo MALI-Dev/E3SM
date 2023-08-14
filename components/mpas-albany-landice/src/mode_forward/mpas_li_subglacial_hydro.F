@@ -1753,12 +1753,10 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, pointer :: nVertLevels
-      real (kind=RKIND), pointer :: channelRadius
+      real (kind=RKIND) :: channelRadius
       real (kind=RKIND), pointer :: config_SGH_max_chnl_lake_depth
-      real (kind=RKIND), pointer :: cellDistance1
-      real (kind=RKIND), pointer :: cellDistance2
-      real (kind=RKIND), pointer :: meanWaterThickness
-      real (kind=RKIND), pointer :: depthRatio
+      real (kind=RKIND) :: meanWaterThickness
+      real (kind=RKIND) :: depthRatio
       real (kind=RKIND), dimension(:), pointer :: xCell
       real (kind=RKIND), dimension(:), pointer :: yCell
       real (kind=RKIND), dimension(:), pointer :: xEdge
@@ -1853,7 +1851,7 @@ module li_subglacial_hydro
          !edge where both adjacent cells have a waterThickness above bed
          !bump height.
 
-         channelRadius = (2*channelArea(iEdge) / pii)
+         channelRadius = sqrt(2.0_RKIND*channelArea(iEdge) / pii)
 
          !Ramp down channelDischarge only at non-margin edges where both adjacent cells have waterThickness greater than channelRadius 
          ! and channelRadius is larger than threshold value config_SGH_max_chnl_lake_depth. Idea is that once waterThickness is greater
@@ -1866,17 +1864,13 @@ module li_subglacial_hydro
                  .and. (channelRadius .ge. config_SGH_max_chnl_lake_depth) &
                   .and. (hydroMarineMarginMask(iEdge) .ne. 1)) then
 
-                  !Distances between edge and cell centers
-                  cellDistance1 = ((xEdge(iEdge) - xCell(cell1))**2 + (yEdge(iEdge) - yCell(cell1))**2)**0.5
-                  cellDistance2 = ((xEdge(iEdge) - xCell(cell2))**2 + (yEdge(iEdge) - yCell(cell2))**2)**0.5
- 
                   !Weighted mean water thickness at edge
-                  meanWaterThickness = (waterThickness(cell1)*cellDistance1 + waterThickness(cell2)*cellDistance2) / (cellDistance1 + cellDistance2)
+                  meanWaterThickness = (waterThickness(cell1) + waterThickness(cell2)) / 2.0_RKIND
                   
-                  depthRatio = min(1, (meanWaterThickness - config_SGH_bed_roughness_max) / channelRadius)
+                  depthRatio = min(1.0_RKIND, (meanWaterThickness - config_SGH_bed_roughness_max) / (channelRadius + 1.0e-12_RKIND))
 
                   !Ramp down channelDischarge proportional to the ratio of lake depth to channelRadius
-                  channelDischarge(iEdge) = channelDischarge(iEdge) * (1 - depthRatio)
+                  channelDischarge(iEdge) = channelDischarge(iEdge) * (1.0_RKIND - depthRatio)
          endif
       enddo
 
