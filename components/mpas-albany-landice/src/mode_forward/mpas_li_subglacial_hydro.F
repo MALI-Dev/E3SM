@@ -1745,6 +1745,9 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: channelEffectivePressure
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: channelDiffusivity
+      real (kind=RKIND), dimension(:), pointer :: thickness
+      real (kind=RKIND), dimension(:), pointer :: channelDebugMask
+      real (kind=RKIND) :: channelOverburden
       integer, dimension(:), pointer :: waterFluxMask
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: edgeMask
@@ -1753,6 +1756,7 @@ module li_subglacial_hydro
       integer, pointer :: nVertLevels
 
       integer, pointer :: nEdgesSolve
+      integer, pointer :: nEdges
       integer :: iEdge, cell1, cell2
 
 
@@ -1775,6 +1779,7 @@ module li_subglacial_hydro
 
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
+      call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
 
       call mpas_pool_get_array(hydroPool, 'channelArea', channelArea)
       call mpas_pool_get_array(hydroPool, 'channelMelt', channelMelt)
@@ -1797,7 +1802,8 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
       call mpas_pool_get_array(hydroPool, 'channelDiffusivity', channelDiffusivity)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
-
+      call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(hydroPool, 'channelDebugMask', channelDebugMask)
       ! Calculate terms needed for opening (melt) rate
 
       where(gradMagPhiEdge < 0.01_RKIND)
@@ -1807,6 +1813,23 @@ module li_subglacial_hydro
             hydropotentialSlopeNormal
       end where
 
+      !Debugging
+      do iEdge = 1, nEdges
+         cell1 = cellsOnEdge(1, iEdge)
+         cell2 = cellsOnEdge(2, iEdge)
+
+         channelOverburden = ((thickness(cell1)+thickness(cell2)) / 2) * rhoi * gravity
+         if (waterFluxMask(iEdge) == 2) then
+            channelDebugMask(iEdge) = 1
+         elseif (.not. ((li_mask_is_grounded_ice(edgeMask(iEdge))) .or. (hydroMarineMarginMask(iEdge)==1))) then
+            channelDebugMask(iEdge) = 2
+         elseif (abs(waterFlux(iEdge)) <= 1e-15_RKIND)  then
+            channelDebugMask(iEdge) = 3
+      !   elseif ((channelEffectivePressure(iEdge) / channelOverburden) > 0.5_RKIND) then
+       !     channelDebugMask(iEdge) = 4
+         endif
+      enddo
+      
       where (waterFluxMask == 2)
          channelDischarge = 0.0_RKIND
          channelArea = 0.0_RKIND
@@ -1815,15 +1838,25 @@ module li_subglacial_hydro
       ! Note: an edge with only one grounded cell neighbor is called floating, so this logic retains channel vars
       ! on those edges to allow channel discharge across GL
       where (.not. ( (li_mask_is_grounded_ice(edgeMask)) .or. (hydroMarineMarginMask==1) ) )
-         channelArea = 0.0_RKIND
          channelDischarge = 0.0_RKIND
+         channelArea = 0.0_RKIND
       end where
 
-      ! Disable channels from forming if there is no sheet flux
-      ! TODO: Make a function of sheet dissipation threshold?
-      where (abs(waterFlux) <= 1e-10_RKIND)
-         channelArea = 0.0_RKIND
-         channelDischarge = 0.0_RKIND
+      !Disable channels if no sheet flux.
+      !This tends to only be an issue at steep hydropotential gradients
+      !with thin ice and at the grounding line. In the first case, we
+      !want to keep channels from forming at all, so make both channelArea
+      !and channelDischarge zero. At the grounding line, we want the
+      !channel to be able to reestablish its original position once the
+      !condition is no longer being met, so only zero out
+      !channelDischarge.
+
+      !TODO: Make a function of sheet dissipation threshold?
+      where ((abs(waterFlux) <= 1e-15_RKIND) .and. (hydroMarineMarginMask == 0))
+        channelDischarge = 0.0_RKIND
+        channelArea = 0.0_RKIND
+      elsewhere ((abs(waterFlux) <= 1e-15_RKIND) .and. (hydroMarineMarginMask == 1))
+        channelDischarge = 0.0_RKIND
       end where
 
       channelVelocity = channelDischarge / (channelArea + 1.0e-12_RKIND)

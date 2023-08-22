@@ -273,7 +273,8 @@
                      description="rate of channel melt production within each cell, averaged over cell area" />
                 <var name="channelDiffusivity" type="real" dimensions="nEdges Time" units="m^{2} s^{-1}"
                      description="diffusivity in channel in subglacial hydrology system" />
-
+		<var name="channelDebugMask" type="real" dimensions="nEdges Time" units="none"
+		     description="1 if waterFluxMask = 2, 2 if not grounded ice or on the hydroMarineMargin, 3 if waterFlux < 1e-10, 4 if channelEffectivePressure is greater than 50% overburden" />
 	</var_struct>
 
 <!-- ======================================================================= -->
