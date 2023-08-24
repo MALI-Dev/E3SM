@@ -1884,7 +1884,7 @@ module li_subglacial_hydro
             cell2 = cellsOnEdge(2, iEdge)
 
             if (((waterThickness(cell1) - config_SGH_bed_roughness_max) > config_SGH_max_chnl_lake_depth) &
-                    .and. ((waterThickness(cell2) - config_SGH_bed_roughness_max) > config_SGH_max_chnl_lake_depth) &
+                    .or. ((waterThickness(cell2) - config_SGH_bed_roughness_max) > config_SGH_max_chnl_lake_depth) &
                      .and. (hydroMarineMarginMask(iEdge) .ne. 1)) then
 
                      channelDischarge(iEdge) = 0.0_RKIND
