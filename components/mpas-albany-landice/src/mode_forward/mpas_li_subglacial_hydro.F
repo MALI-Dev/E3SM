@@ -863,11 +863,31 @@ module li_subglacial_hydro
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
             if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the cell outside the hydro domain
-               hydropotentialBaseSlopeNormal(iEdge) = min(0.0_RKIND, hydropotentialBaseSlopeNormal(iEdge))
-               hydropotentialSlopeNormal(iEdge) = min(0.0_RKIND, hydropotentialSlopeNormal(iEdge))
+               !set to arbitrarily small value, not zero.
+               hydropotentialBaseSlopeNormal(iEdge) = min(1.0e-15_RKIND, hydropotentialBaseSlopeNormal(iEdge))
+               hydropotentialSlopeNormal(iEdge) = min(1.0e-15_RKIND, hydropotentialSlopeNormal(iEdge))
+               
+               !Just in case values are between 0 and 1.0e-15
+               if ((hydropotentialBaseSlopeNormal(iEdge) >= 0) .and. &
+                  (hydropotentialBaseSlopeNormal(iEdge) < 1.0e-15_RKIND)) then
+
+                  hydropotentialBaseSlopeNormal(iEdge) = 1.0e-15_RKIND
+               endif
+               if ((hydropotentialSlopeNormal(iEdge) >= 0) .and. &
+                  (hydropotentialSlopeNormal(iEdge) < 1.0e-15_RKIND)) then
+
+                  hydropotentialSlopeNormal(iEdge) = 1.0e-15_RKIND
+               endif
+            
             else ! cell1 is the cell outside the hydro domain
-               hydropotentialBaseSlopeNormal(iEdge) = max(0.0_RKIND, hydropotentialBaseSlopeNormal(iEdge))
-               hydropotentialSlopeNormal(iEdge) = max(0.0_RKIND, hydropotentialSlopeNormal(iEdge))
+               hydropotentialBaseSlopeNormal(iEdge) = max(-1.0e-15_RKIND, hydropotentialBaseSlopeNormal(iEdge))
+               hydropotentialSlopeNormal(iEdge) = max(-1.0e-15_RKIND, hydropotentialSlopeNormal(iEdge))
+            
+               if ((hydropotentialSlopeNormal(iEdge) <= 0) .and. &
+                  (hydropotentialSlopeNormal(iEdge) > -1.0e-15_RKIND)) then
+
+                  hydropotentialSlopeNormal(iEdge) = -1.0e-15_RKIND
+               endif
             endif ! which cell is icefree
          endif ! if edge of grounded ice
       end do
@@ -1852,11 +1872,9 @@ module li_subglacial_hydro
       !channelDischarge.
 
       !TODO: Make a function of sheet dissipation threshold?
-      where ((abs(waterFlux) <= 1e-15_RKIND) .and. (hydroMarineMarginMask == 0))
+      where (abs(waterFlux) < 1e-15_RKIND)
         channelDischarge = 0.0_RKIND
         channelArea = 0.0_RKIND
-      elsewhere ((abs(waterFlux) <= 1e-15_RKIND) .and. (hydroMarineMarginMask == 1))
-        channelDischarge = 0.0_RKIND
       end where
 
       channelVelocity = channelDischarge / (channelArea + 1.0e-12_RKIND)
