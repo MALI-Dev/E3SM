@@ -1747,6 +1747,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: channelDiffusivity
       real (kind=RKIND), dimension(:), pointer :: waterThickness
+      real (kind=RKIND), dimension(:), pointer :: waterPressure
+      real (kind=RKIND), dimension(:), pointer :: iceThicknessHydro
       integer, dimension(:), pointer :: waterFluxMask
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: edgeMask
@@ -1811,6 +1813,8 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
       call mpas_pool_get_array(hydroPool, 'channelDiffusivity', channelDiffusivity)
       call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
+      call mpas_pool_get_array(hydroPool, 'waterPressure', waterPressure)
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(meshPool, 'xCell', xCell)
       call mpas_pool_get_array(meshPool, 'yCell', yCell)
@@ -1890,9 +1894,8 @@ module li_subglacial_hydro
                      channelDischarge(iEdge) = 0.0_RKIND
             endif
           enddo
-      case ('none')
-      end select   
-
+      end select
+      
       channelVelocity = channelDischarge / (channelArea + 1.0e-12_RKIND)
 
       ! diffusivity used only to limit channel dt right now
@@ -1932,8 +1935,23 @@ module li_subglacial_hydro
          channelOpeningRate = 0.0_RKIND
          channelClosingRate = 0.0_RKIND
       end where
-      channelChangeRate = channelOpeningRate - channelClosingRate
+      
+      select case (trim(config_SGH_inhibit_chnls_on_lakes))
+      case ('noEvolve') !keeps channels from evolving if above flotation
+         do iEdge = 1, nEdges
+            cell1 = cellsOnEdge(1, iEdge)
+            cell2 = cellsOnEdge(2, iEdge)
+         
+            if ( (waterPressure(cell1) >= (rhoi * gravity * iceThicknessHydro(cell1))) .or. &
+                    (waterPressure(cell2) >= (rhoi * gravity * iceThicknessHydro(cell2))) ) then
 
+               channelOpeningRate(iEdge) = 0.0_RKIND
+               channelClosingRate(iEdge) = 0.0_RKIND
+            endif
+         enddo
+      end select   
+
+      channelChangeRate = channelOpeningRate - channelClosingRate
 
    !--------------------------------------------------------------------
    end subroutine update_channel
