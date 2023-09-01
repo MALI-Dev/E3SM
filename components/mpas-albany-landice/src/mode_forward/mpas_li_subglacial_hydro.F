@@ -1755,11 +1755,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, pointer :: nVertLevels
-      real (kind=RKIND) :: channelRadius
       real (kind=RKIND), pointer :: config_SGH_max_chnl_lake_depth
       character (len=StrKIND), pointer :: config_SGH_inhibit_chnls_on_lakes
-      real (kind=RKIND) :: meanWaterThickness
-      real (kind=RKIND) :: depthRatio
       real (kind=RKIND), dimension(:), pointer :: xCell
       real (kind=RKIND), dimension(:), pointer :: yCell
       real (kind=RKIND), dimension(:), pointer :: xEdge
@@ -1851,38 +1848,9 @@ module li_subglacial_hydro
 
       !Inhibit Channel discharge within subglacial lake interiors
       select case (trim(config_SGH_inhibit_chnls_on_lakes))
-      case ('gradual') !gradually ramp down discharge over lakes
-         do iEdge = 1, nEdges
-            cell1 = cellsOnEdge(1, iEdge)
-            cell2 = cellsOnEdge(2, iEdge)
-            !An edge in the interior of a subglacial lake is defined as an
-            !edge where both adjacent cells have a waterThickness above bed
-            !bump height.
-
-            channelRadius = sqrt(2.0_RKIND*channelArea(iEdge) / pii)
-
-            !Ramp down channelDischarge only at non-margin edges where both adjacent cells have waterThickness greater than channelRadius 
-            ! and channelRadius is larger than threshold value config_SGH_max_chnl_lake_depth. Idea is that once waterThickness is greater
-            ! than channelRadius, then the channel will "drown" and flow will instead occur through the lake. channelDischarge is thus
-            !gradually shut off as subglacial lake depth approached channel depth (channelRadius). Threshold value keeps 
-            ! incipient channels from being shut off prematurely 
-
-            if (((waterThickness(cell1) - config_SGH_bed_roughness_max) > channelRadius) &
-                   .and. ((waterThickness(cell2) - config_SGH_bed_roughness_max) > channelRadius) & 
-                    .and. (channelRadius .ge. config_SGH_max_chnl_lake_depth) &
-                     .and. (hydroMarineMarginMask(iEdge) .ne. 1)) then
-
-                     !Mean water thickness at edge
-                     meanWaterThickness = (waterThickness(cell1) + waterThickness(cell2)) / 2.0_RKIND
-                  
-                     depthRatio = min(1.0_RKIND, (meanWaterThickness - config_SGH_bed_roughness_max) / (channelRadius + 1.0e-12_RKIND))
-
-                     !Ramp down channelDischarge proportional to the ratio of lake depth to channelRadius
-                     channelDischarge(iEdge) = channelDischarge(iEdge) * (1.0_RKIND - depthRatio)
-            endif
-         enddo
+      
       !Completely turn off channel discharge if lake depth above threshold value
-      case ('threshold')   
+      case ('lakeDepth')
          do iEdge = 1, nEdges
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
@@ -1894,6 +1862,21 @@ module li_subglacial_hydro
                      channelDischarge(iEdge) = 0.0_RKIND
             endif
           enddo
+          
+      case ('flotation') !turn off channelDischarge if above flotation
+         do iEdge = 1, nEdges
+            cell1 = cellsOnEdge(1, iEdge)
+            cell2 = cellsOnEdge(2, iEdge)
+         
+            if ( (waterPressure(cell1) >= (rhoi * gravity * iceThicknessHydro(cell1))) .or. &
+                    (waterPressure(cell2) >= (rhoi * gravity * iceThicknessHydro(cell2))) .and. &
+                    (hydroMarineMarginMask(iEdge) .ne. 1) ) then
+
+               channelDischarge(iEdge) = 0.0_RKIND
+            endif
+         enddo
+      case('none')
+      case default
       end select
       
       channelVelocity = channelDischarge / (channelArea + 1.0e-12_RKIND)
@@ -1936,21 +1919,6 @@ module li_subglacial_hydro
          channelClosingRate = 0.0_RKIND
       end where
       
-      select case (trim(config_SGH_inhibit_chnls_on_lakes))
-      case ('noEvolve') !keeps channels from evolving if above flotation
-         do iEdge = 1, nEdges
-            cell1 = cellsOnEdge(1, iEdge)
-            cell2 = cellsOnEdge(2, iEdge)
-         
-            if ( (waterPressure(cell1) >= (rhoi * gravity * iceThicknessHydro(cell1))) .or. &
-                    (waterPressure(cell2) >= (rhoi * gravity * iceThicknessHydro(cell2))) ) then
-
-               channelOpeningRate(iEdge) = 0.0_RKIND
-               channelClosingRate(iEdge) = 0.0_RKIND
-            endif
-         enddo
-      end select   
-
       channelChangeRate = channelOpeningRate - channelClosingRate
 
    !--------------------------------------------------------------------

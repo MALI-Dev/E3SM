@@ -126,11 +126,11 @@
                 />
 
 		<nml_option name="config_SGH_inhibit_chnls_on_lakes" type="character" default_value="none" units="none"
-			description="Option to inhibit growth of channels over subglacial lakes. 'threshold' zeros out channelDischarge if subglacial lake depth is greater than config_SGH_max_chnl_lake_depth. 'gradual' gradually ramps down channelDischarge once a channelRadius over a subglacial lake exceeds config_SGH_max_chnl_lake_depth. channelDischarge is zero once lake depth exceeds channelRadius. 'noEvolve' keeps channels from growing/shrinking when above flotation."
-			possible_values="'none', 'threshold', 'gradual', 'noEvolve'"
+			description="Option to inhibit growth of channels over subglacial lakes. 'lakeDepth' zeros out channelDischarge if subglacial lake depth is greater than config_SGH_max_chnl_lake_depth. 'flotation' zeros out channelDischarge when above flotation."
+			possible_values="'none', 'lakeDepth', 'flotation'"
 		/>
                 <nml_option name="config_SGH_max_chnl_lake_depth" type="real" default_value="0.0" units="m"
-                        description="If 'threshold': maximum depth of subglacial lakes before channelDischarge is turned off. If 'gradual': Maximum radius a channel can achieve within a subglacial lake before the channel is allowed to drown and channel discharge ramps down. Once a channel radius exceeds this value, channel discharge will decrease proportional to the lake depth to channel radius ratio."
+                        description="if config_SGH_inhibit_chnls_on_lakes = 'lakeDepth': Maximum depth of subglacial lake before channelDischarge is turned off. "
                         possible_values="positive real number"
                 />
 		
