@@ -1843,8 +1843,8 @@ module li_subglacial_hydro
             channelDebugMask(iEdge) = 1
          elseif (.not. ((li_mask_is_grounded_ice(edgeMask(iEdge))) .or. (hydroMarineMarginMask(iEdge)==1))) then
             channelDebugMask(iEdge) = 2
-         elseif (abs(waterFlux(iEdge)) <= 1e-15_RKIND)  then
-            channelDebugMask(iEdge) = 3
+         !elseif (abs(waterFlux(iEdge)) <= 1e-15_RKIND)  then
+          !  channelDebugMask(iEdge) = 3
       !   elseif ((channelEffectivePressure(iEdge) / channelOverburden) > 0.5_RKIND) then
        !     channelDebugMask(iEdge) = 4
          endif
@@ -1872,10 +1872,10 @@ module li_subglacial_hydro
       !channelDischarge.
 
       !TODO: Make a function of sheet dissipation threshold?
-      where (abs(waterFlux) < 1e-15_RKIND)
-        channelDischarge = 0.0_RKIND
-        channelArea = 0.0_RKIND
-      end where
+      !where (abs(waterFlux) < 1e-15_RKIND)
+       ! channelDischarge = 0.0_RKIND
+        !channelArea = 0.0_RKIND
+      !end where
 
       channelVelocity = channelDischarge / (channelArea + 1.0e-12_RKIND)
 
