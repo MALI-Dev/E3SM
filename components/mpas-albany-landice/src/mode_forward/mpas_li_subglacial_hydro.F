@@ -864,30 +864,46 @@ module li_subglacial_hydro
             cell2 = cellsOnEdge(2, iEdge)
             if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the cell outside the hydro domain
                !set to arbitrarily small value, not zero.
-               hydropotentialBaseSlopeNormal(iEdge) = min(1.0e-15_RKIND, hydropotentialBaseSlopeNormal(iEdge))
-               hydropotentialSlopeNormal(iEdge) = min(1.0e-15_RKIND, hydropotentialSlopeNormal(iEdge))
+               !commented for debugging
+               !hydropotentialBaseSlopeNormal(iEdge) = min(1.0e-15_RKIND, hydropotentialBaseSlopeNormal(iEdge))
+               !hydropotentialSlopeNormal(iEdge) = min(1.0e-15_RKIND, hydropotentialSlopeNormal(iEdge))
+               !debugging
+               hydropotentialBaseSlopeNormal(iEdge) = min(0.0_RKIND, hydropotentialBaseSlopeNormal(iEdge))
+               hydropotentialSlopeNormal(iEdge) = min(0.0_RKIND, hydropotentialSlopeNormal(iEdge))
                
                !Just in case values are between 0 and 1.0e-15
-               if ((hydropotentialBaseSlopeNormal(iEdge) >= 0) .and. &
-                  (hydropotentialBaseSlopeNormal(iEdge) < 1.0e-15_RKIND)) then
+               !commented for debugging
+               !if ((hydropotentialBaseSlopeNormal(iEdge) >= 0) .and. &
+               !   (hydropotentialBaseSlopeNormal(iEdge) < 1.0e-15_RKIND)) then
 
-                  hydropotentialBaseSlopeNormal(iEdge) = 1.0e-15_RKIND
-               endif
-               if ((hydropotentialSlopeNormal(iEdge) >= 0) .and. &
-                  (hydropotentialSlopeNormal(iEdge) < 1.0e-15_RKIND)) then
+                !  hydropotentialBaseSlopeNormal(iEdge) = 1.0e-15_RKIND
+               !endif
+               !if ((hydropotentialSlopeNormal(iEdge) >= 0) .and. &
+                !  (hydropotentialSlopeNormal(iEdge) < 1.0e-15_RKIND)) then
 
-                  hydropotentialSlopeNormal(iEdge) = 1.0e-15_RKIND
-               endif
+                 ! hydropotentialSlopeNormal(iEdge) = 1.0e-15_RKIND
+               !endif
             
             else ! cell1 is the cell outside the hydro domain
-               hydropotentialBaseSlopeNormal(iEdge) = max(-1.0e-15_RKIND, hydropotentialBaseSlopeNormal(iEdge))
-               hydropotentialSlopeNormal(iEdge) = max(-1.0e-15_RKIND, hydropotentialSlopeNormal(iEdge))
+               !commented for debugging
+               !hydropotentialBaseSlopeNormal(iEdge) = max(-1.0e-15_RKIND, hydropotentialBaseSlopeNormal(iEdge))
+               !hydropotentialSlopeNormal(iEdge) = max(-1.0e-15_RKIND, hydropotentialSlopeNormal(iEdge))
             
-               if ((hydropotentialSlopeNormal(iEdge) <= 0) .and. &
-                  (hydropotentialSlopeNormal(iEdge) > -1.0e-15_RKIND)) then
+               !debugging
+               hydropotentialBaseSlopeNormal(iEdge) = max(0.0_RKIND, hydropotentialBaseSlopeNormal(iEdge))
+               hydropotentialSlopeNormal(iEdge) = max(0.0_RKIND, hydropotentialSlopeNormal(iEdge))
+              
+              !commented for debugging
+              ! if ((hydropotentialSlopeNormal(iEdge) <= 0) .and. &
+               !   (hydropotentialSlopeNormal(iEdge) > -1.0e-15_RKIND)) then
 
-                  hydropotentialSlopeNormal(iEdge) = -1.0e-15_RKIND
-               endif
+                !  hydropotentialSlopeNormal(iEdge) = -1.0e-15_RKIND
+              ! endif
+              !if ((hydropotentialBaseSlopeNormal(iEdge) <= 0) .and. &
+               !   (hydropotentialSlopeNormal(iEdge) > -1.0e-15_RKIND)) then
+
+                  !hydropotentialBaseSlopeNormal(iEdge) = -1.0e-15_RKIND
+               !endif
             endif ! which cell is icefree
          endif ! if edge of grounded ice
       end do
@@ -1843,8 +1859,8 @@ module li_subglacial_hydro
             channelDebugMask(iEdge) = 1
          elseif (.not. ((li_mask_is_grounded_ice(edgeMask(iEdge))) .or. (hydroMarineMarginMask(iEdge)==1))) then
             channelDebugMask(iEdge) = 2
-         !elseif (abs(waterFlux(iEdge)) <= 1e-15_RKIND)  then
-          !  channelDebugMask(iEdge) = 3
+         elseif (gradMagPhiEdge(iEdge) < 0.01_RKIND)  then
+            channelDebugMask(iEdge) = 3
       !   elseif ((channelEffectivePressure(iEdge) / channelOverburden) > 0.5_RKIND) then
        !     channelDebugMask(iEdge) = 4
          endif
