@@ -856,6 +856,36 @@ module li_subglacial_hydro
          waterPressureSlopeNormal(iEdge) = (waterPressure(cell2) - waterPressure(cell1)) / dcEdge(iEdge)
       end do
 
+      ! At terrestrial margin, ignore the downslope bed topography gradient.  Including it can lead to unrealistically large
+      ! hydropotential gradients and unstable channel growth.
+      ! We also want to do this at marine margins because otherwise the offshore topography can create a barrier to flow,
+      ! but that is unrealistic.
+      ! So for all boundaries of the hydro system where outflow is occuring,
+      ! the hydropotential at the margin should be determined by the geometry
+      ! at the edge of the cell in a 1-sided sense.
+      do iEdge = 1, nEdges
+         if ( (li_mask_is_margin(edgeMask(iEdge)) .and. li_mask_is_grounded_ice(edgeMask(iEdge))) .or. &
+             (hydroMarineMarginMask(iEdge)==1)) then
+            cell1 = cellsOnEdge(1, iEdge)
+            cell2 = cellsOnEdge(2, iEdge)
+            if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the icefree cell - replace phi there with cell1 Phig
+               hydropotentialBaseSlopeNormal(iEdge) = (rho_water * gravity * bedTopography(cell1) + &
+                  max(rhoo * gravity * (config_sea_level - bedTopography(cell1)), 0.0_RKIND) - &
+                  hydropotentialBase(cell1)) / dcEdge(iEdge)
+               hydropotentialSlopeNormal(iEdge) = (rho_water * gravity * bedTopography(cell1) + &
+                  max(rhoo * gravity * (config_sea_level - bedTopography(cell1)), 0.0_RKIND) - &
+                  hydropotential(cell1)) / dcEdge(iEdge)
+            else ! cell1 is the icefree cell - replace phi there with cell2 Phig
+               hydropotentialBaseSlopeNormal(iEdge) = (hydropotentialBase(cell2) - &
+                  ( rho_water * gravity * bedTopography(cell2) + &
+                    max(rhoo * gravity * (config_sea_level - bedTopography(cell2)), 0.0_RKIND) ) ) / dcEdge(iEdge)
+               hydropotentialSlopeNormal(iEdge) = (hydropotential(cell2) - &
+                  ( rho_water * gravity * bedTopography(cell2) + &
+                    max(rhoo * gravity * (config_sea_level - bedTopography(cell2)), 0.0_RKIND) ) ) / dcEdge(iEdge)
+            endif ! which cell is icefree
+         endif ! if edge of grounded ice
+      end do
+
       ! At boundaries of hydro domain, disallow inflow.  Allow outflow if hydropotential gradient requires it.
       do iEdge = 1, nEdges
          if ( (li_mask_is_margin(edgeMask(iEdge)) .and. li_mask_is_grounded_ice(edgeMask(iEdge))) .or. &
@@ -907,37 +937,7 @@ module li_subglacial_hydro
             endif ! which cell is icefree
          endif ! if edge of grounded ice
       end do
-
-      ! At terrestrial margin, ignore the downslope bed topography gradient.  Including it can lead to unrealistically large
-      ! hydropotential gradients and unstable channel growth.
-      ! We also want to do this at marine margins because otherwise the offshore topography can create a barrier to flow,
-      ! but that is unrealistic.
-      ! So for all boundaries of the hydro system where outflow is occuring,
-      ! the hydropotential at the margin should be determined by the geometry
-      ! at the edge of the cell in a 1-sided sense.
-      do iEdge = 1, nEdges
-         if ( (li_mask_is_margin(edgeMask(iEdge)) .and. li_mask_is_grounded_ice(edgeMask(iEdge))) .or. &
-             (hydroMarineMarginMask(iEdge)==1)) then
-            cell1 = cellsOnEdge(1, iEdge)
-            cell2 = cellsOnEdge(2, iEdge)
-            if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the icefree cell - replace phi there with cell1 Phig
-               hydropotentialBaseSlopeNormal(iEdge) = (rho_water * gravity * bedTopography(cell1) + &
-                  max(rhoo * gravity * (config_sea_level - bedTopography(cell1)), 0.0_RKIND) - &
-                  hydropotentialBase(cell1)) / dcEdge(iEdge)
-               hydropotentialSlopeNormal(iEdge) = (rho_water * gravity * bedTopography(cell1) + &
-                  max(rhoo * gravity * (config_sea_level - bedTopography(cell1)), 0.0_RKIND) - &
-                  hydropotential(cell1)) / dcEdge(iEdge)
-            else ! cell1 is the icefree cell - replace phi there with cell2 Phig
-               hydropotentialBaseSlopeNormal(iEdge) = (hydropotentialBase(cell2) - &
-                  ( rho_water * gravity * bedTopography(cell2) + &
-                    max(rhoo * gravity * (config_sea_level - bedTopography(cell2)), 0.0_RKIND) ) ) / dcEdge(iEdge)
-               hydropotentialSlopeNormal(iEdge) = (hydropotential(cell2) - &
-                  ( rho_water * gravity * bedTopography(cell2) + &
-                    max(rhoo * gravity * (config_sea_level - bedTopography(cell2)), 0.0_RKIND) ) ) / dcEdge(iEdge)
-            endif ! which cell is icefree
-         endif ! if edge of grounded ice
-      end do
-
+      
       ! zero gradients at boundaries of the mesh
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
