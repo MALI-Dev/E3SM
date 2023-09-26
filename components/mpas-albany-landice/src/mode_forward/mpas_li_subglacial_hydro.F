@@ -860,7 +860,8 @@ module li_subglacial_hydro
       ! The hydropotential at the terrestrial margin should be determined by the geometry
       ! at the edge of the cell in a 1-sided sense.
       do iEdge = 1, nEdges
-         if (li_mask_is_margin(edgeMask(iEdge)) .and. li_mask_is_grounded_ice(edgeMask(iEdge))) then
+         if (li_mask_is_margin(edgeMask(iEdge)) .and. (li_mask_is_grounded_ice(edgeMask(iEdge))) &
+                 .and. (hydroMarineMarginMask(iEdge) .ne. 1)) then
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
             if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the icefree cell - replace phi there with cell1 Phig
