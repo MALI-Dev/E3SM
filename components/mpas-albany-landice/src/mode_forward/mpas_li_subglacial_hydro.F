@@ -757,6 +757,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterFlux
       real (kind=RKIND), dimension(:), pointer :: waterFluxAdvec
       real (kind=RKIND), dimension(:), pointer :: waterFluxDiffu
+      real (kind=RKIND), dimension(:), pointer :: channelDebugMask
       integer, dimension(:), pointer :: waterFluxMask
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:,:), pointer :: edgeSignOnCell
@@ -834,7 +835,7 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'waterFluxMask', waterFluxMask)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
-
+      call mpas_pool_get_array(hydroPool, 'channelDebugMask', channelDebugMask)
 
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
@@ -891,9 +892,11 @@ module li_subglacial_hydro
             if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the cell outside the hydro domain
                     if (hydroMarineMarginMask(iEdge) == 1) then
                             if (hydropotentialBaseSlopeNormal(iEdge) > -1.0_RKIND) then
-                                 hydropotentialBaseSlopeNormal(iEdge) = -1.0_RKIND
+                                channelDebugMask(iEdge) = 1
+                                hydropotentialBaseSlopeNormal(iEdge) = -1.0_RKIND
                             endif
                             if (hydropotentialSlopeNormal(iEdge) > -1.0_RKIND) then
+                                 channelDebugMask(iEdge) = 1
                                  hydropotentialSlopeNormal(iEdge) = -1.0_RKIND
                             endif
                     endif
@@ -1738,8 +1741,6 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: channelDiffusivity
       real (kind=RKIND), dimension(:), pointer :: thickness
-      real (kind=RKIND), dimension(:), pointer :: channelDebugMask
-      real (kind=RKIND) :: channelOverburden
       integer, dimension(:), pointer :: waterFluxMask
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: edgeMask
@@ -1795,7 +1796,6 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'channelDiffusivity', channelDiffusivity)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
-      call mpas_pool_get_array(hydroPool, 'channelDebugMask', channelDebugMask)
       ! Calculate terms needed for opening (melt) rate
 
       where(gradMagPhiEdge < 0.01_RKIND)
@@ -1805,23 +1805,6 @@ module li_subglacial_hydro
             hydropotentialSlopeNormal
       end where
 
-      !Debugging
-      do iEdge = 1, nEdges
-         cell1 = cellsOnEdge(1, iEdge)
-         cell2 = cellsOnEdge(2, iEdge)
-
-         channelOverburden = ((thickness(cell1)+thickness(cell2)) / 2) * rhoi * gravity
-         if (waterFluxMask(iEdge) == 2) then
-            channelDebugMask(iEdge) = 1
-         elseif (.not. ((li_mask_is_grounded_ice(edgeMask(iEdge))) .or. (hydroMarineMarginMask(iEdge)==1))) then
-            channelDebugMask(iEdge) = 2
-         elseif (gradMagPhiEdge(iEdge) < 0.01_RKIND)  then
-            channelDebugMask(iEdge) = 3
-      !   elseif ((channelEffectivePressure(iEdge) / channelOverburden) > 0.5_RKIND) then
-       !     channelDebugMask(iEdge) = 4
-         endif
-      enddo
-      
       where (waterFluxMask == 2)
          channelDischarge = 0.0_RKIND
          channelArea = 0.0_RKIND

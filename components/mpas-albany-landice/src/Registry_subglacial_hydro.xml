@@ -274,7 +274,7 @@
                 <var name="channelDiffusivity" type="real" dimensions="nEdges Time" units="m^{2} s^{-1}"
                      description="diffusivity in channel in subglacial hydrology system" />
 		<var name="channelDebugMask" type="real" dimensions="nEdges Time" units="none"
-		     description="1 if waterFluxMask = 2, 2 if not grounded ice or on the hydroMarineMargin, 3 if waterFlux < 1e-10, 4 if channelEffectivePressure is greater than 50% overburden" />
+		     description="1 is hydropotentialSlopeNormal and hydropotentialBaseSlopeNormal forced to 1 Pa/m to prevent inflow at the grounding line" />
 	</var_struct>
 
 <!-- ======================================================================= -->
