@@ -1857,7 +1857,7 @@ module li_subglacial_hydro
         enddo
 
 
-        channelPressureFreeze = iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
+        channelPressureFreeze = -1.0_RKIND * iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
          abs(channelDischarge + waterFlux * config_SGH_incipient_channel_width) &
          * waterPressureSlopeNormal / latent_heat_ice
 
