@@ -1833,7 +1833,7 @@ module li_subglacial_hydro
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, pointer :: nVertLevels
 
-      integer, pointer :: nEdgesSolve
+      integer, pointer :: nEdgesSolve, nEdges
       integer :: iEdge, cell1, cell2
 
 
@@ -1855,6 +1855,7 @@ module li_subglacial_hydro
       call mpas_pool_get_config(liConfigs, 'config_SGH_include_pressure_melt', config_SGH_include_pressure_melt)
 
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
+      call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
 
       call mpas_pool_get_array(hydroPool, 'channelArea', channelArea)
@@ -1920,6 +1921,14 @@ module li_subglacial_hydro
       channelMelt = (abs(channelDischarge * hydropotentialSlopeNormal) &  ! channel dissipation
                   +  abs(waterFlux * hydropotentialSlopeNormal * config_SGH_incipient_channel_width) & !some sheet dissipation
                   ) / latent_heat_ice
+      
+      !No waterPressureSlopeNormal at grounding line
+      do iEdge = 1, nEdges
+          if (hydroMarineMarginMask(iEdge) == 1) then
+             waterPressureSlopeNormal(iEdge) = 0.0_RKIND
+          endif
+      enddo
+
       channelPressureFreeze = -1.0_RKIND * iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
          (channelDischarge + waterFlux * config_SGH_incipient_channel_width) &
          * waterPressureSlopeNormal / latent_heat_ice
