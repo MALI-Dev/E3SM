@@ -1845,7 +1845,19 @@ module li_subglacial_hydro
       channelMelt = (abs(channelDischarge * hydropotentialSlopeNormal) &  ! channel dissipation
                   +  abs(waterFlux * hydropotentialSlopeNormal * config_SGH_incipient_channel_width) & !some sheet dissipation
                   ) / latent_heat_ice
-      channelPressureFreeze = iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
+        
+        do iEdge = 1, nEdges
+            if (hydroMarineMarginMask(iEdge) == 1) then
+               if (waterPressureSlopeNormal(iEdge) > 0) then
+                  waterPressureSlopeNormal(iEdge) = 0.5_RKIND
+               else
+                  waterPressureSlopeNormal(iEdge) = -0.5_RKIND
+               endif
+            endif
+        enddo
+
+
+        channelPressureFreeze = iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
          abs(channelDischarge + waterFlux * config_SGH_incipient_channel_width) &
          * waterPressureSlopeNormal / latent_heat_ice
 
