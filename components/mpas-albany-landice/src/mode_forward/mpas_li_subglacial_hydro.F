@@ -258,7 +258,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:,:), pointer :: temperature, flowParamA
       real (kind=RKIND), dimension(:), pointer :: Wtill, WtillOld
       real (kind=RKIND), dimension(:), pointer :: basalMeltInput
-      real (kind=RKIND), dimension(:), pointer :: groundedBasalMassBal
+      real (kind=RKIND), dimension(:), pointer :: groundedBasalMassBalApplied
       real (kind=RKIND), dimension(:), pointer :: basalHeatFlux
       real (kind=RKIND), dimension(:), pointer :: basalFrictionFlux
       real (kind=RKIND), dimension(:), pointer :: externalWaterInput
@@ -369,8 +369,8 @@ module li_subglacial_hydro
              call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
              call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
              call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
-             call mpas_pool_get_array(geometryPool,'groundedBasalMassBal',groundedBasalMassBal)
-             basalMeltInput = -1.0_RKIND * groundedBasalMassBal ! TODO: Ensure positive flux?
+             call mpas_pool_get_array(geometryPool,'groundedBasalMassBalApplied',groundedBasalMassBalApplied)
+             basalMeltInput = -1.0_RKIND * groundedBasalMassBalApplied ! TODO: Ensure positive flux?
          elseif (trim(config_SGH_basal_melt) == 'basal_heat') then
              call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
              call mpas_pool_get_subpool(block % structs, 'thermal', thermalPool)
