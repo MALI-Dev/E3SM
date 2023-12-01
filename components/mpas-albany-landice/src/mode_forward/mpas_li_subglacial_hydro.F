@@ -1858,7 +1858,7 @@ module li_subglacial_hydro
 
 
         channelPressureFreeze = -1.0_RKIND * iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
-         abs(channelDischarge + waterFlux * config_SGH_incipient_channel_width) &
+         (channelDischarge + waterFlux * config_SGH_incipient_channel_width) &
          * waterPressureSlopeNormal / latent_heat_ice
 
       if (config_SGH_include_pressure_melt) then
