@@ -1918,21 +1918,6 @@ module li_subglacial_hydro
          channelArea = 0.0_RKIND
       end where
 
-      !Disable channels if no sheet flux.
-      !This tends to only be an issue at steep hydropotential gradients
-      !with thin ice and at the grounding line. In the first case, we
-      !want to keep channels from forming at all, so make both channelArea
-      !and channelDischarge zero. At the grounding line, we want the
-      !channel to be able to reestablish its original position once the
-      !condition is no longer being met, so only zero out
-      !channelDischarge.
-
-      !TODO: Make a function of sheet dissipation threshold?
-      !where (abs(waterFlux) < 1e-15_RKIND)
-       ! channelDischarge = 0.0_RKIND
-        !channelArea = 0.0_RKIND
-      !end where
-      
       !Inhibit Channel discharge within subglacial lake interiors
       select case (trim(config_SGH_inhibit_chnls_on_lakes))
 
