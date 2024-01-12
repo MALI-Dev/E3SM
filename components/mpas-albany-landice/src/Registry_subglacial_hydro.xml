@@ -120,15 +120,22 @@
                             description="calculate time-varying forcing specified by SHMIP experiments C or D"
 		            possible_values="'none', 'C1'-'C4', 'D1'-'D5'"
 		/>
-        <nml_option name="config_SGH_basal_melt" type="character" default_value="file" units="none"
+      <nml_option name="config_SGH_basal_melt" type="character" default_value="file" units="none"
                             description="source for the basalMeltInput term.  'file' takes whatever field was input and performs no calculation.  'thermal' uses the groundedBasalMassBal field calculated by the thermal model.  'basal_heat' calculates a melt rate assuming the entirety of the basal heat flux (basalFrictionFlux+basalHeatFlux) goes to melting ice at the bed.  This is calculated in the SGH module and is independent of any calculations in the thermal model."
 		            possible_values="'file', 'thermal', 'basal_heat'"
 		/>
-
-		  <nml_option name="config_SGH_iter_smooth_waterPressureSlopeNormal" type="integer" default_value="1" units="none"
+		<nml_option name="config_SGH_iter_smooth_waterPressureSlopeNormal" type="integer" default_value="1" units="none"
 					 description="number of iterations to smooth waterPressure over when calculating waterPressureSlopeNormal. Used only to keep channelPressureFreeze stable and will not affect other aspects of the model that rely on waterPressure." 	
 					 possible_values="positive integer or zero"
+	   />
+		<nml_option name="config_SGH_inhibit_chnls_on_lakes" type="character" default_value="none" units="none"
+			description="Option to inhibit growth of channels over subglacial lakes. 'lakeDepth' zeros out channelDischarge if subglacial lake depth is greater than config_SGH_max_chnl_lake_depth. 'flotation' zeros out channelDischarge when above flotation."
+			possible_values="'none', 'lakeDepth', 'flotation'"
 		/>
+      <nml_option name="config_SGH_max_chnl_lake_depth" type="real" default_value="0.0" units="m"
+                        description="if config_SGH_inhibit_chnls_on_lakes = 'lakeDepth': Maximum depth of subglacial lake before channelDischarge is turned off. "
+                        possible_values="positive real number"
+      />		  
 	</nml_record>
 
 <!-- ======================================================================= -->
@@ -247,7 +254,11 @@
                 <var name="deltatSGH" type="real" dimensions="Time" units="s"
                      description="time step used for evolving subglacial hydrology system" />
 					 <var name="pressureField" type="real" dimensions="nCells Time" units="Pa"
-							description="Dummy variable used for smoothing waterPressureSlopeNormal" />
+						   description="Dummy variable used for smoothing waterPressureSlopeNormal" />
+                <var name="totalGroundingLineDischargeCell" type="real" dimensions="Time nCells" units="m^{3} s^{-1}"
+		               description="total discharge across the grounding line, extrapolated from edge to adjacent ungrounded cell" />	
+	     	       <var name="totalGroundingLineDischargeEdge" type="real" dimensions="Time nEdges" units="m^{3} s^{-1}"
+		               description="total discharge across grounding line edge" />
 				  <!-- channel variables -->
                 <var name="channelArea" type="real" dimensions="nEdges Time" units="m^{2}"
                      description="area of channel in subglacial hydrology system" />
@@ -281,9 +292,7 @@
                      description="rate of channel melt production within each cell, averaged over cell area" />
                 <var name="channelDiffusivity" type="real" dimensions="nEdges Time" units="m^{2} s^{-1}"
                      description="diffusivity in channel in subglacial hydrology system" />
-		<var name="channelDebugMask" type="real" dimensions="nEdges Time" units="none"
-		     description="1 is hydropotentialSlopeNormal and hydropotentialBaseSlopeNormal forced to 1 Pa/m to prevent inflow at the grounding line" />
-	</var_struct>
+		  </var_struct>
 
 <!-- ======================================================================= -->
 
