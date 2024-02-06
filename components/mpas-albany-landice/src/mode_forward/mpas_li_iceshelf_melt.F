@@ -582,6 +582,117 @@ module li_iceshelf_melt
 !***********************************************************************
 
 
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!  !  routine basal_melt_draft_dependence
+!
+!> \brief Calculate ice shelf melt rate from depth param.
+!> \author Shivaprakash Muruganandham
+!> \date   February 2024
+!> \details
+!>  Melt rate parameterization from:
+!> Seroussi, H., Y. Nakayama, E. Larour, D. Menemenlis, M. Morlighem, E. Rignot, and A. Khazendar (2017),
+!> Continued retreat of Thwaites Glacier, West Antarctica, controlled by bed topography and ocean circulation,
+!> Geophys. Res. Lett., 1-9, doi:10.1002/2017GL072910.
+!> for Thwaites Glacier.
+!> Specifically, this is similar to the linear fit of melt with shelf draft from the Supplemental Information, Figure S1.
+!> The linear relation is modified by a:
+!>   * depth above which there is no melt (Antarctic Surface Water saturation)
+!>   * a maximum melt rate (Circumpolar Deep Water saturation)
+!>   * a depth below which melt stops increasing (minimum sill height)
+
+!-----------------------------------------------------------------------
+
+    subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
+                    config_sea_level, config_ice_density, nCellsSolve, err)
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+      !real(kind=RKIND), pointer, intent(in) :: daysSinceStart
+      !real (kind=RKIND), dimension(:), pointer, intent(in) :: lowerSurface  !< lower surface elevation (m)
+      !integer, dimension(:), pointer, intent(in) :: &
+      !     cellMask                    !< bit mask describing whether ice is floating, dynamically active, etc.
+      !real(kind=RKIND), pointer, intent(in) :: &
+      !     config_sea_level !< sea level (m) relative to z = 0
+      !real (kind=RKIND), pointer, intent(in) :: config_ice_density !< ice density
+      !integer, pointer :: &
+      !     nCellsSolve                 !< number of locally owned cells
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      !real (kind=RKIND), dimension(:), pointer, intent(out) :: &
+      !     floatingBasalMassBal      !< basal mass balance for floating ice
+      !integer, intent(out) :: err !< Output: error flag
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      !real (kind=RKIND) :: slopeSer  ! slope of relation between depth and melt rate
+      !real (kind=RKIND) :: interceptSer  ! depth at which melting goes to 0
+      !real (kind=RKIND) :: maxMeltSer  ! maximum allowable melt rate
+      !real (kind=RKIND) :: sillDepth  ! depth below which melt rate no longer increases
+      !real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_amplitude
+      !real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_period
+      !real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_phase
+      !real(kind=RKIND) :: hCavity               ! depth of ice cavity beneath floating ice (m)
+      !real(kind=RKIND) :: zDraft                ! draft of floating ice (m below sea level)
+      !integer :: iCell
+
+
+      !err = 0
+
+      !call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_amplitude', &
+      !   config_basal_mass_bal_seroussi_amplitude) ! meters
+      !call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_period', &
+      !   config_basal_mass_bal_seroussi_period) ! years
+      !call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_phase', &
+      !   config_basal_mass_bal_seroussi_phase) ! cycles
+
+      !slopeSer = 0.088_RKIND ! slope of relation between depth and melt rate (melt (m/yr) per depth (m))
+      !interceptSer = -100.0_RKIND  ! depth (m) at which melting goes to 0 (negative meaning below sea level)
+      !maxMeltSer = 50.0_RKIND ! maximum allowable melt rate (m/yr) (positive meaning melting)
+      !sillDepth = -650.0_RKIND ! depth below which melt stops increasing (m) (negative meaning below sea level)
+
+      !if (config_basal_mass_bal_seroussi_period <= 0.0_RKIND) then
+      !   call mpas_log_write("Value for config_basal_mass_bal_seroussi_period has to be a positive real value.", MPAS_LOG_ERR)
+      !   err = ior(err, 1)
+      !endif
+
+      ! Modify intercept height for variability parameters
+      !interceptSer = interceptSer + config_basal_mass_bal_seroussi_amplitude * &
+      !        sin( (2.0_RKIND * pii / config_basal_mass_bal_seroussi_period) * (daysSinceStart/365.0_RKIND) &
+      !            + 2.0_RKIND * pii * config_basal_mass_bal_seroussi_phase)
+
+      ! Initialize before computing
+      !floatingBasalMassBal(:) = 0.0_RKIND
+
+      !do iCell = 1, nCellsSolve
+
+         ! Shut off melt at an arbitrary shallow depth to discourage ice from disappearing.
+         !if ( (li_mask_is_floating_ice(cellMask(iCell))) .and. (lowerSurface(iCell) < -10.0_RKIND) ) then
+            ! ice is present and floating
+
+            !zDraft = lowerSurface(iCell) - config_sea_level
+            ! Coefficients for m/yr melt rate (in units of Seroussi figure but without negative meaning melting)
+            !floatingBasalMassBal(iCell) = max(-1.0_RKIND * maxMeltSer, min(0.0_RKIND, slopeSer * &
+            !   (max(zDraft, sillDepth) - interceptSer)))
+
+         !endif   ! ice is present
+      !enddo   ! iCell
+
+      ! change units from m/yr to kg/m2/s
+      !floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density / scyr
+
+
+    end subroutine basal_melt_draft_dependence
+!-----------------------------------------------------------------------
+
 
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 !
