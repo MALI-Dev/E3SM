@@ -351,6 +351,10 @@
                             description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'seroussi' use hardcoded fields defined in the code applicable to Thwaites Glacier. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
                             possible_values="'none', 'file', 'constant', 'mismip', 'seroussi', 'temperature_profile', 'ismip6'"
                 />
+                <nml_option name="config_bmlt_variability_modifier" type="logical" default_value=".false." units="unitless"
+                            description="If true, ... "
+                            possible_values=".true. or .false."
+                />
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^{-2}"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."
 		            possible_values="Any positive real value"
@@ -1223,6 +1227,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="floatingBasalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="Potential basal mass balance on floating regions"
+                />
+                <var name="floatingBasalMassBalAdjustment" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                     description="adjustment to floatingBasalMassBal.  Currently used to apply a variability modifier"
                 />
                 <var name="basalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="applied basal mass balance"
