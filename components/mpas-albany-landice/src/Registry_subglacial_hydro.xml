@@ -244,7 +244,7 @@
                 <var name="closingRate" type="real" dimensions="nCells Time" units="m s^{-1}"
                      description="rate of ice creep closure in subglacial hydrology system" />
                 <var name="zeroOrderSum" type="real" dimensions="nCells Time" units="m s^{-1}"
-                        description="sum of zero order terms in subglacial hydrology system" />
+                     description="sum of zero order terms in subglacial hydrology system" />
                 <var name="deltatSGHadvec" type="real" dimensions="Time" units="s"
                      description="advective CFL limited time step length in subglacial hydrology system" />
                 <var name="deltatSGHdiffu" type="real" dimensions="Time" units="s"
@@ -291,11 +291,7 @@
                 <var name="channelMeltInputCell" type="real" dimensions="nCells Time" units="m s^{-1}"
                      description="rate of channel melt production within each cell, averaged over cell area" />
                 <var name="channelDiffusivity" type="real" dimensions="nEdges Time" units="m^{2} s^{-1}"
-                        description="diffusivity in channel in subglacial hydrology system" />
-                <var name="diffMassConserveRate" type="real" dimensions="nCells Time" units="m s^{-1}"
-                        description="difference between cavity opening/closing and mass conservation definitions of waterThickness change (Eqs. 48 and 54 in Hoffman 2018, respectively)." />
-                <var name="distributeMassCell" type="real" dimensions="nCells Time" units="m s^{-1}"
-                        description="water evenly distributed/removed to/from channel edges on each cell in order to compensate for diffMassConserveRate and thus conserve mass." />
+                     description="diffusivity in channel in subglacial hydrology system" />
 		  </var_struct>
 
 <!-- ======================================================================= -->
