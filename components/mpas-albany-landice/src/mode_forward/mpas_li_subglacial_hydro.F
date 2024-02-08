@@ -274,6 +274,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterVelocity
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellX
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellY
+      real (kind=RKIND), dimension(:), pointer :: openingRate
+      real (kind=RKIND), dimension(:), pointer :: closingRate
       real (kind=RKIND), dimension(:), allocatable :: cellJunk
       integer, dimension(:), pointer :: nEdgesOnCell
       integer, dimension(:,:), pointer :: edgesOnCell
@@ -590,15 +592,23 @@ module li_subglacial_hydro
          call mpas_pool_get_array(hydroPool, 'divergenceChannel', divergenceChannel)
          call mpas_pool_get_array(hydroPool, 'channelAreaChangeCell', channelAreaChangeCell)
          call mpas_pool_get_array(hydroPool, 'channelMeltInputCell', channelMeltInputCell)
+         call mpas_pool_get_array(hydroPool, 'closingRate', closingRate)
+         call mpas_pool_get_array(hydroPool, 'openingRate', openingRate)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
          waterThicknessOld = waterThickness
-         waterThickness = waterThicknessOld + deltatSGH * ( &
-             (basalMeltInput + externalWaterInput) / rho_water &
-             + channelMeltInputCell &
-             - divergence  &
-             - divergenceChannel - channelAreaChangeCell  &
-             - (Wtill - WtillOld) / deltatSGH )
+         
+         if (config_SGH_chnl_active) then
+            waterThickness = waterThicknessOld + deltatSGH * ( &
+                  openingRate - closingRate)
+         else
+            waterThickness = waterThicknessOld + deltatSGH * ( &
+                (basalMeltInput + externalWaterInput) / rho_water &
+                + channelMeltInputCell &
+                - divergence  &
+                - divergenceChannel - channelAreaChangeCell  &
+                - (Wtill - WtillOld) / deltatSGH )
+         endif
          waterThickness = waterThickness * li_mask_is_grounded_ice_int(cellMask)  ! zero in non-grounded locations
          waterThickness = max(0.0_RKIND, waterThickness)
          divergence = divergence * li_mask_is_grounded_ice_int(cellMask)  ! zero in non-grounded locations for more convenient viz
@@ -1817,10 +1827,26 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterThickness
       real (kind=RKIND), dimension(:), pointer :: waterPressure
       real (kind=RKIND), dimension(:), pointer :: iceThicknessHydro
+      real (kind=RKIND), dimension(:), pointer :: openingRate
+      real (kind=RKIND), dimension(:), pointer :: closingRate
       real (kind=RKIND), dimension(:), pointer :: totalGroundingLineDischargeCell
       real (kind=RKIND), dimension(:), pointer :: totalGroundingLineDischargeEdge
       real (kind=RKIND), dimension(:), pointer :: dvEdge
+      real (kind=RKIND), dimension(:), pointer :: dcEdge
       real (kind=RKIND), dimension(:), pointer :: bedTopography
+      real (kind=RKIND), dimension(:), pointer :: distributeMassCell
+      real (kind=RKIND), dimension(:), pointer :: diffMassConserveRate
+      real (kind=RKIND), dimension(:), pointer :: basalMeltInput
+      real (kind=RKIND), dimension(:), pointer :: channelAreaChangeCell
+      real (kind=RKIND), dimension(:), pointer :: channelMeltInputCell
+      real (kind=RKIND), pointer :: deltatSGH
+      real (kind=RKIND), dimension(:), pointer :: divergence
+      real (kind=RKIND), dimension(:), pointer :: divergenceChannel
+      real (kind=RKIND), dimension(:), pointer :: externalWaterInput
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer ::  edgesOnCell
+      real (kind=RKIND), dimension(:), pointer :: tillWaterThickness
+      real (kind=RKIND), dimension(:), pointer :: tillWaterThicknessOld
       integer, dimension(:), pointer :: waterFluxMask
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: edgeMask
@@ -1834,8 +1860,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: xEdge
       real (kind=RKIND), dimension(:), pointer :: yEdge
       integer, dimension(:), pointer :: cellMask
-      integer, pointer :: nEdgesSolve, nEdges
-      integer :: iEdge, cell1, cell2
+      integer, pointer :: nEdgesSolve, nEdges, nCells
+      integer :: iEdge, cell1, cell2, edgeID, iCell
 
       err = 0
 
@@ -1861,6 +1887,7 @@ module li_subglacial_hydro
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
 
       call mpas_pool_get_array(hydroPool, 'channelArea', channelArea)
       call mpas_pool_get_array(hydroPool, 'channelMelt', channelMelt)
@@ -1885,6 +1912,21 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
       call mpas_pool_get_array(hydroPool, 'waterPressure', waterPressure)
       call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
+      call mpas_pool_get_array(hydroPool, 'openingRate', openingRate)
+      call mpas_pool_get_array(hydroPool, 'closingRate', closingRate)
+      call mpas_pool_get_array(hydroPool, 'diffMassConserveRate', diffMassConserveRate)
+      call mpas_pool_get_array(hydroPool, 'distributeMassCell', distributeMassCell)
+      call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
+      call mpas_pool_get_array(hydroPool, 'channelAreaChangeCell', channelAreaChangeCell)
+      call mpas_pool_get_array(hydroPool, 'channelMeltInputCell', channelMeltInputCell)
+      call mpas_pool_get_array(hydroPool, 'divergence', divergence)
+      call mpas_pool_get_array(hydroPool, 'divergenceChannel', divergenceChannel)
+      call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
+      call mpas_pool_get_array(hydroPool, 'tillWaterThickness', tillWaterThickness)
+      call mpas_pool_get_array(hydroPool, 'tillWaterThicknessOld', tillWaterThicknessOld)
+      call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
+      call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(meshPool, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
       call mpas_pool_get_array(meshPool, 'xCell', xCell)
@@ -1892,6 +1934,7 @@ module li_subglacial_hydro
       call mpas_pool_get_array(meshPool, 'xEdge', xEdge)
       call mpas_pool_get_array(meshPool, 'yEdge', yEdge)
       call mpas_pool_get_array(meshPool, 'dvEdge', dvEdge)
+      call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(hydroPool, 'totalGroundingLineDischargeCell', totalGroundingLineDischargeCell)
       call mpas_pool_get_array(hydroPool, 'totalGroundingLineDischargeEdge', totalGroundingLineDischargeEdge)
@@ -1998,12 +2041,33 @@ module li_subglacial_hydro
       end do
       channelClosingRate(:) = creep_coeff * channelArea(:) * flowParamAChannel(:) * channelEffectivePressure(:)**3
 
+      !There are two ways to calculate waterThickness, one using conservation of mass and one using cavity opening/closing, 
+      !but these do not always agree. We want waterThickness to be a product of cavity opening/closing, meaning we need
+      !to use channels as an alternate way to restore mass conservation. This is done by calculating the difference between the two
+      !different waterThickness methods and adjusting channelChangeRate to make up the difference.
+
+      diffMassConserveRate = (openingRate - closingRate) - &
+             ( (basalMeltInput + externalWaterInput) / rho_water &
+             + channelMeltInputCell &
+             - divergence  &
+             - divergenceChannel - channelAreaChangeCell  &
+             - (tillWaterThickness - tillWaterThicknessOld) / deltatSGH )
+
+      !Evenly distributed remaining mass across all channels flowing into cell and add to channelChangeRate
+      do iCell = 1, nCells
+         distributeMassCell(iCell) = diffMassConserveRate(iCell) / nEdgesOnCell(iCell)
+           do iEdge = 1, nEdgesOnCell(iCell)
+               edgeID = edgesOnCell(iEdge,iCell) 
+               channelChangeRate(edgeID) = channelOpeningRate(edgeID) - channelClosingRate(edgeID) + distributeMassCell(iCell) * dcEdge(edgeID) * 0.5_RKIND
+         end do
+      end do
+
       where (waterFluxMask == 2)
          channelOpeningRate = 0.0_RKIND
          channelClosingRate = 0.0_RKIND
+         channelChangeRate = 0.0_RKIND
       end where
-      channelChangeRate = channelOpeningRate - channelClosingRate
-
+      
       !calculate total grounding line discharges
       totalGroundingLineDischargeCell(:) = 0.0_RKIND
       totalGroundingLineDischargeEdge(:) = 0.0_RKIND
