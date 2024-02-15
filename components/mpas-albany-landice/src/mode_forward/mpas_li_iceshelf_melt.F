@@ -681,8 +681,8 @@ module li_iceshelf_melt
       ! slopeSer and interceptSer variables: should they be defined as
       ! input or local variables for this subroutine?
 
-      real (kind=RKIND) :: slopeSer  ! slope of relation between depth and melt rate
-      real (kind=RKIND) :: interceptSer  ! depth at which melting goes to 0
+      real (kind=RKIND), pointer :: config_basal_mass_bal_adj_aislens_slopeGen  ! slope of relation between depth and melt rate
+      real (kind=RKIND), pointer :: config_basal_mass_bal_adj_aislens_interceptGen  ! intercept for draft dependence parameterization of basal melt melting
       !real (kind=RKIND) :: maxMeltSer  ! maximum allowable melt rate
       !real (kind=RKIND) :: sillDepth  ! depth below which melt rate no longer increases
       !real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_amplitude
@@ -698,11 +698,16 @@ module li_iceshelf_melt
       !Input field values for slopeSer(iCell) and interceptSer(iCell)
       !from file
 
+      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_adj_aislens_slopeGen') !, &
+      !config_basal_mass_bal_seroussi_amplitude) ! meters
+      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_adj_aislens_interceptGen') !, &
+      !   config_basal_mass_bal_seroussi_period
+
 
       do iCell = 1, nCellsSolve
           zDraft(iCell) = lowerSurface(iCell) - config_sea_level
-          floatingBasalMassBalAdjustment(iCell) = interceptSer(iCell) + &
-                                                  zDraft(iCell) * slopeSer(iCell)
+          floatingBasalMassBalAdjustment(iCell) = config_basal_mass_bal_adj_aislens_interceptGen(iCell) + &
+                                                  zDraft(iCell) * config_basal_mass_bal_adj_aislens_slopeGen(iCell)
       enddo ! iCell
         
       ! Optional if below is required within subroutine:
