@@ -681,81 +681,34 @@ module li_iceshelf_melt
       ! slopeSer and interceptSer variables: should they be defined as
       ! input or local variables for this subroutine?
 
-      real (kind=RKIND), pointer :: config_basal_mass_bal_adj_aislens_slopeGen  ! slope of relation between depth and melt rate
-      real (kind=RKIND), pointer :: config_basal_mass_bal_adj_aislens_interceptGen  ! intercept for draft dependence parameterization of basal melt melting
-      !real (kind=RKIND) :: maxMeltSer  ! maximum allowable melt rate
-      !real (kind=RKIND) :: sillDepth  ! depth below which melt rate no longer increases
-      !real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_amplitude
-      !real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_period
-      !real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_phase
-      !real(kind=RKIND) :: hCavity               ! depth of ice cavity beneath floating ice (m)
-      real(kind=RKIND) :: zDraft                ! draft of floating ice (m below sea level)
-      !integer :: iCell
+      real (kind=RKIND), dimension(:), pointer :: slopeGen  ! slope of relation between depth and melt rate
+      real (kind=RKIND), dimension(:), pointer :: interceptGen  ! intercept for draft dependence parameterization of basal melt melting
+      real(kind=RKIND), dimension(:), pointer :: zDraft                ! draft of floating ice (m below sea level)
+      integer :: iCell
 
 
       err = 0
       
-      !Input field values for slopeSer(iCell) and interceptSer(iCell)
-      !from file
-
-      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_adj_aislens_slopeGen') !, &
-      !config_basal_mass_bal_seroussi_amplitude) ! meters
-      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_adj_aislens_interceptGen') !, &
-      !   config_basal_mass_bal_seroussi_period
-
+      call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
+      call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)      
+      call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level) !, &
+      call mpas_pool_get_array(geometryPool, 'slopeGen', slopeGen) !, &
+      call mpas_pool_get_array(geometryPool, 'interceptGen', interceptGen)
+      call mpas_pool_get_array(meshPool, 'nCellsSolve', nCellsSolve)
+      
 
       do iCell = 1, nCellsSolve
           zDraft(iCell) = lowerSurface(iCell) - config_sea_level
-          floatingBasalMassBalAdjustment(iCell) = config_basal_mass_bal_adj_aislens_interceptGen(iCell) + &
-                                                  zDraft(iCell) * config_basal_mass_bal_adj_aislens_slopeGen(iCell)
+          floatingBasalMassBalAdjustment(iCell) = interceptGen(iCell) + &
+                                                  zDraft(iCell) * slopeGen(iCell)
       enddo ! iCell
         
       ! Optional if below is required within subroutine:
       ! floatingBasalMassBalAdjustment(:) = floatingBasalMassBalAdjustment(:) * config_ice_density / scyr
       
-      !call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_amplitude', &
-      !   config_basal_mass_bal_seroussi_amplitude) ! meters
-      !call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_period', &
-      !   config_basal_mass_bal_seroussi_period) ! years
-      !call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_phase', &
-      !   config_basal_mass_bal_seroussi_phase) ! cycles
-
-      !slopeSer = 0.088_RKIND ! slope of relation between depth and melt rate (melt (m/yr) per depth (m))
-      !interceptSer = -100.0_RKIND  ! depth (m) at which melting goes to 0 (negative meaning below sea level)
-      !maxMeltSer = 50.0_RKIND ! maximum allowable melt rate (m/yr) (positive meaning melting)
-      !sillDepth = -650.0_RKIND ! depth below which melt stops increasing (m) (negative meaning below sea level)
-
-      !if (config_basal_mass_bal_seroussi_period <= 0.0_RKIND) then
-      !   call mpas_log_write("Value for config_basal_mass_bal_seroussi_period has to be a positive real value.", MPAS_LOG_ERR)
-      !   err = ior(err, 1)
-      !endif
-
-      
-      ! Modify intercept height for variability parameters
-      !interceptSer = interceptSer + config_basal_mass_bal_seroussi_amplitude * &
-      !        sin( (2.0_RKIND * pii / config_basal_mass_bal_seroussi_period) * (daysSinceStart/365.0_RKIND) &
-      !            + 2.0_RKIND * pii * config_basal_mass_bal_seroussi_phase)
 
       ! Initialize before computing
       !floatingBasalMassBal(:) = 0.0_RKIND
-
-      !do iCell = 1, nCellsSolve
-
-         ! Shut off melt at an arbitrary shallow depth to discourage ice from disappearing.
-         !if ( (li_mask_is_floating_ice(cellMask(iCell))) .and. (lowerSurface(iCell) < -10.0_RKIND) ) then
-            ! ice is present and floating
-
-            !zDraft = lowerSurface(iCell) - config_sea_level
-            ! Coefficients for m/yr melt rate (in units of Seroussi figure but without negative meaning melting)
-            !floatingBasalMassBal(iCell) = max(-1.0_RKIND * maxMeltSer, min(0.0_RKIND, slopeSer * &
-            !   (max(zDraft, sillDepth) - interceptSer)))
-
-         !endif   ! ice is present
-      !enddo   ! iCell
-
-      ! change units from m/yr to kg/m2/s
-      !floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density / scyr
-
 
     end subroutine calculate_aislens_melt_variability_adjustment
 !-----------------------------------------------------------------------
