@@ -239,9 +239,6 @@ module li_iceshelf_melt
       logical, pointer :: &
            config_print_thermal_info   ! if true, print debug info
 
-      logical, pointer :: &
-           config_bmlt_variability_modifier ! if true, calculate bmlt variability adjustment
-
       character(len=StrKIND), pointer :: &
            config_basal_mass_bal_float ! option for basal mass balance of floating ice
 
@@ -279,6 +276,9 @@ module li_iceshelf_melt
            thickness,                & ! ice thickness (m)
            lowerSurface,             & ! lower surface elevation (m)
            bedTopography               ! bed topography (m; negative below sea level)
+
+      real (kind=RKIND), dimension(:), pointer :: &
+           interceptGen, slopeGen      ! variables used for draft dependent
 
       real(kind=RKIND), pointer :: daysSinceStart
 
@@ -479,10 +479,12 @@ module li_iceshelf_melt
                ! change units from m/s to kg/m2/s
                floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density
 
-            elseif (trim(config_basal_mass_bal_float) == 'seroussi') then
+            elseif (trim(config_basal_mass_bal_float) =='draft_dependence') then
 
-               call basal_melt_thwaites_seroussi(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                       config_sea_level, config_ice_density, nCellsSolve, err_tmp)
+               call mpas_pool_get_array(geometryPool, 'slopeGen', slopeGen)
+               call mpas_pool_get_array(geometryPool, 'interceptGen', interceptGen)
+               call basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
+                       config_sea_level, config_ice_density, nCellsSolve, slopeGen, interceptGen, err_tmp)
                err = ior(err, err_tmp)
 
             elseif (trim(config_basal_mass_bal_float) == 'temperature_profile') then
@@ -509,38 +511,16 @@ module li_iceshelf_melt
 
       endif
 
-
-      ! Optionally call method to adjust basal melt to include parameterized climate variability
-      ! block loop
+      ! Apply an adjustment to the BMB field.  Default value is 0.
       block => domain % blocklist
       do while (associated(block))
 
          ! get pools
-         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
 
-         ! get dimensions
-         call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
-
-         ! get fields from the mesh pool
-         call mpas_pool_get_array(meshPool, 'daysSinceStart',daysSinceStart)
-
          ! get fields from the geometry pool
-         call mpas_pool_get_array(geometryPool, 'thickness', thickness)
-         call mpas_pool_get_array(geometryPool, 'lowerSurface', lowerSurface)
-         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'floatingBasalMassBal', floatingBasalMassBal)
          call mpas_pool_get_array(geometryPool, 'floatingBasalMassBalAdjustment', floatingBasalMassBalAdjustment)
-
-         call mpas_pool_get_config(liConfigs, 'config_bmlt_variability_modifier', config_bmlt_variability_modifier)
-         if (config_bmlt_variability_modifier) then
-            call calculate_aislens_melt_variability_adjustment( &
-               nCellsSolve, &
-               config_sea_level, config_ice_density, &
-               daysSinceStart, &
-               lowerSurface, cellMask, &
-               floatingBasalMassBalAdjustment, err)
-         endif
 
          floatingBasalMassBal(:) = floatingBasalMassBal(:) + floatingBasalMassBalAdjustment(:)
 
@@ -625,98 +605,10 @@ module li_iceshelf_melt
 !***********************************************************************
 
 
-!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
-!
-!  !  routine calculate_aislens_melt_variability_adjustment
-!
-!> \brief Calculate the draft dependent ice shelf melt rate component
-!         from the draft params.
-!> \author Shivaprakash Muruganandham
-!> \date   February 2024
-!> \details A melt rate parameterization with a linear melt rate - draft
-!          relationship. In the variability ensemble generator workflow,
-!          this adjustment is the F_d(x_0) term in Eqn 1, from 
-!          Muruganandham, S., Robel, A. A., Hoffman, M. J., & Price, S. (2023).
-!          Statistical Generation of Ocean Forcing With Spatiotemporal Variability for Ice Sheet Models. 
-!          Computing in Science & Engineering.
-!>
-!-----------------------------------------------------------------------
-
-    subroutine calculate_aislens_melt_variability_adjustment( &
-         nCellsSolve, &
-         config_sea_level, config_ice_density, &
-         daysSinceStart, &
-         lowerSurface, cellMask, &
-         floatingBasalMassBalAdjustment, &
-         err)
-
-      !-----------------------------------------------------------------
-      ! input variables
-      !-----------------------------------------------------------------
-      real(kind=RKIND), pointer, intent(in) :: daysSinceStart
-      real (kind=RKIND), dimension(:), pointer, intent(in) :: lowerSurface  !< lower surface elevation (m)
-      integer, dimension(:), pointer, intent(in) :: &
-           cellMask                    !< bit mask describing whether ice is floating, dynamically active, etc.
-      real(kind=RKIND), pointer, intent(in) :: &
-           config_sea_level !< sea level (m) relative to z = 0
-      real (kind=RKIND), pointer, intent(in) :: config_ice_density !< ice density
-      integer, pointer :: &
-           nCellsSolve                 !< number of locally owned cells
-
-      !-----------------------------------------------------------------
-      ! input/output variables
-      !-----------------------------------------------------------------
-
-      !-----------------------------------------------------------------
-      ! output variables
-      !-----------------------------------------------------------------
-      real (kind=RKIND), dimension(:), pointer, intent(out) :: &
-           floatingBasalMassBalAdjustment      !< basal mass balance adjustment
-      integer, intent(out) :: err !< Output: error flag
-
-      !-----------------------------------------------------------------
-      ! local variables
-      !-----------------------------------------------------------------
-
-      ! slopeSer and interceptSer variables: should they be defined as
-      ! input or local variables for this subroutine?
-
-      real (kind=RKIND), dimension(:), pointer :: slopeGen  ! slope of relation between depth and melt rate
-      real (kind=RKIND), dimension(:), pointer :: interceptGen  ! intercept for draft dependence parameterization of basal melt melting
-      real(kind=RKIND), dimension(:), pointer :: zDraft                ! draft of floating ice (m below sea level)
-      integer :: iCell
-
-
-      err = 0
-      
-      call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
-      call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)      
-      call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level) !, &
-      call mpas_pool_get_array(geometryPool, 'slopeGen', slopeGen) !, &
-      call mpas_pool_get_array(geometryPool, 'interceptGen', interceptGen)
-      call mpas_pool_get_array(meshPool, 'nCellsSolve', nCellsSolve)
-      
-
-      do iCell = 1, nCellsSolve
-          zDraft(iCell) = lowerSurface(iCell) - config_sea_level
-          floatingBasalMassBalAdjustment(iCell) = interceptGen(iCell) + &
-                                                  zDraft(iCell) * slopeGen(iCell)
-      enddo ! iCell
-        
-      ! Optional if below is required within subroutine:
-      ! floatingBasalMassBalAdjustment(:) = floatingBasalMassBalAdjustment(:) * config_ice_density / scyr
-      
-
-      ! Initialize before computing
-      !floatingBasalMassBal(:) = 0.0_RKIND
-
-    end subroutine calculate_aislens_melt_variability_adjustment
-!-----------------------------------------------------------------------
-
 
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 !
-!  !  routine basal_melt_thwaites_seroussi
+!  !  routine basal_melt_draft_dependence
 !
 !> \brief Calculate ice shelf melt rate from depth param.
 !> \author William Lipscomb
@@ -735,8 +627,8 @@ module li_iceshelf_melt
 
 !-----------------------------------------------------------------------
 
-    subroutine basal_melt_thwaites_seroussi(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                    config_sea_level, config_ice_density, nCellsSolve, err)
+    subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
+                    config_sea_level, config_ice_density, nCellsSolve, slopeGen, interceptGen, err)
 
       !-----------------------------------------------------------------
       ! input variables
@@ -750,7 +642,8 @@ module li_iceshelf_melt
       real (kind=RKIND), pointer, intent(in) :: config_ice_density !< ice density
       integer, pointer :: &
            nCellsSolve                 !< number of locally owned cells
-
+      real (kind=RKIND), dimension(:), pointer :: slopeGen  ! slope of relation between depth and melt rate
+      real (kind=RKIND), dimension(:), pointer :: interceptGen  ! intercept for draft dependence parameterization of basal melt melting
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
@@ -765,64 +658,29 @@ module li_iceshelf_melt
       !-----------------------------------------------------------------
       ! local variables
       !-----------------------------------------------------------------
-      real (kind=RKIND) :: slopeSer  ! slope of relation between depth and melt rate
-      real (kind=RKIND) :: interceptSer  ! depth at which melting goes to 0
-      real (kind=RKIND) :: maxMeltSer  ! maximum allowable melt rate
-      real (kind=RKIND) :: sillDepth  ! depth below which melt rate no longer increases
-      real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_amplitude
-      real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_period
-      real (kind=RKIND), pointer :: config_basal_mass_bal_seroussi_phase
-      real(kind=RKIND) :: hCavity               ! depth of ice cavity beneath floating ice (m)
       real(kind=RKIND) :: zDraft                ! draft of floating ice (m below sea level)
       integer :: iCell
 
-
       err = 0
-
-      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_amplitude', &
-         config_basal_mass_bal_seroussi_amplitude) ! meters
-      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_period', &
-         config_basal_mass_bal_seroussi_period) ! years
-      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_seroussi_phase', &
-         config_basal_mass_bal_seroussi_phase) ! cycles
-
-      slopeSer = 0.088_RKIND ! slope of relation between depth and melt rate (melt (m/yr) per depth (m))
-      interceptSer = -100.0_RKIND  ! depth (m) at which melting goes to 0 (negative meaning below sea level)
-      maxMeltSer = 50.0_RKIND ! maximum allowable melt rate (m/yr) (positive meaning melting)
-      sillDepth = -650.0_RKIND ! depth below which melt stops increasing (m) (negative meaning below sea level)
-
-      if (config_basal_mass_bal_seroussi_period <= 0.0_RKIND) then
-         call mpas_log_write("Value for config_basal_mass_bal_seroussi_period has to be a positive real value.", MPAS_LOG_ERR)
-         err = ior(err, 1)
-      endif
-
-      ! Modify intercept height for variability parameters
-      interceptSer = interceptSer + config_basal_mass_bal_seroussi_amplitude * &
-              sin( (2.0_RKIND * pii / config_basal_mass_bal_seroussi_period) * (daysSinceStart/365.0_RKIND) &
-                  + 2.0_RKIND * pii * config_basal_mass_bal_seroussi_phase)
 
       ! Initialize before computing
       floatingBasalMassBal(:) = 0.0_RKIND
 
       do iCell = 1, nCellsSolve
-
          ! Shut off melt at an arbitrary shallow depth to discourage ice from disappearing.
-         if ( (li_mask_is_floating_ice(cellMask(iCell))) .and. (lowerSurface(iCell) < -10.0_RKIND) ) then
+         if ( li_mask_is_floating_ice(cellMask(iCell))) then
             ! ice is present and floating
 
             zDraft = lowerSurface(iCell) - config_sea_level
-            ! Coefficients for m/yr melt rate (in units of Seroussi figure but without negative meaning melting)
-            floatingBasalMassBal(iCell) = max(-1.0_RKIND * maxMeltSer, min(0.0_RKIND, slopeSer * &
-               (max(zDraft, sillDepth) - interceptSer)))
-
-         endif   ! ice is present
+            floatingBasalMassBal(iCell) = interceptGen(iCell) + zDraft * slopeGen(iCell)
+         endif   ! ice is floating
       enddo   ! iCell
 
       ! change units from m/yr to kg/m2/s
       floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density / scyr
 
 
-    end subroutine basal_melt_thwaites_seroussi
+    end subroutine basal_melt_draft_dependence
 !-----------------------------------------------------------------------
 
 
