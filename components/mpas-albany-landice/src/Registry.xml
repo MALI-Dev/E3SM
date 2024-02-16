@@ -856,6 +856,9 @@
 			<!-- this variable just for ocean extrapolation -->
                         <var name="orig3dOceanMask" packages="extrapOceanData"/>
                         <var name="icebergFjordMask" packages="extrapOceanData"/>
+<!-- TBD: The following variables are defined for the aislens draft dependence parameterization -->
+			<!--<var name="slopeGen" packages="?"/> -->
+			<!--<var name="interceptGen" packages="?"/> -->
 		</stream>
 
 <!-- An alternate way to allow the HO variables to exist in a separate file.
@@ -1307,6 +1310,14 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="floatingBasalMassBalAdjustment" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="adjustment to floatingBasalMassBal.  Currently used to apply a variability modifier"
+		/>
+                />
+                <var name="interceptGen" type="real" dimensions="nCells Time" units="unitless"
+                     description="Intercept parameter in draft dependent adjustment to floatingBasalMassBal.  Currently used to apply a variability modifier"
+		/>
+                />
+                <var name="slopeGen" type="real" dimensions="nCells Time" units="unitless"
+                     description="Slope parameter in draft dependent adjustment to floatingBasalMassBal.  Currently used to apply a draft dependent modifier"
                 />
                 <var name="basalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="applied basal mass balance"
