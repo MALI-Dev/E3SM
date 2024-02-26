@@ -783,7 +783,6 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterFlux
       real (kind=RKIND), dimension(:), pointer :: waterFluxAdvec
       real (kind=RKIND), dimension(:), pointer :: waterFluxDiffu
-      real (kind=RKIND), dimension(:), pointer :: channelDebugMask
       real (kind=RKIND), dimension(:), pointer :: pressureField
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: waterFluxMask
@@ -876,7 +875,6 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'waterFluxMask', waterFluxMask)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
-      call mpas_pool_get_array(hydroPool, 'channelDebugMask', channelDebugMask)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
       call mpas_pool_get_array(hydroPool, 'pressureField', pressureField)
       
