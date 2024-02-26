@@ -610,21 +610,12 @@ module li_iceshelf_melt
 !
 !  !  routine basal_melt_draft_dependence
 !
-!> \brief Calculate ice shelf melt rate from depth param.
-!> \author William Lipscomb
-!> \date   November 2015
+!> \brief Calculate ice shelf melt rate from depth/draft parameters.
+!> \author Shivaprakash Muruganandham
+!> \date   February 2024
 !> \details
-!>  Melt rate parameterization from:
-!> Seroussi, H., Y. Nakayama, E. Larour, D. Menemenlis, M. Morlighem, E. Rignot, and A. Khazendar (2017),
-!> Continued retreat of Thwaites Glacier, West Antarctica, controlled by bed topography and ocean circulation,
-!> Geophys. Res. Lett., 1-9, doi:10.1002/2017GL072910.
-!> for Thwaites Glacier.
-!> Specifically, this is a linear fit of melt with shelf draft from the Supplemental Information, Figure S1.
-!> The linear relation is modified by a:
-!>   * depth above which there is no melt (Antarctic Surface Water saturation)
-!>   * a maximum melt rate (Circumpolar Deep Water saturation)
-!>   * a depth below which melt stops increasing (minimum sill height)
-
+!> Draft dependent melt rate parameterization:
+!> It calculates melt rate as a linear function of shelf draft.
 !-----------------------------------------------------------------------
 
     subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
@@ -642,8 +633,8 @@ module li_iceshelf_melt
       real (kind=RKIND), pointer, intent(in) :: config_ice_density !< ice density
       integer, pointer :: &
            nCellsSolve                 !< number of locally owned cells
-      real (kind=RKIND), dimension(:), pointer :: slopeGen  ! slope of relation between depth and melt rate
-      real (kind=RKIND), dimension(:), pointer :: interceptGen  ! intercept for draft dependence parameterization of basal melt melting
+      real (kind=RKIND), dimension(:), pointer :: slopeGen  ! slope for (linear) draft dependent parameterization of basal melt 
+      real (kind=RKIND), dimension(:), pointer :: interceptGen  ! intercept for (linear) draft dependent parameterization of basal melt
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
