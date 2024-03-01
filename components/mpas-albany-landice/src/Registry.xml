@@ -782,7 +782,7 @@
 			<!-- these variables just for ISMIP6 grounded glacier forcing -->
 			<var name="ismip6Runoff" packages="ismip6GroundedFaceMelt" />
 			<var name="ismip6_2dThermalForcing" packages="ismip6GroundedFaceMelt" />
-<!-- TBD: The following variables are defined for the aislens draft dependence parameterization -->
+<!-- The following variables are defined for the draft dependent ice-shelf basal melt parameterization -->
 			<var name="slopeGen" packages="draftDependentMelt"/>
 			<var name="interceptGen" packages="draftDependentMelt"/>
 <!-- The below is calculated at each time step. Should be moved to a different stream? -->
