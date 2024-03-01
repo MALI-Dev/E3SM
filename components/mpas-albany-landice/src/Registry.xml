@@ -842,7 +842,7 @@
 			<!-- this variable just for ocean extrapolation -->
                         <var name="orig3dOceanMask" packages="extrapOceanData"/>
                         <var name="icebergFjordMask" packages="extrapOceanData"/>
-<!-- TBD: The following variables are defined for the aislens draft dependence parameterization -->
+<!-- The following variables are defined for the draft dependent ice-shelf basal melt parameterization -->
 			<var name="slopeGen" packages="draftDependentMelt"/>
 			<var name="interceptGen" packages="draftDependentMelt"/>
 <!-- The below is calculated at each time step. Should be moved to a different stream? -->
