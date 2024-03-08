@@ -843,10 +843,10 @@
                         <var name="orig3dOceanMask" packages="extrapOceanData"/>
                         <var name="icebergFjordMask" packages="extrapOceanData"/>
 <!-- The following variables are defined for the draft dependent ice-shelf basal melt parameterization -->
-			<var name="floatingBasalMassBalAdjustment" packages="draftDependentMelt"/>
+			<var name="floatingBasalMassBalAdjustment"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
-
+		</stream>
 <!-- An alternate way to allow the HO variables to exist in a separate file.
 		<stream name="inputHigherOrderVelocity"
 				type="input"
@@ -955,7 +955,7 @@
                         <var name="oceanTemperature" packages="extrapOceanData"/>
                         <var name="oceanSalinity" packages="extrapOceanData"/>
 			<!-- the following variables just for the draft dependent ice-shelf basal melt parameterization -->
-			<var name="floatingBasalMassBalAdjustment" packages="draftDependentMelt"/>
+			<var name="floatingBasalMassBalAdjustment"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
                         <var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
