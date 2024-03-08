@@ -785,8 +785,6 @@
 <!-- The following variables are defined for the draft dependent ice-shelf basal melt parameterization -->
 			<var name="slopeGen" packages="draftDependentMelt"/>
 			<var name="interceptGen" packages="draftDependentMelt"/>
-<!-- The below is calculated at each time step. Should be moved to a different stream? -->
-		</stream>
 
 <!-- An alternate way to allow the HO variables to exist in a separate file.
 		<stream name="inputHigherOrderVelocity"
