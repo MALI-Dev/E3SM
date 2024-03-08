@@ -783,10 +783,10 @@
 			<var name="ismip6Runoff" packages="ismip6GroundedFaceMelt" />
 			<var name="ismip6_2dThermalForcing" packages="ismip6GroundedFaceMelt" />
 <!-- The following variables are defined for the draft dependent ice-shelf basal melt parameterization -->
-			<var name="floatingBasalMassBalAdjustment" packages="draftDependentMelt"/>
+			<var name="floatingBasalMassBalAdjustment"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
-
+		</stream>
 <!-- An alternate way to allow the HO variables to exist in a separate file.
 		<stream name="inputHigherOrderVelocity"
 				type="input"
@@ -887,7 +887,7 @@
 			<var name="ismip6_2dThermalForcingCurrent" packages="ismip6GroundedFaceMelt" />
 			<var name="forcingTimeStamp" packages="ismip6GroundedFaceMelt" />
 			<!-- the following variables just for the draft dependent ice-shelf basal melt parameterization -->
-			<var name="floatingBasalMassBalAdjustment" packages="draftDependentMelt"/>
+			<var name="floatingBasalMassBalAdjustment"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
                         <var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
