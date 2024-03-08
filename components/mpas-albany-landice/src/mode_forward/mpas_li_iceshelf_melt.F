@@ -278,7 +278,7 @@ module li_iceshelf_melt
            bedTopography               ! bed topography (m; negative below sea level)
 
       real (kind=RKIND), dimension(:), pointer :: &
-           interceptGen, slopeGen      ! variables used for draft dependent
+           draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1      ! variables used for basal melt draft dependence
 
       real(kind=RKIND), pointer :: daysSinceStart
 
@@ -481,10 +481,10 @@ module li_iceshelf_melt
 
             elseif (trim(config_basal_mass_bal_float) =='draft_dependence') then
 
-               call mpas_pool_get_array(geometryPool, 'slopeGen', slopeGen)
-               call mpas_pool_get_array(geometryPool, 'interceptGen', interceptGen)
+               call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha1', draftDepenBasalMeltAlpha1)
+               call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha0', draftDepenBasalMeltAlpha0)
                call basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                       config_sea_level, config_ice_density, nCellsSolve, slopeGen, interceptGen, err_tmp)
+                       config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha1, draftDepenBasalMeltAlpha0, err_tmp)
                err = ior(err, err_tmp)
 
             elseif (trim(config_basal_mass_bal_float) == 'temperature_profile') then
@@ -615,11 +615,15 @@ module li_iceshelf_melt
 !> \date   February 2024
 !> \details
 !> Draft dependent melt rate parameterization:
-!> It calculates melt rate as a linear function of shelf draft.
+!> It calculates melt rate as a function of shelf draft.
+!> In its current form, this is a linear function form, with the draft
+!> dependent melt component calculated as:
+!> melt = alpha0 + (draft * alpha1)
+
 !-----------------------------------------------------------------------
 
     subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                    config_sea_level, config_ice_density, nCellsSolve, slopeGen, interceptGen, err)
+                    config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1, err)
 
       !-----------------------------------------------------------------
       ! input variables
@@ -633,8 +637,8 @@ module li_iceshelf_melt
       real (kind=RKIND), pointer, intent(in) :: config_ice_density !< ice density
       integer, pointer :: &
            nCellsSolve                 !< number of locally owned cells
-      real (kind=RKIND), dimension(:), pointer :: slopeGen  ! slope for (linear) draft dependent parameterization of basal melt 
-      real (kind=RKIND), dimension(:), pointer :: interceptGen  ! intercept for (linear) draft dependent parameterization of basal melt
+      real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMeltAlpha1  ! slope for (linear) draft dependent parameterization of basal melt 
+      real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMeltAlpha0  ! intercept for (linear) draft dependent parameterization of basal melt
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
@@ -663,7 +667,7 @@ module li_iceshelf_melt
             ! ice is present and floating
 
             zDraft = lowerSurface(iCell) - config_sea_level
-            floatingBasalMassBal(iCell) = interceptGen(iCell) + zDraft * slopeGen(iCell)
+            floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + zDraft * draftDepenBasalMeltAlpha1(iCell)
          endif   ! ice is floating
       enddo   ! iCell
 
