@@ -367,7 +367,7 @@
 
         <nml_record name="iceshelf_melt" in_defaults="true">
                 <nml_option name="config_basal_mass_bal_float" type="character" default_value="none" units="unitless"
-                            description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'draft_dependence' calculates draft dependent floatingBasalMassBal using slopeGen and interceptGen. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
+                            description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'draft_dependence' calculates draft dependent floatingBasalMassBal using draftDepenBasalMeltAlpha1 and draftDepenBasalMeltAlpha0. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
                             possible_values="'none', 'file', 'constant', 'mismip', 'draft_dependence', 'temperature_profile', 'ismip6'"
                 />
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^{-2}"
@@ -843,8 +843,9 @@
                         <var name="orig3dOceanMask" packages="extrapOceanData"/>
                         <var name="icebergFjordMask" packages="extrapOceanData"/>
 <!-- The following variables are defined for the draft dependent ice-shelf basal melt parameterization -->
-			<var name="slopeGen" packages="draftDependentMelt"/>
-			<var name="interceptGen" packages="draftDependentMelt"/>
+			<var name="floatingBasalMassBalAdjustment" packages="draftDependentMelt"/>
+			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
+			<var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 
 <!-- An alternate way to allow the HO variables to exist in a separate file.
 		<stream name="inputHigherOrderVelocity"
@@ -953,6 +954,10 @@
                         <var name="icebergFjordMask" packages="extrapOceanData"/>
                         <var name="oceanTemperature" packages="extrapOceanData"/>
                         <var name="oceanSalinity" packages="extrapOceanData"/>
+			<!-- the following variables just for the draft dependent ice-shelf basal melt parameterization -->
+			<var name="floatingBasalMassBalAdjustment" packages="draftDependentMelt"/>
+			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
+                        <var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
 
 
@@ -1296,11 +1301,11 @@ is the value of that variable from the *previous* time level!
                 <var name="floatingBasalMassBalAdjustment" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0"
                      description="adjustment to floatingBasalMassBal."
 		/>
-                <var name="interceptGen" type="real" dimensions="nCells" units="unitless" package="draftDependentMelt"
-                     description="Intercept parameter in draft dependent calculation of floatingBasalMassBal."
+		<var name="draftDepenBasalMeltAlpha0" type="real" dimensions="nCells" units="kg m^{-2} s^{-1}" package="draftDependentMelt"
+                     description="Alpha0 (intercept) parameter in (linear) draft dependent calculation of floatingBasalMassBal."
 		/>
-                <var name="slopeGen" type="real" dimensions="nCells" units="unitless" package="draftDependentMelt"
-                     description="Slope parameter in draft dependent calculation of floatingBasalMassBal."
+		<var name="draftDepenBasalMeltAlpha1" type="real" dimensions="nCells" units="kg m^{-3} s^{-1}" package="draftDependentMelt"
+                     description="Alpha1 (slope) parameter in (linear) draft dependent calculation of floatingBasalMassBal."
                 />
                 <var name="basalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="applied basal mass balance"
