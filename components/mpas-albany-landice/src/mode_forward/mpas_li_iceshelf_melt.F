@@ -662,7 +662,6 @@ module li_iceshelf_melt
       floatingBasalMassBal(:) = 0.0_RKIND
 
       do iCell = 1, nCellsSolve
-         ! Shut off melt at an arbitrary shallow depth to discourage ice from disappearing.
          if ( li_mask_is_floating_ice(cellMask(iCell))) then
             ! ice is present and floating
 
