@@ -479,7 +479,7 @@ module li_iceshelf_melt
                ! change units from m/s to kg/m2/s
                floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density
 
-            elseif (trim(config_basal_mass_bal_float) =='draft_dependence') then
+            elseif (trim(config_basal_mass_bal_float) == 'draft_dependence') then
 
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha1', draftDepenBasalMeltAlpha1)
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha0', draftDepenBasalMeltAlpha0)
