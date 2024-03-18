@@ -911,9 +911,7 @@ module li_subglacial_hydro
 
       ! zero gradients at boundaries of the mesh
       do iEdge = 1, nEdges
-         cell1 = cellsOnEdge(1, iEdge)
-         cell2 = cellsOnEdge(2, iEdge)
-         if ((cell1 == nCells+1) .or. (cell2 == nCells+1)) then
+         if (waterFluxMask(iEdge) == 2) then
             hydropotentialBaseSlopeNormal(iEdge) = 0.0_RKIND
             hydropotentialSlopeNormal(iEdge) = 0.0_RKIND
             waterPressureSlopeNormal(iEdge) = 0.0_RKIND
@@ -962,17 +960,11 @@ module li_subglacial_hydro
                hydropotentialBaseSlopeTangent(iEdge) = 0.0_RKIND
                hydropotentialSlopeTangent(iEdge) = 0.0_RKIND
             endif
-            ! check for edges where a vertex is on the edge of the mesh and zero the tangent slope there
-            do i = 1, 2
-               iVertex = verticesOnEdge(i, iEdge)
-               do j = 1, 3
-                  iCell = cellsOnVertex(j, iVertex)
-                  if (iCell == nCells + 1) then
-                     hydropotentialBaseSlopeTangent(iEdge) = 0.0_RKIND
-                     hydropotentialSlopeTangent(iEdge) = 0.0_RKIND
-                  endif
-               enddo
-            enddo
+            ! check for edges on the edge of the mesh and zero the tangent slope there
+            if (waterFluxMask(iEdge) == 2) then
+               hydropotentialBaseSlopeTangent(iEdge) = 0.0_RKIND
+               hydropotentialSlopeTangent(iEdge) = 0.0_RKIND
+            endif
          end do  ! edges
       case ('from_normal_slope')
          ! Do first with hydropotentialBase
