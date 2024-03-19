@@ -2205,6 +2205,7 @@ module li_subglacial_hydro
       integer, dimension(:), pointer :: hydroTerrestrialMarginMask
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: waterFluxMask
       integer, pointer :: nEdgesSolve
       integer :: cell1, cell2, iEdge
       real (kind=RKIND), pointer :: config_sea_level
@@ -2220,6 +2221,7 @@ module li_subglacial_hydro
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
          call mpas_pool_get_array(hydroPool, 'hydroTerrestrialMarginMask', hydroTerrestrialMarginMask)
+         call mpas_pool_get_array(hydroPool, 'waterFluxMask', waterFluxMask)
          call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
          call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
 
@@ -2230,11 +2232,13 @@ module li_subglacial_hydro
             ! We are looking for edges with 1 edge grounded ice and the other edge floating ice or open ocean
             if ( (li_mask_is_grounded_ice(cellMask(cell1))) .and. &
                  (li_mask_is_floating_ice(cellMask(cell2)) .or. &
-                 ((bedTopography(cell2) < config_sea_level) .and. (.not. li_mask_is_ice(cellMask(cell2)))) ) ) then
+                 ((bedTopography(cell2) < config_sea_level) .and. (.not. li_mask_is_ice(cellMask(cell2)))) ) &
+                  .and. (waterFluxMask(iEdge) .ne. 2) ) then
                hydroMarineMarginMask(iEdge) = 1
             elseif ( (li_mask_is_grounded_ice(cellMask(cell2))) .and. &
                      (li_mask_is_floating_ice(cellMask(cell1)) .or. &
-                     ((bedTopography(cell1) < config_sea_level) .and. (.not. li_mask_is_ice(cellMask(cell1)))) ) ) then
+                     ((bedTopography(cell1) < config_sea_level) .and. (.not. li_mask_is_ice(cellMask(cell1)))) ) &
+                     .and. (waterFluxMask(iEdge) .ne. 2) ) then
                hydroMarineMarginMask(iEdge) = 1
             endif
          enddo
@@ -2245,10 +2249,12 @@ module li_subglacial_hydro
             cell2 = cellsOnEdge(2, iEdge)
             !Look for edges with 1 cell on grounding ice and the other cell on land without ice
             if ((li_mask_is_grounded_ice(cellMask(cell1))) .and. ( .not. li_mask_is_ice(cellMask(cell2))) &
-               .and. (bedTopography(cell2) >= config_sea_level)) then
+               .and. (bedTopography(cell2) >= config_sea_level) &
+               .and. (waterFluxMask(iEdge) .ne. 2) ) then
                hydroTerrestrialMarginMask(iEdge) = 1
             elseif ((li_mask_is_grounded_ice(cellMask(cell2))) .and. ( .not. li_mask_is_ice(cellMask(cell1))) &
-               .and. (bedTopography(cell1) >= config_sea_level)) then
+               .and. (bedTopography(cell1) >= config_sea_level) &
+               .and. (waterFluxMask(iEdge) .ne. 2) ) then
                hydroTerrestrialMarginMask(iEdge) = 1
             endif
          enddo
