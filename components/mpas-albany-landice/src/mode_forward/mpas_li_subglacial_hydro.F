@@ -2230,6 +2230,7 @@ module li_subglacial_hydro
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
             ! We are looking for edges with 1 edge grounded ice and the other edge floating ice or open ocean
+            ! Exclude no-flow boundaries
             if ( (li_mask_is_grounded_ice(cellMask(cell1))) .and. &
                  (li_mask_is_floating_ice(cellMask(cell2)) .or. &
                  ((bedTopography(cell2) < config_sea_level) .and. (.not. li_mask_is_ice(cellMask(cell2)))) ) &
