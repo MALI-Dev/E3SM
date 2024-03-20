@@ -2248,7 +2248,8 @@ module li_subglacial_hydro
          do iEdge = 1, nEdgesSolve
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
-            !Look for edges with 1 cell on grounding ice and the other cell on land without ice
+            ! Look for edges with 1 cell on grounding ice and the other cell on land without ice
+            ! Exclude no-flow boundaries
             if ((li_mask_is_grounded_ice(cellMask(cell1))) .and. ( .not. li_mask_is_ice(cellMask(cell2))) &
                .and. (bedTopography(cell2) >= config_sea_level) &
                .and. (waterFluxMask(iEdge) .ne. 2) ) then
