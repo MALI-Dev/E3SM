@@ -960,7 +960,7 @@ module li_subglacial_hydro
                hydropotentialBaseSlopeTangent(iEdge) = 0.0_RKIND
                hydropotentialSlopeTangent(iEdge) = 0.0_RKIND
             endif
-            ! check for edges on the edge of the mesh and zero the tangent slope there
+            ! check for edges on no-flow boundaries (which should include boundaries of the mesh) and zero the tangent slope there
             if (waterFluxMask(iEdge) == 2) then
                hydropotentialBaseSlopeTangent(iEdge) = 0.0_RKIND
                hydropotentialSlopeTangent(iEdge) = 0.0_RKIND
