@@ -975,7 +975,8 @@ module li_subglacial_hydro
          includeHalo=.false., tangentialVector=hydropotentialSlopeTangent)
          ! ensure that edges that don't have ice on at least one side have tangent slope set to zero
          do iEdge = 1, nEdges
-            if ( .not. li_mask_is_ice(edgeMask(iEdge)) ) then
+            if ( (.not. li_mask_is_ice(edgeMask(iEdge))) .or. &
+               (waterFluxMask(iEdge) == 2) ) then
                hydropotentialBaseSlopeTangent(iEdge) = 0.0_RKIND
                hydropotentialSlopeTangent(iEdge) = 0.0_RKIND
             endif
