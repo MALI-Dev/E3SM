@@ -1208,7 +1208,7 @@ module li_subglacial_hydro
                dtSGHadvecBlock = min(dtSGHadvecBlock, 0.5_RKIND * dcEdge(iEdge) / abs(waterVelocity(iEdge)))
             endif
 
-            if (diffusivity(iEdge) > 0.0) then
+            if (diffusivity(iEdge) > 1e-12_RKIND) then
                ! Calculate diffusive CFL-limited time step
                dtSGHdiffuBlock = min(dtSGHdiffuBlock, 0.25_RKIND * dcEdge(iEdge)**2 / diffusivity(iEdge))
                ! Calculate pressure limited time step
