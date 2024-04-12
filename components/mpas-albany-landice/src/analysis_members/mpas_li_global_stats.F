@@ -440,8 +440,7 @@ contains
                                         basalMeltInput(iCell) * areaCell(iCell)
 
                ! External water input
-               blockSumExternalWaterInput = blockSumExternalWaterInput + &
-                   real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) * externalWaterInput(iCell) * areaCell(iCell)
+               blockSumExternalWaterInput = blockSumExternalWaterInput + externalWaterInput(iCell) * areaCell(iCell)
 
                ! Lake Volume
                if (waterThickness(iCell) > bedBumpMax) then
@@ -462,14 +461,13 @@ contains
 
          end do ! end loop over cells
 
-         ! Loop over edges
-         do iEdge = 1, nEdgesSolve
+         if (config_SGH) then
+            ! Loop over edges
+            do iEdge = 1, nEdgesSolve
 
-            ! Flux across GL, units = kg/yr
-            blockGLflux = blockGLflux + fluxAcrossGroundingLine(iEdge) * dvEdge(iEdge) &
-                      * scyr * rhoi ! convert from m^2/s to kg/yr
-
-            if (config_SGH) then
+               ! Flux across GL, units = kg/yr
+               blockGLflux = blockGLflux + fluxAcrossGroundingLine(iEdge) * dvEdge(iEdge) &
+                         * scyr * rhoi ! convert from m^2/s to kg/yr
 
                ! Channel Melt
                blockSumChannelMelt = blockSumChannelMelt + abs(channelMelt(iEdge) * dcEdge(iEdge))
@@ -486,9 +484,8 @@ contains
                ! Meltwater discharge in channels across terrestrial margin
                blockSumChannelTerrestrialMeltFlux = blockSumChannelTerrestrialMeltFlux + abs( hydroTerrestrialMarginMask(iEdge) * channelDischarge(iEdge) * rho_water)
 
-            endif ! is SGH is turned on 
-         end do ! end loop over edges
-         
+            end do ! end loop over edges
+         endif
          block => block % next
       end do    ! end loop over blocks
 
@@ -533,9 +530,9 @@ contains
       sums(13) = blockSumCalvingFlux
       sums(14) = blockSumFaceMeltingFlux
       sums(15) = blockSumVAF
-      sums(16) = blockGLflux
-      sums(17) = blockGLMigrationflux
       if (config_SGH) then
+         sums(16) = blockGLflux
+         sums(17) = blockGLMigrationflux
          sums(18) = blockSumSubglacialWaterVolume
          sums(19) = blockSumBasalMeltInput
          sums(20) = blockSumExternalWaterInput
@@ -549,7 +546,7 @@ contains
          sums(28) = blockSumFlotationFraction
          nVars = 28
       else
-        nVars = 17
+        nVars = 15
       endif
 
       call mpas_dmpar_sum_real_array(dminfo, nVars, sums(1:nVars), reductions(1:nVars))
@@ -577,9 +574,9 @@ contains
          call mpas_pool_get_array(globalStatsAMPool, 'avgSubshelfMelt', avgSubshelfMelt)
          call mpas_pool_get_array(globalStatsAMPool, 'totalCalvingFlux', totalCalvingFlux)
          call mpas_pool_get_array(globalStatsAMPool, 'totalFaceMeltingFlux', totalFaceMeltingFlux)
-         call mpas_pool_get_array(globalStatsAMPool, 'groundingLineFlux', groundingLineFlux)
-         call mpas_pool_get_array(globalStatsAMPool, 'groundingLineMigrationFlux', groundingLineMigrationFlux)
          if (config_SGH) then
+            call mpas_pool_get_array(globalStatsAMPool, 'groundingLineFlux', groundingLineFlux)
+            call mpas_pool_get_array(globalStatsAMPool, 'groundingLineMigrationFlux', groundingLineMigrationFlux)
             call mpas_pool_get_array(globalStatsAMPool, 'totalSubglacialWaterVolume', totalSubglacialWaterVolume)
             call mpas_pool_get_array(globalStatsAMPool, 'totalBasalMeltInput', totalBasalMeltInput)
             call mpas_pool_get_array(globalStatsAMPool, 'totalExternalWaterInput', totalExternalWaterInput)
@@ -608,9 +605,9 @@ contains
          totalCalvingFlux = reductions(13)
          totalFaceMeltingFlux = reductions(14)
          volumeAboveFloatation = reductions(15)
-         groundingLineFlux = reductions(16)
-         groundingLineMigrationFlux = reductions(17)
          if (config_SGH) then
+            groundingLineFlux = reductions(16)
+            groundingLineMigrationFlux = reductions(17)
             totalSubglacialWaterVolume = reductions(18)
             totalBasalMeltInput = reductions(19)
             totalExternalWaterInput = reductions(20)
