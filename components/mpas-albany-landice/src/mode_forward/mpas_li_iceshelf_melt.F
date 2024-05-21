@@ -1259,11 +1259,11 @@ module li_iceshelf_melt
                enddo
                kinf = ksup + 1
                if ((zOcean(ksup)-zOcean(kinf)) == 0) then
-                  call mpas_log_write("iceshelf_melt_ismip6: Invalid value for zOcean. " // &
-                       "ksup=$i kinf=$i zOcean(ksup)=$r zOcean(kinf)=$r indexToCellID=$i lowerSurface=$r", MPAS_LOG_ERR, &
-                       intArgs=(/ksup, kinf, indexToCellID(iCell)/), &
-                       realArgs=(/zOcean(ksup), zOcean(kinf), lowerSurface(iCell) /) )
-                  err = ior(err, 1)
+                  !call mpas_log_write("iceshelf_melt_ismip6: Invalid value for zOcean. " // &
+                  !     "ksup=$i kinf=$i zOcean(ksup)=$r zOcean(kinf)=$r indexToCellID=$i lowerSurface=$r", MPAS_LOG_ERR, &
+                  !     intArgs=(/ksup, kinf, indexToCellID(iCell)/), &
+                  !     realArgs=(/zOcean(ksup), zOcean(kinf), lowerSurface(iCell) /) )
+                  !err = ior(err, 1)
                endif
                !call mpas_log_write("kinf=$i, zOcean(kinf)=$r, TFocean=$r",realArgs=(/zOcean(kinf),TFocean(kinf,iCell)/), &
                !        intArgs=(/kinf/))
@@ -1272,11 +1272,11 @@ module li_iceshelf_melt
 
                ! check if any invalid TFocean value is used for calculating TF at the draft
                if ( (TFocean(kinf, iCell) == invalid_value_TF .or. TFocean(ksup, iCell) == invalid_value_TF) ) then
-                  call mpas_log_write("iceshelf_melt_ismip6: Invalid value for TFocean. " // &
-                       "ksup=$i kinf=$i TFocean(ksup, iCell)=$r TFocean(kinf,iCell)=$r indexToCellID=$i", MPAS_LOG_ERR, &
-                       intArgs=(/ksup, kinf, indexToCellID(iCell)/), &
-                       realArgs=(/TFocean(ksup, iCell), TFocean(kinf, iCell) /) )
-                  err = ior(err, 1)
+                  !call mpas_log_write("iceshelf_melt_ismip6: Invalid value for TFocean. " // &
+                  !     "ksup=$i kinf=$i TFocean(ksup, iCell)=$r TFocean(kinf,iCell)=$r indexToCellID=$i", MPAS_LOG_ERR, &
+                  !     intArgs=(/ksup, kinf, indexToCellID(iCell)/), &
+                  !     realArgs=(/TFocean(ksup, iCell), TFocean(kinf, iCell) /) )
+                  !err = ior(err, 1)
                endif
 
                TFdraft(iCell) = ( (zOcean(ksup)-lowerSurface(iCell)) * TFocean(kinf, iCell) &

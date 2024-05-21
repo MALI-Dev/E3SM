@@ -83,14 +83,16 @@ contains
       ! local variables
       !-----------------------------------------------------------------
       logical, pointer :: config_ocean_data_extrapolation
+      character (len=StrKIND), pointer :: config_ocean_data_extrap_data_field
       real(kind=RKIND), pointer :: config_sea_level, invalid_value_TF
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: scratchPool, geometryPool, meshPool, extrapOceanDataPool
-      real (kind=RKIND) :: layerTop
+      real (kind=RKIND) :: layerTop, layerBottom
       real (kind=RKIND), dimension(:,:), pointer :: TFocean, TFoceanOld
       real (kind=RKIND), dimension(:), pointer :: ismip6shelfMelt_zOcean
       real (kind=RKIND), dimension(:,:), pointer :: ismip6shelfMelt_3dThermalForcing, ismip6shelfMelt_zBndsOcean
       real (kind=RKIND), dimension(:), pointer :: thickness, bedTopography
+      real (kind=RKIND), dimension(:), pointer :: referenceDepthForIceShelfMelt, referenceIceShelfMelt
       integer, dimension(:), pointer :: origOceanMaskHoriz
       integer, dimension(:,:), pointer :: validOceanMask, validOceanMaskOrig, availOceanMask !masks to pass to flood-fill routine
       integer, dimension(:), pointer :: seedOceanMaskHoriz, growOceanMaskHoriz, seedOceanMaskHorizInit
@@ -115,6 +117,7 @@ contains
         ! initialize the ocean data and mask fields
          call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
          call mpas_pool_get_config(liConfigs, 'config_ocean_data_extrap_ncells_extra', nCellsExtra)
+         call mpas_pool_get_config(liConfigs, 'config_ocean_data_extrap_data_field', config_ocean_data_extrap_data_field)
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'extrapOceanData', extrapOceanDataPool)
@@ -183,17 +186,46 @@ contains
          call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_zBndsOcean', ismip6shelfMelt_zBndsOcean)
          availOceanMask(:,:) = 0
          validOceanMask(:,:) = 0
-         do iCell = 1, nCellsSolve
-            do iLayer = 1, nISMIP6OceanLayers
-               layerTop = ismip6shelfMelt_zBndsOcean(1, iLayer)
-               if ( (seedOceanMaskHoriz(iCell) == 1) .and. (bedTopography(iCell) <  layerTop) ) then
-                  availOceanMask(iLayer,iCell) = 1
-               endif
-               if ( (origOceanMaskHoriz(iCell) == 1) .and. (bedTopography(iCell) <  layerTop) ) then
-                  validOceanMask(iLayer,iCell) = 1
-               endif
+
+         if (trim(config_ocean_data_extrap_data_field) == 'tf') then
+            do iCell = 1, nCellsSolve
+               do iLayer = 1, nISMIP6OceanLayers
+                  layerTop = ismip6shelfMelt_zBndsOcean(1, iLayer)
+                  if ( (seedOceanMaskHoriz(iCell) == 1) .and. (bedTopography(iCell) <  layerTop) ) then
+                     availOceanMask(iLayer,iCell) = 1
+                  endif
+                  if ( (origOceanMaskHoriz(iCell) == 1) .and. (bedTopography(iCell) <  layerTop) ) then
+                     validOceanMask(iLayer,iCell) = 1
+                  endif
+               enddo
             enddo
-         enddo
+
+         elseif (trim(config_ocean_data_extrap_data_field) == 'melt') then
+            call mpas_pool_get_array(extrapOceanDataPool, 'referenceDepthForIceShelfMelt', referenceDepthForIceShelfMelt)
+            call mpas_pool_get_array(extrapOceanDataPool, 'referenceIceShelfMelt', referenceIceShelfMelt)
+            do iCell = 1, nCellsSolve
+               do iLayer = 1, nISMIP6OceanLayers
+                  layerTop = ismip6shelfMelt_zBndsOcean(1, iLayer)
+                  layerBottom = ismip6shelfMelt_zBndsOcean(2, iLayer)
+                  if ( (seedOceanMaskHoriz(iCell) == 1) .and. (bedTopography(iCell) <  layerTop) ) then
+                     availOceanMask(iLayer,iCell) = 1
+                  endif
+                  if ( (referenceDepthForIceShelfMelt(iCell) < 0.0_RKIND) .and. &
+                       (referenceDepthForIceShelfMelt(iCell) <= layerTop) .and. &
+                       (referenceDepthForIceShelfMelt(iCell) >  layerBottom) ) then
+                     validOceanMask(iLayer,iCell) = 1
+                  endif
+               enddo
+            enddo
+
+         else
+            call mpas_log_write("Invalid option specified for config_ocean_data_extrap_data_field", MPAS_LOG_ERR)
+            err = ior(err, 1)
+         endif
+
+
+
+
          call mpas_log_write('==HH==: updating halos for the avail/valid ocean masks')
          ! Update halos
          call mpas_timer_start("halo updates")
@@ -204,16 +236,32 @@ contains
          ! save the initial validOceanMask
          validOceanMaskOrig(:,:) = validOceanMask(:,:)
 
-         ! initialize the TF field
-         TFocean(:,:) = ismip6shelfMelt_3dThermalForcing(:,:) * validOceanMask(:,:)
-         ! initialize the invalid data locations with fill value
-         do iCell = 1, nCellsSolve
-            do iLayer = 1, nISMIP6OceanLayers
-               if ( availOceanMask(iLayer,iCell) == 0 ) then
-                  TFocean(iLayer,iCell) = invalid_value_TF
-               endif
+         ! initialize the ocean data field
+         if (trim(config_ocean_data_extrap_data_field) == 'tf') then
+            TFocean(:,:) = ismip6shelfMelt_3dThermalForcing(:,:) * validOceanMask(:,:)
+            ! initialize the invalid data locations with fill value
+            do iCell = 1, nCellsSolve
+               do iLayer = 1, nISMIP6OceanLayers
+                  if ( availOceanMask(iLayer,iCell) == 0 ) then
+                     TFocean(iLayer,iCell) = invalid_value_TF
+                  endif
+               enddo
             enddo
-         enddo
+
+         elseif (trim(config_ocean_data_extrap_data_field) == 'melt') then
+            TFocean(:,:) = invalid_value_TF
+            do iCell = 1, nCellsSolve
+               do iLayer = 1, nISMIP6OceanLayers
+                  if ( validOceanMask(iLayer,iCell) == 1 ) then
+                     TFocean(iLayer,iCell) = referenceIceShelfMelt(iCell)
+                  endif
+               enddo
+            enddo
+         endif
+
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'TFocean')
+         call mpas_timer_stop("halo updates")
 
          ! flood-fill the valid ocean mask and TF field through
          ! horizontal and vertial extrapolation
@@ -234,6 +282,8 @@ contains
             err = ior(err, err_tmp)
             call mpas_timer_stop("vertical scheme")
          enddo
+
+         ismip6shelfMelt_3dThermalForcing = TFocean
       else
          ! do nothing
          call mpas_log_write('ocean data will NOT be extrapolated into the MALI ice draft')
@@ -485,7 +535,7 @@ contains
                          MPAS_LOG_ERR)
                     err = ior(err,1)
                  else
-                    TFocean(iLayer,iCell) = (TFocean(iLayer-1,iCell)) + (60 * 0.0008)
+                    TFocean(iLayer,iCell) = (TFocean(iLayer-1,iCell)) !+ (60 * 0.0008)
                  endif
                  validOceanMask(iLayer,iCell) = 1
                  newMaskCountLocalAccum = newMaskCountLocalAccum + 1
