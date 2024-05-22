@@ -251,7 +251,7 @@ contains
             bedTopography(:) = bedTopography(:) + upliftRate(:) * deltat
 
             call li_update_geometry(geometryPool)
-            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+            call  li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
 
             block => block % next
          end do
@@ -761,7 +761,7 @@ contains
       ! Perform Halo exchange update
       call mpas_dmpar_field_halo_exch(domain,'bedTopography')
       call li_update_geometry(geometryPool)
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call  li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
       ! deallocate memory

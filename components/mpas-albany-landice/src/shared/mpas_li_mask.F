@@ -246,7 +246,7 @@ contains
 !
 !-----------------------------------------------------------------------
 
-   subroutine li_calculate_mask(meshPool, velocityPool, geometryPool, err)
+   subroutine li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err)
 
       !-----------------------------------------------------------------
       !
@@ -265,6 +265,8 @@ contains
       ! input/output variables
       !
       !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain
+
       type (mpas_pool_type), intent(inout) :: &
          geometryPool          !< Input/Output: geometry information
 
@@ -283,8 +285,9 @@ contains
       !-----------------------------------------------------------------
       integer, pointer :: nCells, nVertices, nEdges, vertexDegree
       integer, pointer :: nVertInterfaces
-      real(KIND=RKIND), dimension(:), pointer :: thickness, bedTopography
-      integer, dimension(:), pointer :: nEdgesOnCell, cellMask, vertexMask, edgeMask
+      real(KIND=RKIND), dimension(:), pointer :: thickness, bedTopography, groundedToFloatingThickness
+      integer, dimension(:), pointer :: nEdgesOnCell, cellMask, vertexMask, edgeMask, &
+                                        groundedMaskForMassBudget, floatingMaskForMassBudget
       integer, dimension(:,:), pointer :: cellsOnCell, cellsOnVertex, cellsOnEdge, dirichletVelocityMask
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density, &
             config_sea_level, config_dynamic_thickness
@@ -306,6 +309,10 @@ contains
       real (kind=RKIND) :: thinnestNeighborHeight
       integer :: iCellNeighbor
       logical :: openOceanNeighbor
+      logical :: updateMassBudgetMasks=.true.
+      type (field1DInteger), pointer :: & ! used to calculate groundedToFloatingThickness
+           groundedMaskForMassBudgetTemporaryField, & ! scratch field containing old values of groundedMaskForMassBudget
+           floatingMaskForMassBudgetTemporaryField    ! scratch field containing old values of floatingMaskForMassBudget
 
       call mpas_timer_start('calculate mask')
 
@@ -328,6 +335,14 @@ contains
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'vertexMask', vertexMask, timeLevel=1)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'groundedToFloatingThickness', groundedToFloatingThickness)
+      call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+      call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
+
+      call mpas_pool_get_field(geometryPool, 'groundedMaskForMassBudgetTemporary', groundedMaskForMassBudgetTemporaryField)
+      call mpas_pool_get_field(geometryPool, 'floatingMaskForMassBudgetTemporary', floatingMaskForMassBudgetTemporaryField)
+      call mpas_allocate_scratch_field(groundedMaskForMassBudgetTemporaryField, .true.)
+      call mpas_allocate_scratch_field(floatingMaskForMassBudgetTemporaryField, .true.)
 
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
@@ -354,12 +369,24 @@ contains
           cellMask = ior(cellMask, li_mask_ValueIce)
       end where
 
+
+      ! save old mass budget masks for determining cells changing from grounded
+      ! to floating and vice versa
+      groundedMaskForMassBudgetTemporaryField % array(:) = groundedMaskForMassBudget(:)
+      floatingMaskForMassBudgetTemporaryField % array(:) = floatingMaskForMassBudget(:)
       ! Is it floating? (ice thickness equal to floatation is considered floating)
       ! For now floating ice and grounded ice are mutually exclusive.
       ! This may change if a grounding line parameterization is added.
+      ! Initialize grounded and floating masks for mass budget as well.
+      floatingMaskForMassBudget(:) = 0
+      groundedMaskForMassBudget(:) = 0
       where (  li_mask_is_ice(cellMask) .and. (config_ice_density / config_ocean_density * thickness) <= &
                (config_sea_level - bedTopography) )
           cellMask = ior(cellMask, li_mask_ValueFloating)
+          floatingMaskForMassBudget = 1
+      elsewhere (  li_mask_is_ice(cellMask) .and. (config_ice_density / config_ocean_density * thickness) > &
+               (config_sea_level - bedTopography) )
+          groundedMaskForMassBudget = 1
       end where
 
       ! Identify the margin
@@ -473,6 +500,63 @@ contains
           endif
       enddo
 
+      ! For mass budget calculations, add floating ice over subglacial lakes and 
+      ! floating non-dynamic cells bordering grounded ice to the grounded mask
+      ! and remove them from floating mask. Need the following if statement to
+      ! avoid circularity between li_flood_fill and this routine.
+      if (updateMassBudgetMasks) then
+         do i=1,nCells
+             if (li_mask_is_floating_ice(cellMask(i))) then
+                if (.not. li_mask_is_dynamic_ice(cellMask(i))) then
+                   do j=1,nEdgesOnCell(i) ! Check if any neighbors are grounded
+                      iCellNeighbor = cellsOnCell(j,i)
+                      if (li_mask_is_grounded_ice(cellMask(iCellNeighbor))) then
+                          groundedMaskForMassBudget(i) = 1
+                          floatingMaskForMassBudget(i) = 0
+                          cycle ! no need to look at additional neighbors
+                      endif
+                   enddo
+                endif
+ 
+                ! Seed mask with floating cells with open ocean neighbors.
+                ! Currently commented because flood fill is not yet available
+                ! here.
+                ! do j=1,nEdgesOnCell(i) ! Check if any neighbors are open ocean
+                !    iCellNeighbor = cellsOnCell(j,i)
+                !    if ( (.not. li_mask_is_ice(cellMask(iCellNeighbor))) .and. &
+                !         (bedTopography(iCellNeighbor) < config_sea_level) ) then
+                !       seedMask = 1
+                !       cycle ! no need to look at additional neighbors
+                !    endif
+                ! enddo 
+             endif
+         enddo
+
+      ! Update groundedToFloatingThickness based on new masks
+      do iCell = 1, nCells
+        ! find locations that had grounded ice before but now have floating ice
+        if ( (groundedMaskForMassBudgetTemporaryField % array(iCell) .eq. 1) .and. &
+             (floatingMaskForMassBudget(iCell) .eq. 1) ) then
+           groundedToFloatingThickness(iCell) = groundedToFloatingThickness(iCell) + thickness(iCell)
+        ! find locations that had floating ice before but now have grounded ice
+        else if ( (floatingMaskForMassBudgetTemporaryField % array(iCell) .eq. 1) .and. &
+                  (groundedMaskForMassBudget(iCell) .eq. 1) ) then
+           groundedToFloatingThickness(iCell) = groundedToFloatingThickness(iCell) - thickness(iCell)
+        endif
+      enddo
+         ! Now use flood fill to identify all floating ice connected to the open
+         ! ocean. Subglacial lakes are any floating ice that are not in the
+         ! resulting flood fill mask. Commented code below does not yet work
+         ! because flood fill needs to be moved from li_calving to a shared
+         ! routine.
+         ! call li_flood_fill(seedMask=seedMask, growMask=li_mask_is_floating_ice(cellMask), domain)
+
+         !where (li_mask_is_floating(cellMask) and seedMask .eq. 0)
+         !      groundedMaskForBudget = 1
+         !      gloatingMaskForMassBudget = 0
+         !end where
+
+      endif
       !call mpas_timer_stop('calculate mask cell')
 
       ! ====

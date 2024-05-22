@@ -167,7 +167,7 @@ module li_subglacial_hydro
          endif
 
          ! Mask needs to be initialized for pressure calcs to be correct
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          call calc_hydro_mask(domain)

@@ -46,8 +46,7 @@ module li_advection
    !--------------------------------------------------------------------
    public :: li_advection_thickness_tracers, &
              li_layer_normal_velocity, &
-             li_update_geometry, &
-             li_grounded_to_floating
+             li_update_geometry
 
    !--------------------------------------------------------------------
    !
@@ -114,7 +113,6 @@ module li_advection
       type (mpas_pool_type), intent(inout) :: &
            velocityPool           !< Input/output: velocity information
                                   !                (needs to be inout for li_calculate_mask call
-
       type (mpas_pool_type), intent(inout) :: &
            geometryPool           !< Input/output: geometry information to be updated
 
@@ -147,6 +145,7 @@ module li_advection
            sfcMassBal,            & ! surface mass balance (potential forcing)
            sfcMassBalApplied,     & ! surface mass balance (actually applied)
            groundedSfcMassBalApplied,     & ! surface mass balance on grounded locations (actually applied)
+           floatingSfcMassBalApplied,     & ! surface mass balance on floating locations (actually applied)
            basalMassBal,          & ! basal mass balance
            groundedBasalMassBal,  & ! basal mass balance for grounded ice
            floatingBasalMassBal,  & ! basal mass balance for floating ice
@@ -192,8 +191,7 @@ module li_advection
            basalTracersField        ! scratch field containing values of basal tracers
 
       type (field1DInteger), pointer :: &
-           cellMaskTemporaryField, & ! scratch field containing old values of cellMask
-           thermalCellMaskField
+           thermalCellMaskField   
 
       ! Allocatable arrays need for flux-corrected transport advection
       real (kind=RKIND), dimension(:,:,:), allocatable :: tend
@@ -201,7 +199,9 @@ module li_advection
       integer, dimension(:), pointer :: &
            cellMask,              & ! integer bitmask for cells
            edgeMask,              & ! integer bitmask for edges
-           thermalCellMask
+           thermalCellMask,       &
+           groundedMaskForMassBudget, &
+           floatingMaskForMassBudget
 
       integer, dimension(:,:), pointer :: cellsOnEdge
 
@@ -238,7 +238,7 @@ module li_advection
 
       !WHL - debug
       integer, dimension(:), pointer :: indexToCellID, indexToEdgeID
-      integer, pointer :: nCells, nEdges
+      integer, pointer :: nCells, nEdges, nEdgesSolve
       integer, pointer :: config_stats_cell_ID
       integer :: iEdge, iEdgeOnCell
       integer, dimension(:), pointer :: nEdgesOnCell
@@ -280,6 +280,7 @@ module li_advection
       call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
       call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
       call mpas_pool_get_array(geometryPool, 'groundedSfcMassBalApplied', groundedSfcMassBalApplied)
+      call mpas_pool_get_array(geometryPool, 'floatingSfcMassBalApplied', floatingSfcMassBalApplied)
       call mpas_pool_get_array(geometryPool, 'basalMassBal', basalMassBal)
       call mpas_pool_get_array(geometryPool, 'groundedBasalMassBal', groundedBasalMassBal)
       call mpas_pool_get_array(geometryPool, 'floatingBasalMassBal', floatingBasalMassBal)
@@ -292,7 +293,8 @@ module li_advection
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'dynamicThickening', dynamicThickening)
       call mpas_pool_get_array(geometryPool, 'groundedToFloatingThickness', groundedToFloatingThickness)
-
+      call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+      call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
       ! get arrays from the velocity pool
       call mpas_pool_get_array(velocityPool, 'layerNormalVelocity', layerNormalVelocity)
       call mpas_pool_get_array(velocityPool, 'layerThicknessEdgeFlux', layerThicknessEdgeFlux)
@@ -319,6 +321,7 @@ module li_advection
 
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
       call mpas_pool_get_dimension(meshPool, 'maxEdges2', maxEdges2)
       call mpas_pool_get_array(meshPool, 'edgesOnCell', edgesOnCell)
@@ -353,9 +356,6 @@ module li_advection
       call mpas_allocate_scratch_field(basalTracersField, .true.)
       basalTracers => basalTracersField % array
 
-      call mpas_pool_get_field(geometryPool, 'cellMaskTemporary', cellMaskTemporaryField)
-      call mpas_allocate_scratch_field(cellMaskTemporaryField, .true.)
-
       call mpas_pool_get_field(scratchPool, 'iceCellMask', thermalCellMaskField)
       call mpas_allocate_scratch_field(thermalCellMaskField, .true.)
       thermalCellMask => thermalCellMaskField % array
@@ -367,12 +367,13 @@ module li_advection
       call li_calculate_layerThickness(meshPool, thickness, layerThickness)
 
       ! update masks
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
-
-      ! save old copycellMask for determining cells changing from grounded to floating and vice versa
-      cellMaskTemporaryField % array(:) = cellMask(:)
-      layerThicknessEdgeFlux(:,:) = 0.0_RKIND
+      ! Update halo on edgeMask for calculating flux across grounding line.
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
+      call mpas_dmpar_field_halo_exch(domain, 'cellMask')
+      call mpas_timer_stop("halo updates")
 
       !-----------------------------------------------------------------
       ! Horizontal transport of thickness and tracers
@@ -445,7 +446,7 @@ module li_advection
          ! copy old (input) values of layer thickness and tracers to scratch arrays
          layerThicknessOld(:,:) = layerThickness(:,:)
          advectedTracersOld(:,:,:) = advectedTracers(:,:,:)
-
+         layerThicknessEdgeFlux(:,:) = 0.0_RKIND
          ! compute new values of layer thickness and tracers
          if ((trim(config_thickness_advection) .eq. 'fo') .and. &
              ( (trim(config_tracer_advection) .eq. 'fo') .or. &
@@ -535,106 +536,16 @@ module li_advection
             enddo
          endif
 
-
-         ! Calculate dynamicThickening (layerThickness is updated by advection at this point, while thickness is still old)
-         dynamicThickening = (sum(layerThickness, 1) - thickness) / dt * scyr  ! units of m/yr
-
-
-         ! Update the thickness and cellMask before applying the mass balance.
-         ! The update is needed because the SMB and BMB depend on whether ice is present.
-         thickness = sum(layerThickness, 1)
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
-
-
-
-         !-----------------------------------------------------------------
-         ! Add the surface and basal mass balance to the layer thickness
-         !-----------------------------------------------------------------
-
-         ! Combine various basal mass balance fields based on mask.
-         ! Grounded and floating basal mass balance should come from the thermal solver.
-
-         ! TODO: more complicated treatment at GL?
-
-         do iCell = 1, nCells
-            if (li_mask_is_grounded_ice(cellMask(iCell))) then
-               basalMassBal(iCell) = groundedBasalMassBal(iCell)
-            elseif (li_mask_is_floating_ice(cellMask(iCell))) then
-               ! Currently, floating and grounded ice are mutually exclusive.
-               ! This could change if the GL is parameterized, in which case this logic may need adjustment.
-               basalMassBal(iCell) = floatingBasalMassBal(iCell)
-            elseif ( .not. (li_mask_is_ice(cellMask(iCell)))) then
-               ! We don't allow a positive basal mass balance where ice is not already present.
-               basalMassBal(iCell) = 0.0_RKIND
-            endif
-         enddo
-
-         ! It is possible that excess internal melting was computed and assigned
-         ! to the drainedInternalMeltRate array in mpas_li_thermal.F.  If so, then add it to basalMassBal.
-         ! floatingBasalMassBal should never be altered because it is an input variable.
-         ! Note: Subroutine basal_melt_floating_ice should be called earlier in the time step, before adding this term.
-                  ! calculate a mask to identify ice that is thick enough to be thermally active
-         if (config_thermal_calculate_bmb) then
-            do iCell = 1, nCells
-               if (thickness(iCell) > config_thermal_thickness) then
-                  thermalCellMask(iCell) = 1
-                  do k = 1, nVertLevels
-                     basalMassBal(iCell) = basalMassBal(iCell) - drainedInternalMeltRate(k, iCell)
-                  enddo
-               else
-                  thermalCellMask(iCell) = 0
-               endif
-            enddo
-         endif
-
-         call apply_mass_balance(&
-              dt,                  &
-              config_ice_density,  &
-              cellMask,            &
-              bedTopography,       &
-              sfcMassBal,          &
-              sfcMassBalApplied,   &
-              groundedSfcMassBalApplied,   &
-              basalMassBal,        &
-              basalMassBalApplied, &
-              groundedBasalMassBalApplied, &
-              floatingBasalMassBalApplied, &
-              surfaceTracers,      &
-              basalTracers,        &
-              layerThickness,      &
-              advectedTracers)
-
-         ! Update the thickness and cellMask before the vertical remap calculation.
-         ! Note: The thickness field (rather than layerThickness) is the primary prognostic.
-         !       It should be returned from each subroutine that alters the thickness, or
-         !       updated immediately afterward.
-
-         thickness = sum(LayerThickness, 1)
-
-         !WHL - debug - Get mass balance for test cell
-         if (config_print_thickness_advection_info) then
-            do iCell = 1, nCells
-               if (indexToCellID(iCell) == config_stats_cell_ID) then
-                  call mpas_log_write(' ')
-                  call mpas_log_write('After apply_mass_balance, indexToCellID=$i, thickness=$r', intArgs=(/indexToCellID(iCell)/), &
-                          realArgs=(/thickness(iCell)/) )
-                  call mpas_log_write('cellMask=$i, is ice=$l, is grounded=$l, is floating=$l', &
-                       intArgs=(/cellMask(iCell)/), logicArgs=(/li_mask_is_ice(cellMask(iCell)), &
-                       li_mask_is_grounded_ice(cellMask(iCell)), li_mask_is_floating_ice(cellMask(iCell)) /) )
-                  call mpas_log_write('basalMassBalApplied=$r, grounded=$r, floating=$r', realArgs=(/ basalMassBalApplied(iCell)*31536000./917.,&
-                          groundedBasalMassBalApplied(iCell)*31536000./917., floatingBasalMassBalApplied(iCell)*31536000./917. /) )
-               endif
-            enddo
-         endif
-
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
-         err = ior(err, err_tmp)
+         ! Update halos after advection.
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'layerThickness')
+         call mpas_timer_stop("halo updates")
 
          ! Calculate flux across grounding line
-         ! Do this after new thickness & mask have been calculated, including SMB/BMB
+         ! Do this before new masks and thickness have been calculated, and before SMB/BMB
          fluxAcrossGroundingLine(:) = 0.0_RKIND
          fluxAcrossGroundingLineOnCells(:) = 0.0_RKIND
-         do iEdge = 1, nEdges
+         do iEdge = 1, nEdgesSolve
             if (li_mask_is_grounding_line(edgeMask(iEdge))) then
                iCell1 = cellsOnEdge(1,iEdge)
                iCell2 = cellsOnEdge(2,iEdge)
@@ -667,6 +578,109 @@ module li_advection
             endif
          enddo ! edges
 
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'fluxAcrossGroundingLine')
+         call mpas_dmpar_field_halo_exch(domain, 'fluxAcrossGroundingLineOnCells')
+         call mpas_timer_stop("halo updates")
+
+         ! Calculate dynamicThickening (layerThickness is updated by advection at this point, while thickness is still old)
+         dynamicThickening = (sum(layerThickness, 1) - thickness) / dt * scyr  ! units of m/yr
+
+
+         ! Update the thickness and cellMask before applying the mass balance.
+         ! The update is needed because the SMB and BMB depend on whether ice is present.
+         thickness = sum(layerThickness, 1)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
+
+         !-----------------------------------------------------------------
+         ! Add the surface and basal mass balance to the layer thickness
+         !-----------------------------------------------------------------
+
+         ! Combine various basal mass balance fields based on mask.
+         ! Grounded and floating basal mass balance should come from the thermal solver.
+
+         ! TODO: more complicated treatment at GL?
+
+         where ( groundedMaskForMassBudget .eq. 1 )
+
+            basalMassBal = groundedBasalMassBal
+
+         elsewhere ( floatingMaskForMassBudget .eq. 1)
+
+            ! Currently, floating and grounded ice are mutually exclusive.
+            ! This could change if the GL is parameterized, in which case this logic may need adjustment.
+            basalMassBal = floatingBasalMassBal
+
+         elsewhere ( .not. (li_mask_is_ice(cellMask) ) )
+
+            ! We don't allow a positive basal mass balance where ice is not already present.
+            basalMassBal = 0.0_RKIND
+
+         end where
+
+         ! It is possible that excess internal melting was computed and assigned
+         ! to the drainedInternalMeltRate array in mpas_li_thermal.F.  If so, then add it to basalMassBal.
+         ! floatingBasalMassBal should never be altered because it is an input variable.
+         ! Note: Subroutine basal_melt_floating_ice should be called earlier in the time step, before adding this term.
+                  ! calculate a mask to identify ice that is thick enough to be thermally active
+         if (config_thermal_calculate_bmb) then
+            do iCell = 1, nCells
+               if (thickness(iCell) > config_thermal_thickness) then
+                  thermalCellMask(iCell) = 1
+                  do k = 1, nVertLevels
+                     basalMassBal(iCell) = basalMassBal(iCell) - drainedInternalMeltRate(k, iCell)
+                  enddo
+               else
+                  thermalCellMask(iCell) = 0
+               endif
+            enddo
+         endif
+
+         call apply_mass_balance(&
+              dt,                  &
+              config_ice_density,  &
+              cellMask,            &
+              bedTopography,       &
+              sfcMassBal,          &
+              sfcMassBalApplied,   &
+              groundedSfcMassBalApplied,   &
+              floatingSfcMassBalApplied,   &
+              basalMassBal,        &
+              basalMassBalApplied, &
+              groundedBasalMassBalApplied, &
+              floatingBasalMassBalApplied, &
+              groundedMaskForMassBudget, &
+              floatingMaskForMassBudget, &
+              surfaceTracers,      &
+              basalTracers,        &
+              layerThickness,      &
+              advectedTracers)
+
+         ! Update the thickness and cellMask before the vertical remap calculation.
+         ! Note: The thickness field (rather than layerThickness) is the primary prognostic.
+         !       It should be returned from each subroutine that alters the thickness, or
+         !       updated immediately afterward.
+
+         thickness = sum(LayerThickness, 1)
+
+         !WHL - debug - Get mass balance for test cell
+         if (config_print_thickness_advection_info) then
+            do iCell = 1, nCells
+               if (indexToCellID(iCell) == config_stats_cell_ID) then
+                  call mpas_log_write(' ')
+                  call mpas_log_write('After apply_mass_balance, indexToCellID=$i, thickness=$r', intArgs=(/indexToCellID(iCell)/), &
+                          realArgs=(/thickness(iCell)/) )
+                  call mpas_log_write('cellMask=$i, is ice=$l, is grounded=$l, is floating=$l', &
+                       intArgs=(/cellMask(iCell)/), logicArgs=(/li_mask_is_ice(cellMask(iCell)), &
+                       li_mask_is_grounded_ice(cellMask(iCell)), li_mask_is_floating_ice(cellMask(iCell)) /) )
+                  call mpas_log_write('basalMassBalApplied=$r, grounded=$r, floating=$r', realArgs=(/ basalMassBalApplied(iCell)*31536000./917.,&
+                          groundedBasalMassBalApplied(iCell)*31536000./917., floatingBasalMassBalApplied(iCell)*31536000./917. /) )
+               endif
+            enddo
+         endif
+
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
+         err = ior(err, err_tmp)
 
          ! Remap tracers to the standard vertical sigma coordinate
          ! Note: If tracers are not being advected, then this subroutine simply restores the
@@ -732,7 +746,6 @@ module li_advection
       call mpas_deallocate_scratch_field(layerThicknessOldField, .true.)
       call mpas_deallocate_scratch_field(basalTracersField, .true.)
       call mpas_deallocate_scratch_field(surfaceTracersField, .true.)
-      call mpas_deallocate_scratch_field(cellMaskTemporaryField, .true.)
       call mpas_deallocate_scratch_field(thermalCellMaskField, .true.)
 
       ! === error check
@@ -844,10 +857,13 @@ module li_advection
               sfcMassBal,          &
               sfcMassBalApplied,   &
               groundedSfcMassBalApplied,   &
+              floatingSfcMassBalApplied,   &
               basalMassBal,        &
               basalMassBalApplied, &
               groundedBasalMassBalApplied, &
               floatingBasalMassBalApplied, &
+              groundedMaskForMassBudget, &
+              floatingMaskForMassBudget, &
               surfaceTracers,      &
               basalTracers,        &
               layerThickness,      &
@@ -861,7 +877,9 @@ module li_advection
            dt,                 & !< Input: time step (s)
            rhoi                  !< Input: ice density (kg/m^3)
 
-      integer, dimension(:), intent(in) :: cellMask !< Input: mask on cells
+      integer, dimension(:), intent(in) :: cellMask, & !< Input: mask on cells
+                                           groundedMaskForMassBudget, &
+                                           floatingMaskForMassBudget
 
       real (kind=RKIND), dimension(:), intent(in) ::  &
            bedTopography,      & !< Input: bed elevation (m)
@@ -890,7 +908,8 @@ module li_advection
            sfcMassBalApplied !< Output: surface mass balance actually applied on this time step (kg/m^2/s)
 
       real(kind=RKIND), dimension(:), intent(out) :: &
-           groundedSfcMassBalApplied !< Output: surface mass balance actually applied to grounded ice on this time step (kg/m^2/s)
+           groundedSfcMassBalApplied, &  !< Output: surface mass balance actually applied to grounded ice on this time step (kg/m^2/s)
+           floatingSfcMassBalApplied     !< Output: surface mass balance actually applied to floating ice on this time step (kg/m^2/s)
 
       real(kind=RKIND), dimension(:), intent(out) :: &
            basalMassBalApplied,         & !< Output: basal mass balance actually applied on this time step (kg/m^2/s)
@@ -1046,24 +1065,22 @@ module li_advection
       enddo   ! iCell
 
       ! Separate grounded and floating components, as necessary.
-      where (li_mask_is_grounded_ice(cellMask) .or. bedTopography > config_sea_level)
+      where ( (groundedMaskForMassBudget .eq. 1) .or. (bedTopography > config_sea_level) )
             groundedSfcMassBalApplied = sfcMassBalApplied
+            floatingSfcMassBalApplied = 0.0_RKIND
+            groundedBasalMassBalApplied = basalMassBalApplied
+            floatingBasalMassBalApplied = 0.0_RKIND
+      elsewhere (floatingMaskForMassBudget .eq. 1)
+            groundedSfcMassBalApplied = 0.0_RKIND
+            floatingSfcMassBalApplied = sfcMassBalApplied
+            groundedBasalMassBalApplied = 0.0_RKIND
+            floatingBasalMassBalApplied = basalMassBalApplied
       elsewhere
             groundedSfcMassBalApplied = 0.0_RKIND
+            floatingSfcMassBalApplied = 0.0_RKIND
+            groundedBasalMassBalApplied = 0.0_RKIND
+            floatingBasalMassBalApplied = 0.0_RKIND
       end where
-
-      do iCell = 1, nCells
-         if (li_mask_is_grounded_ice(cellMask(iCell))) then
-            groundedBasalMassBalApplied(iCell) = basalMassBalApplied(iCell)
-            floatingBasalMassBalApplied(iCell) = 0.0_RKIND
-         elseif (li_mask_is_floating_ice(cellMask(iCell))) then
-            floatingBasalMassBalApplied(iCell) = basalMassBalApplied(iCell)
-            groundedBasalMassBalApplied(iCell) = 0.0_RKIND
-         else
-            groundedBasalMassBalApplied(iCell) = 0.0_RKIND
-            floatingBasalMassBalApplied(iCell) = 0.0_RKIND
-         endif
-      enddo
 
       deallocate(thckTracerProducts)
 
@@ -2103,52 +2120,6 @@ module li_advection
       deallocate(hTsum)
 
     end subroutine vertical_remap
-
-    subroutine li_grounded_to_floating(cellMaskOrig, cellMaskNew, thicknessNew, groundedToFloatingThickness, nCells)
-      !-----------------------------------------------------------------
-      ! input variables
-      !-----------------------------------------------------------------
-      integer, dimension(:), intent(in) :: &
-         cellMaskOrig          !< Input: mask for cells before advection
-
-      integer, dimension(:), intent(in) :: &
-         cellMaskNew          !< Input: mask for cells after advection
-
-      real(kind=RKIND), dimension(:), intent(in) :: &
-         thicknessNew         !< Input: ice thickness after advection
-
-      integer, pointer, intent(in) :: &
-         nCells
-      !-----------------------------------------------------------------
-      ! input/output variables
-      !-----------------------------------------------------------------
-
-      !-----------------------------------------------------------------
-      ! output variables
-      !-----------------------------------------------------------------
-      real(kind=RKIND), dimension(:), intent(out) :: &
-         groundedToFloatingThickness         !< Input: ice thickness
-
-      !-----------------------------------------------------------------
-      ! local variables
-      !-----------------------------------------------------------------
-      integer :: iCell
-
-      groundedToFloatingThickness(:) = 0.0_RKIND
-
-      do iCell = 1, nCells
-        ! find locations that had grounded ice before but now have floating ice
-        if (li_mask_is_grounded_ice(cellMaskOrig(iCell)) .and. &
-            li_mask_is_floating_ice(cellMaskNew(iCell)) ) then
-           groundedToFloatingThickness(iCell) = thicknessNew(iCell)
-        ! find locations that had floating ice before but now have grounded ice
-        else if (li_mask_is_floating_ice(cellMaskOrig(iCell)) .and. &
-                 li_mask_is_grounded_ice(cellMaskNew(iCell)) ) then
-           groundedToFloatingThickness(iCell) = -1.0_RKIND * thicknessNew(iCell)
-        endif
-      enddo
-
-    end subroutine li_grounded_to_floating
 
 !***********************************************************************
 

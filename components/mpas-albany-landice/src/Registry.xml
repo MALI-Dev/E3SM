@@ -1201,6 +1201,12 @@ is the value of that variable from the *previous* time level!
                 <var name="cellMask" type="integer" dimensions="nCells Time" units="none"
                      description="bitmask indicating various properties about the ice sheet on cells.  cellMask only needs to be a restart field if config_allow_additional_advance = false (to keep the mask of initial ice extent)"
                 />
+                <var name="groundedMaskForMassBudget" type="integer" dimensions="nCells Time" units="none"
+                     description="bitmask indicating where ice is considered grounded for mass budget calculation. Includes floating non-dynamic cells adjacent to grounded ice and floating ice above subglacial lakes."
+                />
+                <var name="floatingMaskForMassBudget" type="integer" dimensions="nCells Time" units="none"
+                     description="bitmask indicating where ice is considered floating for mass budget calculation. Does not include floating non-dynamic cells adjacent to grounded ice or floating ice above subglacial lakes."
+                />
                 <var name="edgeMask" type="integer" dimensions="nEdges Time" units="none"
                      description="bitmask indicating various properties about the ice sheet on edges."
                 />
@@ -1217,6 +1223,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="groundedSfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="applied surface mass balance on grounded ice"
+                />
+                <var name="floatingSfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                     description="applied surface mass balance on floating ice"
                 />
                 <var name="basalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="Potential basal mass balance"
@@ -1250,6 +1259,12 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="calvingThicknessFromThreshold" type="real" dimensions="nCells Time" units="m" time_levs="1"
                         description="thickness of ice that calves on a given timestep for only processes that generate calving based on a threshold.  This includes mask calving, damage calving, iceberg and small island detection, and velocity speed limit."
+                />
+                <var name="groundedCalvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                        description="thickness of grounded ice that calves on a given timestep (less than or equal to ice thickness)"
+                />
+                <var name="floatingCalvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                        description="thickness of floating ice that calves on a given timestep (less than or equal to ice thickness)"
                 />
                 <var name="calvingCFLdt" type="real" dimensions="Time" units="s" time_levs="1" default_value="1.0e16"
                         description="approximation of maximum allowable timestep based on calvingVelocity"
@@ -1333,7 +1348,6 @@ is the value of that variable from the *previous* time level!
                 <var name="damageSource" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1"
                      description="damage source term"
                 />
-                />
                 <var name="basalWaterThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="thickness of basal water"
                 />
@@ -1407,6 +1421,12 @@ is the value of that variable from the *previous* time level!
                 <var name="dtFaceMeltingCFLratio" type="real" dimensions="Time" units="none" time_levs="1" default_value="0.0"
                         description="ratio of timestep being used to the maximum timestep calculated for the face-melting CFL condition.  This metric can be used to assess the accuracy of the face-melting CFL calculation being lagged by a timestep."
                 />
+                <var name="groundedFaceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                     description="Equivalent plan-view averaged thickness of grounded ice that melts on a given timestep from front ablation (less than or equal to ice thickness). Used in mass budget calculations."
+                />
+                <var name="floatingFaceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                     description="Equivalent plan-view averaged thickness of floating ice that melts on a given timestep from front ablation (less than or equal to ice thickness). Used in mass budget calculations."
+                />
                <var name="unmeltedVolume" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
                      description="volume of ice that was left unmelted from required facemelt flux due to only applying flux over immediate neighbors (diagnostic field to assess if this limitation is a problem)"
 	        />
@@ -1429,10 +1449,18 @@ is the value of that variable from the *previous* time level!
                      units="m"  description="amount of change in bedTopography.  This field is calculated by the sea-level model over its time step. Positive values indicate bed uplift relative to sea level."
                 />
                <!-- Scratch variables related to geometry -->
-	       <var name="cellMaskTemporary" type="integer" dimensions="nCells" units="none"
-	       description="temporary copy of cellMask"
+               <var name="cellMaskTemporary" type="integer" dimensions="nCells" units="none"
+               description="temporary copy of cellMask"
+               persistence="scratch"
+               />
+ 	       <var name="groundedMaskForMassBudgetTemporary" type="integer" dimensions="nCells" units="none"
+	       description="temporary copy of groundedMaskForMassBudget"
 	       persistence="scratch"
 	       />
+               <var name="floatingMaskForMassBudgetTemporary" type="integer" dimensions="nCells" units="none"
+               description="temporary copy of floatingMaskForMassBudget"
+               persistence="scratch"
+               />
         </var_struct>
 
 <!-- ================ -->
