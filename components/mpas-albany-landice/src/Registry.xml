@@ -224,6 +224,14 @@
 			description="Limit calvingVelocity to this value. Currently only supported for von Mises calving."
 			possible_values="Any positive real value"
 		/>
+		<nml_option name="config_apply_calving_multiplier" type="logical" default_value=".false." units="unitless"
+			description="If true, a calving multiplier will be calculated as a function of faceMeltSpeed and used to modify calvingVelocity for rate-based calving laws.  This is a simple parameterization of the effect of melt undercutting on calving rates."
+			possible_values=".true. or .false."
+		/>
+                <nml_option name="config_calving_multiplier_scaling" type="real" default_value="0.0" units="per (m/d)"
+			description="the slope used to calculate the calving multiplier from faceMeltSpeed.  Implied values from Ma and Bassis (2018) range from approximately -0.5 to 10.0. 0.0 yields a calving multiplier of 1.0"
+			possible_values="any real value"
+		/>
 		<nml_option name="config_grounded_von_Mises_threshold_stress" type="real" default_value="1.0e6" units="Pa"
 			    description="Threshold von Mises stress value required for calving velocity to exceed ice velocity on grounded ice. sigma_max in Morlighem et al. (2016) eq. 4. 1 MPa default value is from Morlighem et al.'s calibration for Store Glacier."
 			    possible_values="Any positive real value"
@@ -1422,6 +1430,9 @@ is the value of that variable from the *previous* time level!
                 <var name="ismip6RunoffCurrent" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" packages="ismip6GroundedFaceMelt" default_value="0.0"
                      description="Runoff forcing for ISMIP6 grounded ice melting method, for current input time"
                 />
+		<var name="calvingMultiplier" type="real" dimensions="nCells Time" units="none" time_levs="1" default_value="1.0"
+		     description="multiplicative factor on calving rate as a function of faceMeltSpeed used to parameterize the effect of melt undercutting"
+  		/>
                 <var name="upliftRate"            type="real"     dimensions="nCells Time"
                      units="m s^{-1}"  description="time rate of change in bedTopography.  This field is prescribed as input and not currently calculated in the model."
                 />

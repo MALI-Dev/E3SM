@@ -136,6 +136,8 @@ module li_calving
            calvingThicknessFromThreshold   ! thickness of ice that calves from threshold processes (computed in this subroutine)
 
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
+      real (kind=RKIND), dimension(:), pointer :: faceMeltSpeed
+      real (kind=RKIND), dimension(:), pointer :: calvingMultiplier
 
       real (kind=RKIND), dimension(:), pointer :: areaCell
 
@@ -188,6 +190,16 @@ module li_calving
          calvingThickness(:) = 0.0_RKIND
          calvingThicknessFromThreshold(:) = 0.0_RKIND
          calvingVelocity(:) = 0.0_RKIND
+
+         ! Calculate calvingMultiplier if requested.
+         ! Do here to avoid each calving method needing to
+         ! call it.  Do here instead of when melt rate is
+         ! calculated to keep this calculation modular with calving code
+         ! (e.g. if order of operations is changed or data melt rates are used)
+         call mpas_pool_get_array(geometryPool, 'faceMeltSpeed', faceMeltSpeed)
+         call mpas_pool_get_array(geometryPool, 'calvingMultiplier', calvingMultiplier)
+         call calculate_calving_multiplier(faceMeltSpeed, calvingMultiplier)
+
          block => block % next
       end do
 
@@ -1798,6 +1810,7 @@ module li_calving
                                         surfaceSpeed
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA, &
                                         temperature, layerThickness
+      real (kind=RKIND), dimension(:), pointer :: calvingMultiplier
       real (kind=RKIND), pointer :: config_default_flowParamA
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
@@ -1863,6 +1876,7 @@ module li_calving
           call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
           call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
           call mpas_pool_get_array(geometryPool, 'dtCalvingCFLratio', dtCalvingCFLratio)
+          call mpas_pool_get_array(geometryPool, 'calvingMultiplier', calvingMultiplier)
           call mpas_pool_get_array(geometryPool, 'thickness', thickness)
           call mpas_pool_get_array(geometryPool, 'groundedVonMisesThresholdStress', groundedVonMisesThresholdStress)
           call mpas_pool_get_array(geometryPool, 'floatingVonMisesThresholdStress', floatingVonMisesThresholdStress)
@@ -2036,6 +2050,9 @@ module li_calving
                                          vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
              endif
           enddo
+
+          ! apply calving multiplier.  Will be 1.0 if it is disabled.
+          calvingVelocity = calvingVelocity * calvingMultiplier
 
           call mpas_timer_start("halo updates")
           call mpas_dmpar_field_halo_exch(domain, 'calvingVelocity')
@@ -4515,6 +4532,46 @@ module li_calving
 
    end subroutine li_flood_fill
 
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!    routine calculate_calving_multiplier
+!
+!> \brief  Calculates calvingMultiplier from faceMeltSpeed
+!> \author Matthew Hoffman
+!> \date   January 2024
+!> \details Calculates a multiplicative factor to calvingVelocity
+!> as a function of faceMeltSpeed.  This is a simple parameterization
+!> of the effect of melt undercutting on calving rate.  It was inspired by
+!> Slater, D. A., Benn, D. I., Cowton, T. R., Bassis, J. N., & Todd, J. A. (2021).
+!> Calving multiplier effect controlled by melt undercut geometry.
+!> Journal of Geophysical Research: Earth Surface
+!> and
+!> Ma, Y., & Bassis, J. N. (2019). The effect of submarine melting on calving
+!> from marine terminating glaciers. Journal of Geophysical Research: Earth Surface
+!-----------------------------------------------------------------------
+
+   subroutine calculate_calving_multiplier(faceMeltSpeed, calvingMultiplier)
+      real(kind=RKIND), dimension(:), intent(in) :: faceMeltSpeed
+      real(kind=RKIND), dimension(:), intent(out) :: calvingMultiplier
+
+      ! local variables
+      logical, pointer :: config_apply_calving_multiplier
+      real(kind=RKIND), pointer :: config_calving_multiplier_scaling
+
+
+      call mpas_pool_get_config(liConfigs, 'config_apply_calving_multiplier', config_apply_calving_multiplier)
+      call mpas_pool_get_config(liConfigs, 'config_calving_multiplier_scaling', config_calving_multiplier_scaling)
+
+      if (config_apply_calving_multiplier) then
+         calvingMultiplier = 1.0_RKIND + faceMeltSpeed * 86400.0_RKIND * config_calving_multiplier_scaling
+         ! Don't allow negative calving multiplier
+         calvingMultiplier = max(0.0_RKIND, calvingMultiplier)
+      else
+         calvingMultiplier = 1.0_RKIND
+      endif
+
+   end subroutine calculate_calving_multiplier
+
+
 end module li_calving
-
-
