@@ -268,7 +268,11 @@
                         description="If true, then the value of 'stiffnessFactor' is coupled to damage evolution, i.e. 'stiffnessFactor' = 1-damage."
 	                possible_values=".true. or .false."
 		/>
-		        <nml_option name="config_damage_gl_setting" type="character" default_value="nye" units="unitless"
+                <nml_option name="config_initialize_damage_with_stiffnessFactor" type="logical" default_value=".false." units="unitless"
+                        description="If true, then initialize damage to max((1 - stiffnessFactor), 0)"
+                        possible_values=".true. or .false."
+                />    
+                <nml_option name="config_damage_gl_setting" type="character" default_value="nye" units="unitless"
 		                description="Selection of the method for initializing damage in the first floating grid cells past the grounding line: 'nye' uses Nye's zero stress criteria (Nye, 1957, Proc. R. Soc. A, 239) for defining the damage value, 'extrapolate' extrapolates values from the floating ice downstream back to the first floating cells."
 		            possible_values="'nye', 'extrapolate'"
 		/>
