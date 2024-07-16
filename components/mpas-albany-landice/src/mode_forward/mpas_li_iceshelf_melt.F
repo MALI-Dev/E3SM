@@ -671,7 +671,6 @@ module li_iceshelf_melt
       enddo   ! iCell
 
       ! change units from m/yr to kg/m2/s
-      floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density / scyr
 
 
     end subroutine basal_melt_draft_dependence
