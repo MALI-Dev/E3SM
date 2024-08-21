@@ -348,9 +348,9 @@
 
         <nml_record name="iceshelf_melt" in_defaults="true">
                 <nml_option name="config_basal_mass_bal_float" type="character" default_value="none" units="unitless"
-                            description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'seroussi' use hardcoded fields defined in the code applicable to Thwaites Glacier. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
-                            possible_values="'none', 'file', 'constant', 'mismip', 'seroussi', 'temperature_profile', 'ismip6'"
-                />
+                            description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant' uses the constant value defined by the heat flux config_bmlt_float_flux and restricted to the region of the domain defined by config_bmlt_float_xlimit. 'mismip' uses the method prescribed for MISMIP+. 'draft_dependence' calculates draft dependent floatingBasalMassBal using draftDepenBasalMeltAlpha1 and draftDepenBasalMeltAlpha0. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
+			    possible_values="'none', 'file', 'constant', 'mismip', 'draft_dependence', 'temperature_profile', 'ismip6'"	
+		/>
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^{-2}"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."
 		            possible_values="Any positive real value"
@@ -359,18 +359,6 @@
 		            description="x value defining region where bmlt_float_flux is applied; melt only where abs(x) is greater than xlimit."
 		            possible_values="Any positive real value"
 		/>
-		<nml_option name="config_basal_mass_bal_seroussi_amplitude" type="real" default_value="0.0" units="m"
-		            description="amplitude on the depth adjustment applied to the Seroussi subglacial melt parameterization"
-		            possible_values="any positive real value"
-		/>
-                <nml_option name="config_basal_mass_bal_seroussi_period" type="real" default_value="1.0" units="a"
-		            description="period of the periodic depth adjustment applied to the Seroussi subglacial melt parameterization"
-		            possible_values="any positive real value"
-		/>
-                <nml_option name="config_basal_mass_bal_seroussi_phase" type="real" default_value="0.0" units="cycles"
-		            description="phase of the periodic depth adjustment applied to the Seroussi subglacial melt parameterization. Units are cycles, i.e., 0-1"
-		            possible_values="any positive real value"
-                            />
                 <!-- Options related to temperature profile ice shelf basal melt param. -->
                 <nml_option name="config_temperature_profile_melt_scale_factor" type="real" default_value="6.0" units="m yr^-1 (deg C)^-2"
 		            description="The scale factor in the 'temperature_profile' melt parameterization that converts a product of two ocean temperatures to a melt rate.  Called kappa in code."
@@ -681,6 +669,7 @@
 
                 <package name="thermal" description="This package includes variables required for the thermal solver."/>
 
+		<package name="draftDependentMelt" description="This package includes variables required for the draft dependent basal melt parameterization"/>
 	</packages>
 
 
@@ -793,8 +782,11 @@
 			<!-- these variables just for ISMIP6 grounded glacier forcing -->
 			<var name="ismip6Runoff" packages="ismip6GroundedFaceMelt" />
 			<var name="ismip6_2dThermalForcing" packages="ismip6GroundedFaceMelt" />
+<!-- The following variables are defined for the draft dependent ice-shelf basal melt parameterization -->
+			<var name="floatingBasalMassBalAdjustment"/>
+			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
+			<var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
-
 <!-- An alternate way to allow the HO variables to exist in a separate file.
 		<stream name="inputHigherOrderVelocity"
 				type="input"
@@ -896,6 +888,10 @@
                         <var name="ismip6RunoffCurrent" packages="ismip6GroundedFaceMelt" />
 			<var name="ismip6_2dThermalForcingCurrent" packages="ismip6GroundedFaceMelt" />
 			<var name="forcingTimeStamp" packages="ismip6GroundedFaceMelt" />
+			<!-- the following variables just for the draft dependent ice-shelf basal melt parameterization -->
+			<var name="floatingBasalMassBalAdjustment"/>
+			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
+                        <var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
 
 
@@ -1226,6 +1222,15 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="floatingBasalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="Potential basal mass balance on floating regions"
+                />
+                <var name="floatingBasalMassBalAdjustment" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0"
+                     description="adjustment to floatingBasalMassBal."
+		/>
+		<var name="draftDepenBasalMeltAlpha0" type="real" dimensions="nCells" units="kg m^{-2} s^{-1}" package="draftDependentMelt"
+                     description="Alpha0 (intercept) parameter in (linear) draft dependent calculation of floatingBasalMassBal."
+		/>
+		<var name="draftDepenBasalMeltAlpha1" type="real" dimensions="nCells" units="kg m^{-3} s^{-1}" package="draftDependentMelt"
+                     description="Alpha1 (slope) parameter in (linear) draft dependent calculation of floatingBasalMassBal."
                 />
                 <var name="basalMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="applied basal mass balance"
