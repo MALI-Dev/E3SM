@@ -132,8 +132,24 @@ module li_subglacial_hydro
          ! If SGH is not active, skip everything
          return
       endif
-
-
+      
+      ! check SGH coupling interval
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+      call mpas_pool_get_config(liConfigs, 'config_SGH_coupling_interval', config_SGH_coupling_interval)
+      call mpas_set_timeInterval(sgh_coupling_interval, timeStep=config_SGH_coupling_interval, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_pool_get_array(meshPool, 'simulationStartTime', simulationStartTime)
+      call mpas_set_time(simulationStartTime_timeType, dateTimeString=simulationStartTime, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_add_clock_alarm(domain%clock,'sghCouplingInterval', alarmTime=simulationStartTime_timeType, alarmTimeInterval=sgh_coupling_interval, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      if (mpas_is_alarm_ringing(domain%clock, 'sghCouplingInterval', ierr=err_tmp)) then
+         err = ior(err, err_tmp)
+         call mpas_reset_clock_alarm(domainb%clock, 'sghCouplingInterval', ierr=err_tmp)
+         err = ior(err, err_tmp)
+      endif
+     
+      ! begin hydro init
       call mpas_timer_start("hydro init")
 
       call mpas_log_write('Beginning subglacial hydro init.')
@@ -380,7 +396,17 @@ module li_subglacial_hydro
       call mpas_timer_start("halo updates")
       call mpas_dmpar_field_halo_exch(domain, 'iceThicknessHydro')
       call mpas_timer_stop("halo updates")
-      
+     
+      ! set up coupling interval
+      if (mpas_is_alarm_ringing(domain % clock, 'sghCouplingInterval', ierr=err_tmp)) then
+         err = ior(err, err_tmp)
+
+         !intialize sgh model here
+
+         call mpas_reset_clock_alarm(domain % clock, 'sghCouplingInterval', ierr=err_tmp)
+         err = ior(err, err_tmp)
+      endif
+
       ! initialize while loop
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)  ! can get from any block
       call mpas_pool_get_array(meshPool, 'deltat', masterDeltat)
