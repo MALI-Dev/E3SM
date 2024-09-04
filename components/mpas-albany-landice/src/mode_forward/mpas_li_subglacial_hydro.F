@@ -334,6 +334,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellY
       real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
+      real (kind=RKIND), dimension(:), pointer :: effectivePressureTimeCycleAvg
       real (kind=RKIND), dimension(:), allocatable :: cellJunk
       integer, dimension(:), pointer :: nEdgesOnCell
       integer, dimension(:,:), pointer :: edgesOnCell
@@ -341,6 +342,7 @@ module li_subglacial_hydro
       integer, dimension(:,:), pointer :: edgeSignOnCell
       integer, dimension(:), pointer :: cellMask
       real (kind=RKIND), pointer :: deltatSGH
+      real (kind=RKIND), pointer :: deltatSGHaccumulated
       real (kind=RKIND), pointer :: masterDeltat
       real (kind=RKIND), pointer :: Cd
       real (kind=RKIND), pointer :: tillMax
@@ -348,7 +350,6 @@ module li_subglacial_hydro
       integer, pointer :: nCells
       integer :: iCell, iEdge, iEdgeOnCell
       real (kind=RKIND) :: timeLeft ! subcycling time remaining until master dt is reached
-      real (kind=RKIND) :: deltatSGHaccumulated
       integer :: numSubCycles ! number of subcycles
       integer :: err_tmp
 
@@ -397,16 +398,6 @@ module li_subglacial_hydro
       call mpas_dmpar_field_halo_exch(domain, 'iceThicknessHydro')
       call mpas_timer_stop("halo updates")
      
-      ! set up coupling interval
-      if (mpas_is_alarm_ringing(domain % clock, 'sghCouplingInterval', ierr=err_tmp)) then
-         err = ior(err, err_tmp)
-
-         !intialize sgh model here
-
-         call mpas_reset_clock_alarm(domain % clock, 'sghCouplingInterval', ierr=err_tmp)
-         err = ior(err, err_tmp)
-      endif
-
       ! initialize while loop
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)  ! can get from any block
       call mpas_pool_get_array(meshPool, 'deltat', masterDeltat)
@@ -418,7 +409,11 @@ module li_subglacial_hydro
         
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
          call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
+         call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
+         call mpas_pool_get_array(hydroPool, 'deltatSGHaccumulated', deltatSGHaccumulated)
+
          effectivePressure = 0.0_RKIND
+         effectivePressureTimeCycleAvg = 0.0_RKIND
          deltatSGHaccumulated = 0.0_RKIND
 
          block => block % next
@@ -730,10 +725,11 @@ module li_subglacial_hydro
         
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
          call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
-         call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
+         call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
+         call mpas_pool_get_array(hydroPool, 'deltatSGHaccumulated', deltatSGHaccumulated)
 
-         effectivePressure = (effectivePressure * deltatSGHaccumulated + effectivePressureSGH * deltatSGH) / (deltatSGHaccumulated + deltatSGH)
+         effectivePressureTimeCycleAvg = (effectivePressureTimeCycleAvg * deltatSGHaccumulated + effectivePressureSGH * deltatSGH) / (deltatSGHaccumulated + deltatSGH)
    
          block => block % next
       end do
@@ -748,8 +744,24 @@ module li_subglacial_hydro
       ! =============
       ! =============
 
-      call mpas_log_write("Hydro model subcycled $i times.", intArgs=(/numSubCycles/))
+      ! set up coupling interval
+      if (mpas_is_alarm_ringing(domain % clock, 'sghCouplingInterval', ierr=err_tmp)) then
+         err = ior(err, err_tmp)
+         block => doimain % blocklist
+         do while (associated(block))
 
+            call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+            call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
+            call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
+         
+            effectivePressure = effectivePressureTimeCycleAvg
+            block => block % next
+         end do
+         call mpas_reset_clock_alarm(domain % clock, 'sghCouplingInterval', ierr=err_tmp)
+         err = ior(err, err_tmp)
+      endif
+
+      call mpas_log_write("Hydro model subcycled $i times.", intArgs=(/numSubCycles/)
 
       ! === error check
       if (err > 0) then
