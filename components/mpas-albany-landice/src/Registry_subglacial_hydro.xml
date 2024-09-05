@@ -252,7 +252,9 @@
                      description="time step length limited by pressure equation scheme in subglacial hydrology system" />
                 <var name="deltatSGH" type="real" dimensions="Time" units="s"
                      description="time step used for evolving subglacial hydrology system" />
-	     	<var name="distGroundingLineDischargeCell" type="real" dimensions="Time nCells" units="m^{3} s^{-1}"
+                <var name="deltatSGHaccumulated" type="real" dimensions="Time" units="s"
+                     description="accumulated deltatSGH throughout SGH coupling interval" />
+                <var name="distGroundingLineDischargeCell" type="real" dimensions="Time nCells" units="m^{3} s^{-1}"
 		     description="distributed discharge across the grounding line, summed from grounding line edges to adjacent ungrounded cell. Values from all edges are summed if multiple grounding line edges border a single ungrounded cell" />
 	     	<var name="totalGroundingLineDischargeCell" type="real" dimensions="Time nCells" units="m^{3} s^{-1}"
 		     description="total (channel + dist.) discharge across the grounding line, summed from grounding line edges to adjacent ungrounded cell. Values from all edges are summed if multiple grounding line edges border a single ungrounded cell" />

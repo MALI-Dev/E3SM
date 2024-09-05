@@ -117,8 +117,11 @@ module li_subglacial_hydro
       logical, pointer :: config_do_restart
       real (kind=RKIND), pointer :: config_sea_level
       integer, pointer :: config_num_halos
+      character (len=StrKIND), pointer :: config_SGH_coupling_interval
+      type (MPAS_TimeInterval_type) :: sgh_coupling_interval
+      character (len=StrKIND), pointer :: simulationStartTime
+      type (MPAS_Time_type) :: simulationStartTime_timeType
       integer :: err_tmp
-
 
       err = 0
       err_tmp = 0
@@ -133,10 +136,17 @@ module li_subglacial_hydro
          return
       endif
       
-      ! check SGH coupling interval
+      ! Check SGH coupling interval is compatible with master timestep and restart interval
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+      call check_SGH_coupling_interval(meshPool, err_tmp)
+      err = ior(err, err_tmp)
+      if (err /= 0) then
+         call mpas_log_write("Error occurred in check_SGH_coupling_interval. ", MPAS_LOG_ERR)
+      endif
+     
+      ! Initiate coupling interval timer 
       call mpas_pool_get_config(liConfigs, 'config_SGH_coupling_interval', config_SGH_coupling_interval)
-      call mpas_set_timeInterval(sgh_coupling_interval, timeStep=config_SGH_coupling_interval, ierr=err_tmp)
+      call mpas_set_timeInterval(sgh_coupling_interval, timeString=config_SGH_coupling_interval, ierr=err_tmp)
       err = ior(err, err_tmp)
       call mpas_pool_get_array(meshPool, 'simulationStartTime', simulationStartTime)
       call mpas_set_time(simulationStartTime_timeType, dateTimeString=simulationStartTime, ierr=err_tmp)
@@ -145,7 +155,7 @@ module li_subglacial_hydro
       err = ior(err, err_tmp)
       if (mpas_is_alarm_ringing(domain%clock, 'sghCouplingInterval', ierr=err_tmp)) then
          err = ior(err, err_tmp)
-         call mpas_reset_clock_alarm(domainb%clock, 'sghCouplingInterval', ierr=err_tmp)
+         call mpas_reset_clock_alarm(domain%clock, 'sghCouplingInterval', ierr=err_tmp)
          err = ior(err, err_tmp)
       endif
      
@@ -333,7 +343,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellX
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellY
       real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
-      real (kind=RKIND), dimension(:), pointer :: effectivePressure
+      real (kind=RKIND),dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: effectivePressureTimeCycleAvg
       real (kind=RKIND), dimension(:), allocatable :: cellJunk
       integer, dimension(:), pointer :: nEdgesOnCell
@@ -747,7 +757,7 @@ module li_subglacial_hydro
       ! set up coupling interval
       if (mpas_is_alarm_ringing(domain % clock, 'sghCouplingInterval', ierr=err_tmp)) then
          err = ior(err, err_tmp)
-         block => doimain % blocklist
+         block => domain % blocklist
          do while (associated(block))
 
             call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
@@ -761,7 +771,7 @@ module li_subglacial_hydro
          err = ior(err, err_tmp)
       endif
 
-      call mpas_log_write("Hydro model subcycled $i times.", intArgs=(/numSubCycles/)
+      call mpas_log_write("Hydro model subcycled $i times.", intArgs=(/numSubCycles/))
 
       ! === error check
       if (err > 0) then
@@ -2775,5 +2785,91 @@ module li_subglacial_hydro
       
       deallocate(pressureField)
    end subroutine calc_waterPressureSmooth
+
+!***********************************************************************
+!
+!  routine check_SGH_coupling_interval
+!
+!> \brief   Perform various checks on the SGH coupling interval setting
+!> \author  Matt Hoffman, modified by Alex Hager
+!> \date    Sep 2024
+!> \details
+!>  This routine checks that the SGH coupling interval is an even multiple
+!>  of the adaptive timestep force inverval and divides evenly into the
+!>  restart interval. 
+!
+!-----------------------------------------------------------------------
+    subroutine check_SGH_coupling_interval(meshPool, err)
+
+      use mpas_timekeeping
+      use mpas_stream_manager
+      use mpas_derived_types, only : MPAS_STREAM_PROPERTY_RECORD_INTV
+
+      type (mpas_pool_type), intent(in) :: meshPool  !< mesh information
+      integer, intent(out) :: err
+
+      ! local variables
+      character (len=StrKIND), pointer :: config_SGH_coupling_interval
+      logical, pointer :: config_adaptive_timestep
+      character (len=StrKIND), pointer :: config_adaptive_timestep_force_interval, config_dt
+      type (MPAS_TimeInterval_Type) :: coupling_interval, force_interval, dt_interval, zero_interval
+      type (MPAS_Time_Type) :: start_time
+      character (len=StrKIND), pointer :: simulationStartTime
+      integer (kind=I8KIND) :: n_intervals
+      type (MPAS_TimeInterval_Type) :: remainder
+      integer :: err_tmp
+
+      err = 0
+      err_tmp = 0
+
+      call mpas_log_write("")
+      call mpas_log_write("-- Checking consistency of config_SGH_coupling_interval and other settings --")
+
+      ! define zero interval for comparing against below
+      call mpas_set_timeInterval(zero_interval, dt = 0.0_RKIND)
+      ! get start time as a reference time
+      call mpas_pool_get_array(meshPool, 'simulationStartTime', simulationStartTime)
+      call mpas_set_time(start_time, dateTimeString=simulationStartTime)
+      ! define SGH coupling interval as a timeInterval type
+      call mpas_pool_get_config(liConfigs, 'config_SGH_coupling_interval', config_SGH_coupling_interval)
+      call mpas_set_timeInterval(coupling_interval, timeString=config_SGH_coupling_interval, ierr=err_tmp)
+      err = ior(err, err_tmp)
+
+      call mpas_pool_get_config(liConfigs, "config_adaptive_timestep", config_adaptive_timestep)
+      if (config_adaptive_timestep) then
+         ! for adaptive dt, check that config_adaptive_timestep_force_interval divides evenly into config_SGH_coupling_interval
+         call mpas_pool_get_config(liConfigs, "config_adaptive_timestep_force_interval", config_adaptive_timestep_force_interval)
+         call mpas_set_timeInterval(force_interval, timeString=config_adaptive_timestep_force_interval, ierr=err_tmp)
+         err = ior(err, err_tmp)
+         call mpas_interval_division(start_time, coupling_interval, force_interval, n_intervals, remainder)
+         if (remainder .EQ. zero_interval) then
+            call mpas_log_write("config_adaptive_timestep_force_interval divides into config_SGH_coupling_interval $i times " // &
+                 "with no remainder - check passes", intArgs=(/int(n_intervals)/))
+         else
+            call mpas_log_write("config_adaptive_timestep_force_interval divides into config_SGH_coupling_interval $i times " // &
+                 "with nonzero remainder", MPAS_LOG_ERR, intArgs=(/int(n_intervals)/))
+            err = ior(err, 1)
+         endif
+      else
+        ! For fixed dt, check that dt divides evenly into config_SGH_coupling_interval
+         call mpas_pool_get_config(liConfigs, "config_dt", config_dt)
+         call mpas_set_timeInterval(dt_interval, timeString=config_dt, ierr=err_tmp)
+         err = ior(err, err_tmp)
+         call mpas_interval_division(start_time, coupling_interval, dt_interval, n_intervals, remainder)
+         if (remainder .EQ. zero_interval) then
+            call mpas_log_write("config_dt divides into config_SGH_coupling_interval $i times " // &
+                 "with no remainder - check passes", intArgs=(/int(n_intervals)/))
+         else
+            call mpas_log_write("config_dt divides into config_SGH_coupling_interval $i times " // &
+                 "with nonzero remainder", MPAS_LOG_ERR, intArgs=(/int(n_intervals)/))
+            err = ior(err, 1)
+         endif
+      endif
+
+      call mpas_log_write("")
+
+   !--------------------------------------------------------------------
+   end subroutine check_SGH_coupling_interval
+
 
 end module li_subglacial_hydro
