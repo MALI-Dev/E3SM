@@ -111,6 +111,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: bedTopography
       real (kind=RKIND), dimension(:), pointer :: iceThicknessHydro
       real (kind=RKIND), dimension(:), pointer :: hydropotential
+      real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
+      real (kind=RKIND),dimension(:), pointer :: effectivePressure
       integer, dimension(:), pointer :: cellMask
       real (kind=RKIND), pointer :: tillMax
       real (kind=RKIND), pointer :: rhoi, rhoo
@@ -265,7 +267,22 @@ module li_subglacial_hydro
       call mpas_timer_start("halo updates")
       call mpas_dmpar_field_halo_exch(domain, 'waterPressureSmooth')
       call mpas_timer_stop("halo updates")
-     
+    
+      ! initialize effectivePressure
+      block => domain % blocklist
+      do while (associated(block))
+        
+         call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+         call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
+         call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
+         
+         if (all(effectivePressure == -1e36_RKIND)) then
+            effectivePressure = effectivePressureSGH
+         endif
+         
+         block => block % next
+      end do
+
       ! === error check
       if (err > 0) then
           call mpas_log_write("An error has occurred in li_SGH_init.", MPAS_LOG_ERR)
@@ -342,8 +359,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterVelocity
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellX
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellY
+      real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
-      real (kind=RKIND),dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: effectivePressureTimeCycleAvg
       real (kind=RKIND), dimension(:), allocatable :: cellJunk
       integer, dimension(:), pointer :: nEdgesOnCell
@@ -414,22 +431,20 @@ module li_subglacial_hydro
       timeLeft = masterDeltat  ! in seconds
       numSubCycles = 0
 
+      ! initialize accumulated time averages/sums throughout timecycle
       block => domain % blocklist
       do while (associated(block))
         
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
-         call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
          call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
          call mpas_pool_get_array(hydroPool, 'deltatSGHaccumulated', deltatSGHaccumulated)
-
-         effectivePressure = 0.0_RKIND
+         
          effectivePressureTimeCycleAvg = 0.0_RKIND
          deltatSGHaccumulated = 0.0_RKIND
-
+         
          block => block % next
-      end do
-
-
+      enddo
+      
       ! =============
       ! =============
       ! =============
@@ -761,9 +776,9 @@ module li_subglacial_hydro
          do while (associated(block))
 
             call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
-            call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
+            call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
             call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
-         
+            
             effectivePressure = effectivePressureTimeCycleAvg
             block => block % next
          end do
