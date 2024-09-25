@@ -111,14 +111,19 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: bedTopography
       real (kind=RKIND), dimension(:), pointer :: iceThicknessHydro
       real (kind=RKIND), dimension(:), pointer :: hydropotential
+      real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
+      real (kind=RKIND),dimension(:), pointer :: effectivePressure
       integer, dimension(:), pointer :: cellMask
       real (kind=RKIND), pointer :: tillMax
       real (kind=RKIND), pointer :: rhoi, rhoo
       logical, pointer :: config_do_restart
       real (kind=RKIND), pointer :: config_sea_level
       integer, pointer :: config_num_halos
+      character (len=StrKIND), pointer :: config_SGH_coupling_interval
+      type (MPAS_TimeInterval_type) :: sgh_coupling_interval
+      character (len=StrKIND), pointer :: simulationStartTime
+      type (MPAS_Time_type) :: simulationStartTime_timeType
       integer :: err_tmp
-
 
       err = 0
       err_tmp = 0
@@ -132,8 +137,31 @@ module li_subglacial_hydro
          ! If SGH is not active, skip everything
          return
       endif
-
-
+      
+      ! Check SGH coupling interval is compatible with master timestep and restart interval
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+      call check_SGH_coupling_interval(meshPool, err_tmp)
+      err = ior(err, err_tmp)
+      if (err /= 0) then
+         call mpas_log_write("Error occurred in check_SGH_coupling_interval. ", MPAS_LOG_ERR)
+      endif
+     
+      ! Initiate coupling interval timer 
+      call mpas_pool_get_config(liConfigs, 'config_SGH_coupling_interval', config_SGH_coupling_interval)
+      call mpas_set_timeInterval(sgh_coupling_interval, timeString=config_SGH_coupling_interval, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_pool_get_array(meshPool, 'simulationStartTime', simulationStartTime)
+      call mpas_set_time(simulationStartTime_timeType, dateTimeString=simulationStartTime, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_add_clock_alarm(domain%clock,'sghCouplingInterval', alarmTime=simulationStartTime_timeType, alarmTimeInterval=sgh_coupling_interval, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      if (mpas_is_alarm_ringing(domain%clock, 'sghCouplingInterval', ierr=err_tmp)) then
+         err = ior(err, err_tmp)
+         call mpas_reset_clock_alarm(domain%clock, 'sghCouplingInterval', ierr=err_tmp)
+         err = ior(err, err_tmp)
+      endif
+     
+      ! begin hydro init
       call mpas_timer_start("hydro init")
 
       call mpas_log_write('Beginning subglacial hydro init.')
@@ -239,7 +267,22 @@ module li_subglacial_hydro
       call mpas_timer_start("halo updates")
       call mpas_dmpar_field_halo_exch(domain, 'waterPressureSmooth')
       call mpas_timer_stop("halo updates")
-     
+    
+      ! initialize effectivePressure
+      block => domain % blocklist
+      do while (associated(block))
+        
+         call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+         call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
+         call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
+         
+         if (all(effectivePressure == -1e36_RKIND)) then
+            effectivePressure = effectivePressureSGH
+         endif
+         
+         block => block % next
+      end do
+
       ! === error check
       if (err > 0) then
           call mpas_log_write("An error has occurred in li_SGH_init.", MPAS_LOG_ERR)
@@ -316,8 +359,9 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterVelocity
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellX
       real (kind=RKIND), dimension(:), pointer :: waterVelocityCellY
-      real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
+      real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
+      real (kind=RKIND), dimension(:), pointer :: effectivePressureTimeCycleAvg
       real (kind=RKIND), dimension(:), allocatable :: cellJunk
       integer, dimension(:), pointer :: nEdgesOnCell
       integer, dimension(:,:), pointer :: edgesOnCell
@@ -325,6 +369,7 @@ module li_subglacial_hydro
       integer, dimension(:,:), pointer :: edgeSignOnCell
       integer, dimension(:), pointer :: cellMask
       real (kind=RKIND), pointer :: deltatSGH
+      real (kind=RKIND), pointer :: deltatSGHaccumulated
       real (kind=RKIND), pointer :: masterDeltat
       real (kind=RKIND), pointer :: Cd
       real (kind=RKIND), pointer :: tillMax
@@ -332,7 +377,6 @@ module li_subglacial_hydro
       integer, pointer :: nCells
       integer :: iCell, iEdge, iEdgeOnCell
       real (kind=RKIND) :: timeLeft ! subcycling time remaining until master dt is reached
-      real (kind=RKIND) :: deltatSGHaccumulated
       integer :: numSubCycles ! number of subcycles
       integer :: err_tmp
 
@@ -380,25 +424,27 @@ module li_subglacial_hydro
       call mpas_timer_start("halo updates")
       call mpas_dmpar_field_halo_exch(domain, 'iceThicknessHydro')
       call mpas_timer_stop("halo updates")
-      
+     
       ! initialize while loop
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)  ! can get from any block
       call mpas_pool_get_array(meshPool, 'deltat', masterDeltat)
       timeLeft = masterDeltat  ! in seconds
       numSubCycles = 0
 
+      ! initialize accumulated time averages/sums throughout timecycle
       block => domain % blocklist
       do while (associated(block))
         
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
-         call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
-         effectivePressure = 0.0_RKIND
+         call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
+         call mpas_pool_get_array(hydroPool, 'deltatSGHaccumulated', deltatSGHaccumulated)
+         
+         effectivePressureTimeCycleAvg = 0.0_RKIND
          deltatSGHaccumulated = 0.0_RKIND
-
+         
          block => block % next
-      end do
-
-
+      enddo
+      
       ! =============
       ! =============
       ! =============
@@ -704,10 +750,11 @@ module li_subglacial_hydro
         
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
          call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
-         call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
+         call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
+         call mpas_pool_get_array(hydroPool, 'deltatSGHaccumulated', deltatSGHaccumulated)
 
-         effectivePressure = (effectivePressure * deltatSGHaccumulated + effectivePressureSGH * deltatSGH) / (deltatSGHaccumulated + deltatSGH)
+         effectivePressureTimeCycleAvg = (effectivePressureTimeCycleAvg * deltatSGHaccumulated + effectivePressureSGH * deltatSGH) / (deltatSGHaccumulated + deltatSGH)
    
          block => block % next
       end do
@@ -722,8 +769,24 @@ module li_subglacial_hydro
       ! =============
       ! =============
 
-      call mpas_log_write("Hydro model subcycled $i times.", intArgs=(/numSubCycles/))
+      ! set up coupling interval
+      if (mpas_is_alarm_ringing(domain % clock, 'sghCouplingInterval', ierr=err_tmp)) then
+         err = ior(err, err_tmp)
+         block => domain % blocklist
+         do while (associated(block))
 
+            call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+            call mpas_pool_get_array(hydroPool, 'effectivePressure', effectivePressure)
+            call mpas_pool_get_array(hydroPool, 'effectivePressureTimeCycleAvg', effectivePressureTimeCycleAvg)
+            
+            effectivePressure = effectivePressureTimeCycleAvg
+            block => block % next
+         end do
+         call mpas_reset_clock_alarm(domain % clock, 'sghCouplingInterval', ierr=err_tmp)
+         err = ior(err, err_tmp)
+      endif
+
+      call mpas_log_write("Hydro model subcycled $i times.", intArgs=(/numSubCycles/))
 
       ! === error check
       if (err > 0) then
@@ -2737,5 +2800,91 @@ module li_subglacial_hydro
       
       deallocate(pressureField)
    end subroutine calc_waterPressureSmooth
+
+!***********************************************************************
+!
+!  routine check_SGH_coupling_interval
+!
+!> \brief   Perform various checks on the SGH coupling interval setting
+!> \author  Matt Hoffman, modified by Alex Hager
+!> \date    Sep 2024
+!> \details
+!>  This routine checks that the SGH coupling interval is an even multiple
+!>  of the adaptive timestep force inverval and divides evenly into the
+!>  restart interval. 
+!
+!-----------------------------------------------------------------------
+    subroutine check_SGH_coupling_interval(meshPool, err)
+
+      use mpas_timekeeping
+      use mpas_stream_manager
+      use mpas_derived_types, only : MPAS_STREAM_PROPERTY_RECORD_INTV
+
+      type (mpas_pool_type), intent(in) :: meshPool  !< mesh information
+      integer, intent(out) :: err
+
+      ! local variables
+      character (len=StrKIND), pointer :: config_SGH_coupling_interval
+      logical, pointer :: config_adaptive_timestep
+      character (len=StrKIND), pointer :: config_adaptive_timestep_force_interval, config_dt
+      type (MPAS_TimeInterval_Type) :: coupling_interval, force_interval, dt_interval, zero_interval
+      type (MPAS_Time_Type) :: start_time
+      character (len=StrKIND), pointer :: simulationStartTime
+      integer (kind=I8KIND) :: n_intervals
+      type (MPAS_TimeInterval_Type) :: remainder
+      integer :: err_tmp
+
+      err = 0
+      err_tmp = 0
+
+      call mpas_log_write("")
+      call mpas_log_write("-- Checking consistency of config_SGH_coupling_interval and other settings --")
+
+      ! define zero interval for comparing against below
+      call mpas_set_timeInterval(zero_interval, dt = 0.0_RKIND)
+      ! get start time as a reference time
+      call mpas_pool_get_array(meshPool, 'simulationStartTime', simulationStartTime)
+      call mpas_set_time(start_time, dateTimeString=simulationStartTime)
+      ! define SGH coupling interval as a timeInterval type
+      call mpas_pool_get_config(liConfigs, 'config_SGH_coupling_interval', config_SGH_coupling_interval)
+      call mpas_set_timeInterval(coupling_interval, timeString=config_SGH_coupling_interval, ierr=err_tmp)
+      err = ior(err, err_tmp)
+
+      call mpas_pool_get_config(liConfigs, "config_adaptive_timestep", config_adaptive_timestep)
+      if (config_adaptive_timestep) then
+         ! for adaptive dt, check that config_adaptive_timestep_force_interval divides evenly into config_SGH_coupling_interval
+         call mpas_pool_get_config(liConfigs, "config_adaptive_timestep_force_interval", config_adaptive_timestep_force_interval)
+         call mpas_set_timeInterval(force_interval, timeString=config_adaptive_timestep_force_interval, ierr=err_tmp)
+         err = ior(err, err_tmp)
+         call mpas_interval_division(start_time, coupling_interval, force_interval, n_intervals, remainder)
+         if (remainder .EQ. zero_interval) then
+            call mpas_log_write("config_adaptive_timestep_force_interval divides into config_SGH_coupling_interval $i times " // &
+                 "with no remainder - check passes", intArgs=(/int(n_intervals)/))
+         else
+            call mpas_log_write("config_adaptive_timestep_force_interval divides into config_SGH_coupling_interval $i times " // &
+                 "with nonzero remainder", MPAS_LOG_ERR, intArgs=(/int(n_intervals)/))
+            err = ior(err, 1)
+         endif
+      else
+        ! For fixed dt, check that dt divides evenly into config_SGH_coupling_interval
+         call mpas_pool_get_config(liConfigs, "config_dt", config_dt)
+         call mpas_set_timeInterval(dt_interval, timeString=config_dt, ierr=err_tmp)
+         err = ior(err, err_tmp)
+         call mpas_interval_division(start_time, coupling_interval, dt_interval, n_intervals, remainder)
+         if (remainder .EQ. zero_interval) then
+            call mpas_log_write("config_dt divides into config_SGH_coupling_interval $i times " // &
+                 "with no remainder - check passes", intArgs=(/int(n_intervals)/))
+         else
+            call mpas_log_write("config_dt divides into config_SGH_coupling_interval $i times " // &
+                 "with nonzero remainder", MPAS_LOG_ERR, intArgs=(/int(n_intervals)/))
+            err = ior(err, 1)
+         endif
+      endif
+
+      call mpas_log_write("")
+
+   !--------------------------------------------------------------------
+   end subroutine check_SGH_coupling_interval
+
 
 end module li_subglacial_hydro
