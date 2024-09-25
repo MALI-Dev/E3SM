@@ -113,7 +113,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: hydropotential
       real (kind=RKIND), dimension(:), pointer :: effectivePressureSGH
       real (kind=RKIND),dimension(:), pointer :: effectivePressure
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMask, cellMaskOld
       real (kind=RKIND), pointer :: tillMax
       real (kind=RKIND), pointer :: rhoi, rhoo
       logical, pointer :: config_do_restart
@@ -185,6 +185,10 @@ module li_subglacial_hydro
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
+         
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         call mpas_pool_get_array(geometryPool, 'cellMaskOld', cellMaskOld)
+         cellMaskOld = cellMask
 
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
 
@@ -367,7 +371,7 @@ module li_subglacial_hydro
       integer, dimension(:,:), pointer :: edgesOnCell
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, dimension(:,:), pointer :: edgeSignOnCell
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMask, cellMaskOld
       real (kind=RKIND), pointer :: deltatSGH
       real (kind=RKIND), pointer :: deltatSGHaccumulated
       real (kind=RKIND), pointer :: masterDeltat
@@ -379,6 +383,9 @@ module li_subglacial_hydro
       real (kind=RKIND) :: timeLeft ! subcycling time remaining until master dt is reached
       integer :: numSubCycles ! number of subcycles
       integer :: err_tmp
+
+      ! debugging
+      integer :: numCellsChanged
 
       err = 0
       err_tmp = 0
@@ -445,6 +452,27 @@ module li_subglacial_hydro
          block => block % next
       enddo
       
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         call mpas_pool_get_array(geometryPool, 'cellMaskOld', cellMaskOld)
+         call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+         
+         numCellsChanged = 0
+         do iCell = 1, nCells
+            if ( (li_mask_is_grounded_ice(cellMask(iCell))) .and. (.not. li_mask_is_grounded_ice(cellMaskOld(iCell))) ) then
+               cellMask(iCell) = ior(cellMask(iCell), li_mask_ValueFloating)
+               numCellsChanged = numCellsChanged + 1
+            endif
+         enddo
+         
+         call mpas_log_write("Number of cellMask cells changed: $i", intArgs=(/numCellsChanged/))
+         
+         block => block % next
+      enddo
+      
       ! =============
       ! =============
       ! =============
@@ -454,7 +482,6 @@ module li_subglacial_hydro
       ! =============
       timecycling: do while (timeLeft > 0.0_RKIND)
       numSubCycles = numSubCycles + 1
-
 
       ! =============
       ! Calculate time-varying forcing, as needed

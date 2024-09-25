@@ -149,7 +149,7 @@ module li_time_integration_fe_rk
       integer, pointer :: nVertLevels
       integer, pointer :: nCells, nEdges
       integer :: iCell1, iCell2, iEdge, theGroundedCell
-      integer, dimension(:), pointer :: edgeMask, cellMask
+      integer, dimension(:), pointer :: edgeMask, cellMask, cellMaskOld
       real (kind=RKIND), pointer :: deltat, config_ice_density
       real (kind=RKIND) :: deltatFull
       real (kind=RKIND), dimension(4) :: rkSubstepWeights
@@ -572,6 +572,10 @@ module li_time_integration_fe_rk
 
 
 ! === Cleanup & Misc. =============================
+
+      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+      call mpas_pool_get_array(geometryPool, 'cellMaskOld', cellMaskOld)
+      cellMaskOld = cellMask
 
       ! === error check
       if (err == 1) then
