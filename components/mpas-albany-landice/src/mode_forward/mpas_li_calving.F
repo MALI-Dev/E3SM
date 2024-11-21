@@ -1378,7 +1378,6 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: eigencalvingParameter
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin
-      real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), pointer :: calvingCFLdt
@@ -1429,7 +1428,6 @@ module li_calving
 
          ! get fields
          call mpas_pool_get_array(meshPool, 'deltat', deltat)
-         call mpas_pool_get_array(meshPool, 'angleEdge', angleEdge)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'calvingFrontMask', calvingFrontMask)
          call mpas_pool_get_array(geometryPool, 'eigencalvingParameter', eigencalvingParameter)
@@ -1602,7 +1600,6 @@ module li_calving
       character (len=StrKIND), pointer :: config_calving_specified_source
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), dimension(:), pointer :: calvingVelocityData
-      real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), pointer :: calvingCFLdt
@@ -1643,7 +1640,6 @@ module li_calving
 
          ! get fields
          call mpas_pool_get_array(meshPool, 'deltat', deltat)
-         call mpas_pool_get_array(meshPool, 'angleEdge', angleEdge)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'calvingFrontMask', calvingFrontMask)
          call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
@@ -2495,7 +2491,7 @@ module li_calving
       real (kind=RKIND), pointer :: config_calving_error_threshold
       logical, pointer :: config_distribute_unablatedVolumeDynCell
       real (kind=RKIND), dimension(:), pointer :: dvEdge, dcEdge
-      real (kind=RKIND), dimension(:), pointer :: angleEdge
+      real (kind=RKIND), dimension(:), pointer :: xCell, yCell, xEdge, yEdge
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity, faceMeltSpeed
       real (kind=RKIND), dimension(:), pointer :: areaCell
       real (kind=RKIND), dimension(:,:), pointer :: uReconstructX
@@ -2536,7 +2532,10 @@ module li_calving
       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(meshPool, 'dvEdge', dvEdge)
       call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
-      call mpas_pool_get_array(meshPool, 'angleEdge', angleEdge)
+      call mpas_pool_get_array(meshPool, 'xCell', xCell)
+      call mpas_pool_get_array(meshPool, 'yCell', yCell)
+      call mpas_pool_get_array(meshPool, 'xEdge', xEdge)
+      call mpas_pool_get_array(meshPool, 'yEdge', yEdge)
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
@@ -2850,10 +2849,9 @@ module li_calving
             do iNeighbor = 1, nEdgesOnCell(iCell)
                iEdge = edgesOnCell(iNeighbor, iCell)
                jCell = cellsOnCell(iNeighbor, iCell)
-               if (li_mask_is_margin(edgeMask(iEdge)) .and. & !< edge is a margin
-                   .not. li_mask_is_ice(cellMask(jCell)) .and. bedTopography(jCell) < config_sea_level & ! ensure margin is w/ocn
-                   ) then
-                  edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+               if (li_mask_is_margin(edgeMask(iEdge)) .or. &
+                   (li_mask_is_ice(cellMask(jCell)) .and. bedTopography(jCell) > config_sea_level)) then
+                  edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
                   requiredAblationVolumeNonDynEdge(iEdge) = ablationVelocity(iCell) * &
                           edgeLengthScaling * dvEdge(iEdge) * thicknessForAblation(iCell) * deltat
                   requiredAblationVolumeNonDynCell(iCell) = requiredAblationVolumeNonDynCell(iCell) + &
@@ -2913,9 +2911,10 @@ module li_calving
             .and. li_mask_is_margin(cellMask(iCell)) ) then                            ! that is at the edge of the ice
             do iNeighbor = 1, nEdgesOnCell(iCell)
                jCell = cellsOnCell(iNeighbor, iCell)
-               if ((.not. li_mask_is_ice(cellMask(jCell))) .and. (bedTopography(jCell) < config_sea_level)) then
+               if ((.not. li_mask_is_ice(cellMask(jCell))) .and. (bedTopography(jCell) < config_sea_level)  .or. &
+                    (bedTopography(jCell) > config_sea_level) ) then
                   iEdge = edgesOnCell(iNeighbor, iCell)
-                  edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                  edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
                   requiredAblationVolumeDynEdge(iEdge) = ablationVelocity(iCell) * &
                           edgeLengthScaling * dvEdge(iEdge) * thicknessForAblation(iCell) * deltat
                endif
@@ -2939,7 +2938,7 @@ module li_calving
             do iNeighbor = 1, nEdgesOnCell(iCell)
                iEdge = edgesOnCell(iNeighbor, iCell)
                if (li_mask_is_dynamic_ice(edgeMask(iEdge))) then
-                  edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                  edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
                   ablateLengthEdge = edgeLengthScaling * dvEdge(iEdge)
                   ablateLengthCell = ablateLengthCell + ablateLengthEdge
                endif
@@ -2951,7 +2950,7 @@ module li_calving
                   iEdge = edgesOnCell(iNeighbor, iCell)
                   jCell = cellsOnCell(iNeighbor, iCell)
                   if (li_mask_is_dynamic_ice(edgeMask(iEdge))) then
-                     edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                     edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
                      ablateLengthEdge = edgeLengthScaling * dvEdge(iEdge)
                      if (requiredAblationVolumeDynEdge(iEdge) > 0.0_RKIND) then
                         call mpas_log_write("Unexpectedly found a dynamic edge that already has calving assigned to it." // &
@@ -3178,18 +3177,30 @@ module li_calving
 
     ! Helper function for subroutine li_apply_front_ablation_velocity
     ! Calculates the amount to scale an edge length based on the orientation of the edge with the surface velocity
-    function scale_edge_length(angleEdgeHere, u, v)
-       real(kind=RKIND), intent(in) :: angleEdgeHere
-       real(kind=RKIND), intent(in) :: u
-       real(kind=RKIND), intent(in) :: v
+    function scale_edge_length(xc, yc, xe, ye, vx, vy)
+       real(kind=RKIND), intent(in) :: xc, yc  ! x,y coords of cell center
+       real(kind=RKIND), intent(in) :: xe, ye  ! x,y coords of edge neighboring cell
+       real(kind=RKIND), intent(in) :: vx, vy  ! x,y components of velocity vector
        real(kind=RKIND) :: scale_edge_length
 
-       real(kind=RKIND) :: mag
+       real(kind=RKIND) :: ux, uy, umag, vmag
 
-       mag = sqrt(u**2 + v**2)
-       if (mag == 0.0_RKIND) mag = 1.0_RKIND
-       scale_edge_length =  abs(u/mag * cos(angleEdgeHere) + v/mag * sin(angleEdgeHere))  ! dot product of unit vectors
-       !scale_edge_length = abs(cos(angleEdgeHere - atan2(v, u)))
+       ! Calculate vector pointing from cell center to edge
+       ux = xe - xc
+       uy = ye - yc
+       umag = sqrt(ux**2 + uy**2)
+
+       ! avoid divide by zero
+       if (umag == 0.0_RKIND) umag = 1.0_RKIND
+       vmag = sqrt(vx**2 + vy**2)
+       if (vmag == 0.0_RKIND) vmag = 1.0_RKIND
+
+       ! dot product of unit vectors
+       scale_edge_length = (ux / umag) * (vx / vmag) + (uy / umag) * (vy / vmag)
+       ! set scale to 0 where vectors are not pointing the same way
+       ! (i.e. where vector to edge points away from flow direction)
+       scale_edge_length = max(0.0,  scale_edge_length)
+
     end function scale_edge_length
 
 
