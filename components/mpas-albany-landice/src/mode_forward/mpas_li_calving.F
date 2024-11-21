@@ -283,7 +283,8 @@ module li_calving
          call von_Mises_calving(domain, err_tmp)
          err = ior(err, err_tmp)
 
-      elseif (trim(config_calving) == 'specified_calving_velocity') then
+      elseif ((trim(config_calving) == 'specified_calving_velocity') .or. &
+              (trim(config_calving) == 'specified_retreat_velocity')) then
 
          call specified_calving_velocity(domain, err_tmp)
          err = ior(err, err_tmp)
@@ -1562,12 +1563,16 @@ module li_calving
 !
 !    routine specified_calving_velocity
 !
-!> \brief use a specified calving velocity given by input data
+!> \brief use a specified calving or retreat velocity given by input data
 !> \author Matthew Hoffman
 !> \date   Feb. 2018
 !> \details we can specify the calving velocity by i) a constant value
 !> given by config_calving_velocity_const in namelist and ii) source data
 !> specified by calvingVelocityData
+!> This subroutine handles both the specified_calving_velocity and
+!> specified_retreat_velocity options.  In the latter case, the flow speed
+!> is added to the specified retreat rate to obtain a calving rate that will
+!> yield the desired retreat rate.
 !-----------------------------------------------------------------------
    subroutine specified_calving_velocity(domain, err)
 
@@ -1595,6 +1600,7 @@ module li_calving
       type (mpas_pool_type), pointer :: velocityPool
       type (mpas_pool_type), pointer :: scratchPool
       logical, pointer :: config_print_calving_info
+      character (len=StrKIND), pointer :: config_calving
       real(kind=RKIND), pointer :: config_calving_thickness
       real(kind=RKIND), pointer :: config_calving_velocity_const
       character (len=StrKIND), pointer :: config_calving_specified_source
@@ -1602,6 +1608,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: calvingVelocityData
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: xvelmean, yvelmean
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
@@ -1620,6 +1627,7 @@ module li_calving
 
       err = 0
 
+      call mpas_pool_get_config(liConfigs, 'config_calving', config_calving)
       call mpas_pool_get_config(liConfigs, 'config_print_calving_info', config_print_calving_info)
       call mpas_pool_get_config(liConfigs, 'config_calving_thickness', config_calving_thickness)
       call mpas_pool_get_config(liConfigs, 'config_calving_velocity_const', config_calving_velocity_const)
@@ -1669,6 +1677,12 @@ module li_calving
          if (config_print_calving_info) then
             call mpas_log_write("calvingVelocity(m s) value range on this processor: Min=$r, Max=$r", &
                     realArgs=(/minval(calvingVelocity), maxval(calvingVelocity)/))
+         endif
+
+         if (trim(config_calving) == 'specified_retreat_velocity') then
+            call mpas_pool_get_array(geometryPool, 'xvelmean', xvelmean)
+            call mpas_pool_get_array(geometryPool, 'yvelmean', yvelmean)
+            calvingVelocity = calvingVelocity + sqrt(xvelmean**2.0_RKIND + yvelmean**2.0_RKIND)
          endif
 
          ! Convert calvingVelocity to calvingThickness
