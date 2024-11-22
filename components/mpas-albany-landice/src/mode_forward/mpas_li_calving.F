@@ -1680,8 +1680,8 @@ module li_calving
          endif
 
          if (trim(config_calving) == 'specified_retreat_velocity') then
-            call mpas_pool_get_array(geometryPool, 'xvelmean', xvelmean)
-            call mpas_pool_get_array(geometryPool, 'yvelmean', yvelmean)
+            call mpas_pool_get_array(velocityPool, 'xvelmean', xvelmean)
+            call mpas_pool_get_array(velocityPool, 'yvelmean', yvelmean)
             calvingVelocity = calvingVelocity + sqrt(xvelmean**2.0_RKIND + yvelmean**2.0_RKIND)
          endif
 
