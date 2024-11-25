@@ -2865,7 +2865,9 @@ module li_calving
                jCell = cellsOnCell(iNeighbor, iCell)
                if (li_mask_is_margin(edgeMask(iEdge)) .or. &
                    (li_mask_is_ice(cellMask(jCell)) .and. bedTopography(jCell) > config_sea_level)) then
-                  edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                  call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                          uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                  err = ior(err, err_tmp)
                   requiredAblationVolumeNonDynEdge(iEdge) = ablationVelocity(iCell) * &
                           edgeLengthScaling * dvEdge(iEdge) * thicknessForAblation(iCell) * deltat
                   requiredAblationVolumeNonDynCell(iCell) = requiredAblationVolumeNonDynCell(iCell) + &
@@ -2928,7 +2930,9 @@ module li_calving
                if ((.not. li_mask_is_ice(cellMask(jCell))) .and. (bedTopography(jCell) < config_sea_level)  .or. &
                     (bedTopography(jCell) > config_sea_level) ) then
                   iEdge = edgesOnCell(iNeighbor, iCell)
-                  edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                  call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                          uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                  err = ior(err, err_tmp)
                   requiredAblationVolumeDynEdge(iEdge) = ablationVelocity(iCell) * &
                           edgeLengthScaling * dvEdge(iEdge) * thicknessForAblation(iCell) * deltat
                endif
@@ -2952,7 +2956,9 @@ module li_calving
             do iNeighbor = 1, nEdgesOnCell(iCell)
                iEdge = edgesOnCell(iNeighbor, iCell)
                if (li_mask_is_dynamic_ice(edgeMask(iEdge))) then
-                  edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                  call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                          uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                  err = ior(err, err_tmp)
                   ablateLengthEdge = edgeLengthScaling * dvEdge(iEdge)
                   ablateLengthCell = ablateLengthCell + ablateLengthEdge
                endif
@@ -2964,7 +2970,9 @@ module li_calving
                   iEdge = edgesOnCell(iNeighbor, iCell)
                   jCell = cellsOnCell(iNeighbor, iCell)
                   if (li_mask_is_dynamic_ice(edgeMask(iEdge))) then
-                     edgeLengthScaling = scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                     call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                             uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                     err = ior(err, err_tmp)
                      ablateLengthEdge = edgeLengthScaling * dvEdge(iEdge)
                      if (requiredAblationVolumeDynEdge(iEdge) > 0.0_RKIND) then
                         call mpas_log_write("Unexpectedly found a dynamic edge that already has calving assigned to it." // &
@@ -3191,31 +3199,49 @@ module li_calving
 
     ! Helper function for subroutine li_apply_front_ablation_velocity
     ! Calculates the amount to scale an edge length based on the orientation of the edge with the surface velocity
-    function scale_edge_length(xc, yc, xe, ye, vx, vy)
+    subroutine scale_edge_length(xc, yc, xe, ye, vx, vy, scale_factor, err)
        real(kind=RKIND), intent(in) :: xc, yc  ! x,y coords of cell center
        real(kind=RKIND), intent(in) :: xe, ye  ! x,y coords of edge neighboring cell
        real(kind=RKIND), intent(in) :: vx, vy  ! x,y components of velocity vector
-       real(kind=RKIND) :: scale_edge_length
+       real(kind=RKIND), intent(out) :: scale_factor
+       integer, intent(out) :: err
 
        real(kind=RKIND) :: ux, uy, umag, vmag
+
+       err = 0
+       scale_factor = 0.0_RKIND
 
        ! Calculate vector pointing from cell center to edge
        ux = xe - xc
        uy = ye - yc
        umag = sqrt(ux**2 + uy**2)
 
-       ! avoid divide by zero
-       if (umag == 0.0_RKIND) umag = 1.0_RKIND
        vmag = sqrt(vx**2 + vy**2)
-       if (vmag == 0.0_RKIND) vmag = 1.0_RKIND
+
+       ! check for 0-magnitude vectors
+       if (umag == 0.0_RKIND) then
+          call mpas_log_write("In scale_edge_length, cell to edge vector has magnitude zero", MPAS_LOG_ERR)
+          err = 1
+          return
+       endif
+       if (vmag == 0.0_RKIND) then
+          call mpas_log_write("In scale_edge_length, velocity vector has magnitude zero", MPAS_LOG_ERR)
+          err = 1
+          return
+       endif
 
        ! dot product of unit vectors
-       scale_edge_length = (ux / umag) * (vx / vmag) + (uy / umag) * (vy / vmag)
+       scale_factor = (ux / umag) * (vx / vmag) + (uy / umag) * (vy / vmag)
        ! set scale to 0 where vectors are not pointing the same way
        ! (i.e. where vector to edge points away from flow direction)
-       scale_edge_length = max(0.0,  scale_edge_length)
+       scale_factor = max(0.0,  scale_factor)
 
-    end function scale_edge_length
+       if (scale_factor > 1.0_RKIND) then
+          call mpas_log_write("In scale_edge_length, scale_factor is greater than 1.", MPAS_LOG_ERR)
+          err = 1
+       endif
+
+    end subroutine scale_edge_length
 
 
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
