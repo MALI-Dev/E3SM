@@ -449,6 +449,7 @@ contains
          normalVelocity, uReconstructX, uReconstructY, uReconstructZ
       real (kind=RKIND), dimension(:,:), pointer :: temperature
       real (kind=RKIND), dimension(:), pointer :: stiffnessFactor
+      real (kind=RKIND), dimension(:), pointer :: damage
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: effectivePressureLimited
       real (kind=RKIND), dimension(:), pointer :: muFriction
@@ -459,8 +460,10 @@ contains
       logical, pointer :: config_always_compute_fem_grid
       logical, pointer :: config_output_external_velocity_solver_data
       logical, pointer :: config_nonconvergence_error
+      logical, pointer :: config_damage_rheology_coupling
       real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND), pointer :: config_effective_pressure_max
+      real (kind=RKIND), pointer :: config_damage_stiffness_min
       integer, pointer :: anyDynamicVertexMaskChanged
       integer, pointer :: dirichletMaskChanged
       integer, pointer :: nEdges
@@ -485,6 +488,8 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_nonconvergence_error', config_nonconvergence_error)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_effective_pressure_max', config_effective_pressure_max)
+      call mpas_pool_get_config(liConfigs, 'config_damage_stiffness_min', config_damage_stiffness_min)
+      call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling', config_damage_rheology_coupling)
 
       ! Mesh variables
       call mpas_pool_get_array(meshPool, 'layerThicknessFractions', layerThicknessFractions)
@@ -502,6 +507,7 @@ contains
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
+      call mpas_pool_get_array(geometryPool, 'damage', damage)
 
       ! Thermal variables
       call mpas_pool_get_array(thermalPool, 'temperature', temperature)
@@ -595,12 +601,21 @@ contains
 
 
           call mpas_timer_start("velocity_solver_solve_FO")
-          call velocity_solver_solve_FO(bedTopography, lowerSurface, thickness, &
-                betaSolve, sfcMassBal, temperature, stiffnessFactor, &
-                effectivePressureLimited, muFriction, &
-                uReconstructX, uReconstructY,  &  ! Dirichlet boundary values to apply where dirichletVelocityMask=1
-                normalVelocity, drivingStressVert, dissipationVertexField % array, uReconstructX, uReconstructY, &  ! return values
-                deltat, albanyVelocityError)  ! return values
+          if ( config_damage_rheology_coupling ) then
+             call velocity_solver_solve_FO(bedTopography, lowerSurface, thickness, &
+                   betaSolve, sfcMassBal, temperature, max(1.0_RKIND - damage, config_damage_stiffness_min) * stiffnessFactor, &
+                   effectivePressureLimited, muFriction, &
+                   uReconstructX, uReconstructY,  &  ! Dirichlet boundary values to apply where dirichletVelocityMask=1
+                   normalVelocity, drivingStressVert, dissipationVertexField % array, uReconstructX, uReconstructY, &  ! return values
+                   deltat, albanyVelocityError)  ! return values
+          else
+             call velocity_solver_solve_FO(bedTopography, lowerSurface, thickness, &
+                   betaSolve, sfcMassBal, temperature, stiffnessFactor, &
+                   effectivePressureLimited, muFriction, &
+                   uReconstructX, uReconstructY,  &  ! Dirichlet boundary values to apply where dirichletVelocityMask=1
+                   normalVelocity, drivingStressVert, dissipationVertexField % array, uReconstructX, uReconstructY, &  ! return values
+                   deltat, albanyVelocityError)  ! return values
+          endif
           call mpas_timer_stop("velocity_solver_solve_FO")
 
           if (albanyVelocityError == 1) then
@@ -770,7 +785,8 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       !-----------------------------------------------------------------
       ! local variables
       !-----------------------------------------------------------------
-      logical, pointer :: config_write_albany_ascii_mesh
+      logical, pointer :: config_write_albany_ascii_mesh, &
+                          config_damage_rheology_coupling
       character (len=StrKIND), pointer :: config_velocity_solver
       real (kind=RKIND), dimension(:), pointer :: &
          bedTopography, lowerSurface, upperSurface, layerThicknessFractions, beta
@@ -784,12 +800,12 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       real (kind=RKIND), dimension(:), pointer :: surfaceAirTemperature, basalHeatFlux
       integer, dimension(:), pointer :: vertexMask, cellMask, edgeMask, indexToCellID
       real (kind=RKIND), dimension(:,:), pointer :: layerThickness
-      real (kind=RKIND), dimension(:), pointer :: stiffnessFactor
+      real (kind=RKIND), dimension(:), pointer :: stiffnessFactor, damage
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: muFriction
       integer, dimension(:,:), pointer :: dirichletVelocityMask
       type (mpas_pool_type), pointer :: meshPool, geometryPool, thermalPool, observationsPool, velocityPool, scratchPool, hydroPool
-      real (kind=RKIND), pointer :: config_sea_level, config_ice_density, config_ocean_density
+      real (kind=RKIND), pointer :: config_sea_level, config_ice_density, config_ocean_density, config_damage_stiffness_min
       integer :: iCell
       integer :: err
 
@@ -810,6 +826,8 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
+      call mpas_pool_get_config(liConfigs, 'config_damage_stiffness_min', config_damage_stiffness_min)
+      call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling', config_damage_rheology_coupling)
 
       if (trim(config_velocity_solver) /= 'FO') then
          call mpas_log_write("config_velocity solver needs to be set to 'FO' for config_write_albany_ascii_mesh to work.", &
@@ -836,6 +854,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
 
       ! Geometry variables
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'damage', damage)
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'lowerSurface', lowerSurface)
       call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
@@ -896,17 +915,29 @@ subroutine li_velocity_external_write_albany_mesh(domain)
 
       ! call the C++ routine to write the mesh
       call mpas_log_write("Writing Albany ASCII mesh.", flushNow=.true.)
-      call write_ascii_mesh(indexToCellID, bedTopography, lowerSurface, &
-              beta, temperature, &
-              surfaceAirTemperature, basalHeatFlux, &
-              stiffnessFactor, &
-              effectivePressure, muFriction, &
-              thickness, thicknessUncertainty, &
-              sfcMassBal, sfcMassBalUncertainty, &
-              floatingBasalMassBal, floatingBasalMassBalUncertainty, &
-              observedSurfaceVelocityX, observedSurfaceVelocityY, observedSurfaceVelocityUncertainty, &
-              observedThicknessTendency, observedThicknessTendencyUncertainty)
-
+      if ( config_damage_rheology_coupling ) then
+         call write_ascii_mesh(indexToCellID, bedTopography, lowerSurface, &
+                 beta, temperature, &
+                 surfaceAirTemperature, basalHeatFlux, &
+                 max(1.0_RKIND - damage, config_damage_stiffness_min) * stiffnessFactor, &
+                 effectivePressure, muFriction, &
+                 thickness, thicknessUncertainty, &
+                 sfcMassBal, sfcMassBalUncertainty, &
+                 floatingBasalMassBal, floatingBasalMassBalUncertainty, &
+                 observedSurfaceVelocityX, observedSurfaceVelocityY, observedSurfaceVelocityUncertainty, &
+                 observedThicknessTendency, observedThicknessTendencyUncertainty)
+      else
+         call write_ascii_mesh(indexToCellID, bedTopography, lowerSurface, &
+                 beta, temperature, &
+                 surfaceAirTemperature, basalHeatFlux, &
+                 stiffnessFactor, &
+                 effectivePressure, muFriction, &
+                 thickness, thicknessUncertainty, &
+                 sfcMassBal, sfcMassBalUncertainty, &
+                 floatingBasalMassBal, floatingBasalMassBalUncertainty, &
+                 observedSurfaceVelocityX, observedSurfaceVelocityY, observedSurfaceVelocityUncertainty, &
+                 observedThicknessTendency, observedThicknessTendencyUncertainty)
+      endif
       !----
 
       call interface_reset_stdout()

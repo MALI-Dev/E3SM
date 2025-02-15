@@ -3653,11 +3653,10 @@ module li_calving
          ! damage is always larger than the Nye value for initialization of damage evolution.
 
          do iCell = 1, nCells
-            if ((li_mask_is_grounded_ice(cellMask(iCell))) .or. (thickness(iCell) .eq. 0.0_RKIND)) then
+            if ( thickness(iCell) .eq. 0.0_RKIND ) then
                 damage(iCell) = 0.0_RKIND
             end if
          end do
-         ! the damage of grounded ice is kept as 0, as the strain rate calculation is only valid for ice shelf
 
         ! Options for initializing damage where ice goes afloat:
         if (trim(config_damage_gl_setting) == 'extrapolate') then
@@ -3690,7 +3689,7 @@ module li_calving
                 if (li_mask_is_grounding_line(cellMask(iCell))) then
                     do iNeighbor = 1, nEdgesOnCell(iCell)
                         jCell = cellsOnCell(iNeighbor, iCell)
-                        if (li_mask_is_floating_ice(cellMask(jCell))) then
+                        if ( li_mask_is_floating_ice(cellMask(jCell)) .and. (damage(jCell) < damageNye(jCell)) ) then
                             damage(jCell) = damageNye(jCell)
                         end if
                     end do
@@ -3781,7 +3780,6 @@ module li_calving
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: velocityPool
       type (mpas_pool_type), pointer :: scratchPool
-      real(kind=RKIND), pointer :: config_damage_stiffness_min
       logical, pointer :: config_damage_rheology_coupling
       logical, pointer :: config_preserve_damage
       logical, pointer :: config_print_calving_info
@@ -3803,7 +3801,6 @@ module li_calving
       err = 0
 
 
-      call mpas_pool_get_config(liConfigs, 'config_damage_stiffness_min', config_damage_stiffness_min)
       call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling', config_damage_rheology_coupling)
       call mpas_pool_get_config(liConfigs, 'config_damage_gl_setting', config_damage_gl_setting)
       call mpas_pool_get_config(liConfigs, 'config_preserve_damage', config_preserve_damage)
@@ -3850,7 +3847,7 @@ module li_calving
 
 
          do iCell = 1, nCells
-            if (li_mask_is_grounded_ice(cellMask(iCell)) .or. .not. li_mask_is_ice(cellMask(iCell))) then
+            if (.not. li_mask_is_ice(cellMask(iCell))) then
                 damage(iCell) = 0.0_RKIND
             end if
          end do
@@ -3886,7 +3883,7 @@ module li_calving
                 if (li_mask_is_grounding_line(cellMask(iCell))) then
                     do iNeighbor = 1, nEdgesOnCell(iCell)
                         jCell = cellsOnCell(iNeighbor, iCell)
-                        if (li_mask_is_floating_ice(cellMask(jCell))) then
+                        if ( li_mask_is_floating_ice(cellMask(jCell)) .and. (damage(jCell)<damageNye(jCell)) ) then
                             damage(jCell) = damageNye(jCell)
                         end if
                     end do
@@ -3903,18 +3900,6 @@ module li_calving
         where (damage > 1.0_RKIND)
             damage = 1.0_RKIND
         end where
-
-        if (config_damage_rheology_coupling) then
-            do iCell = 1, nCells
-                if (li_mask_is_floating_ice(cellMask(iCell))) then
-                    stiffnessFactor(iCell) = 1.0_RKIND - damage(iCell)
-                    if (stiffnessFactor(iCell) < config_damage_stiffness_min) then
-                        stiffnessFactor(iCell) = config_damage_stiffness_min
-                    end if
-                end if
-            end do
-        end if
-
 
         block => block % next
 
@@ -3993,11 +3978,11 @@ module li_calving
       growMask(:) = 0
 
       ! define seed and grow masks for flood fill.
-      where ( li_mask_is_dynamic_margin(cellMask) .and. (damage .ge. config_damage_calving_threshold) )
+      where ( li_mask_is_dynamic_margin(cellMask) .and. li_mask_is_floating_ice(cellMask) .and. (damage .ge. config_damage_calving_threshold) )
               seedMask = 1
       end where
 
-      where ( seedMask == 0 .and. (damage .ge. config_damage_calving_threshold) )
+      where ( seedMask == 0 .and. li_mask_is_floating_ice(cellMask) .and. (damage .ge. config_damage_calving_threshold) )
               growMask = 1
       end where
 
