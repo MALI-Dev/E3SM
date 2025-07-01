@@ -106,8 +106,12 @@ module li_iceshelf_melt
       real (kind=RKIND), dimension(:), pointer :: &
               faceMeltSpeed, &
               faceMeltingThickness, &
+              groundedFaceMeltingThickness, &
+              floatingFaceMeltingThickness, &
               thickness
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMask, &
+                                        groundedMaskForMassBudget, &
+                                        floatingMaskForMassBudget
       integer :: err_tmp
       logical :: applyToFloating, applyToGrounded, applyToGroundingLine
 
@@ -141,6 +145,10 @@ module li_iceshelf_melt
             call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
             call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
             call mpas_pool_get_array(geometryPool, 'faceMeltingThickness', faceMeltingThickness)
+            call mpas_pool_get_array(geometryPool, 'groundedFaceMeltingThickness', groundedFaceMeltingThickness)
+            call mpas_pool_get_array(geometryPool, 'floatingFaceMeltingThickness', floatingFaceMeltingThickness)
+            call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+            call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
             call mpas_pool_get_array(geometryPool, 'thickness', thickness)
 
             ! Update halos on calvingThickness or faceMeltingThickness before applying it.
@@ -153,9 +161,19 @@ module li_iceshelf_melt
 
             ! Apply facemelt: open the Ark
             thickness(:) = thickness(:) - faceMeltingThickness(:)
+            where (groundedMaskForMassBudget .eq. 1)
+                  groundedFaceMeltingThickness = faceMeltingThickness
+                  floatingFaceMeltingThickness = 0.0_RKIND
+            elsewhere (floatingMaskForMassBudget .eq. 1)
+                  groundedFaceMeltingThickness = 0.0_RKIND
+                  floatingFaceMeltingThickness = faceMeltingThickness
+            elsewhere
+                  groundedFaceMeltingThickness = 0.0_RKIND
+                  floatingFaceMeltingThickness = 0.0_RKIND
+            end where
 
             ! update mask
-            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+            call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
             err = ior(err, err_tmp)
 
             block => block % next
@@ -170,9 +188,13 @@ module li_iceshelf_melt
             call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
             call mpas_pool_get_array(geometryPool, 'faceMeltSpeed', faceMeltSpeed)
             call mpas_pool_get_array(geometryPool, 'faceMeltingThickness', faceMeltingThickness)
+            call mpas_pool_get_array(geometryPool, 'groundedFaceMeltingThickness', groundedFaceMeltingThickness)
+            call mpas_pool_get_array(geometryPool, 'floatingFaceMeltingThickness', floatingFaceMeltingThickness)
 
             faceMeltSpeed(:) = 0.0_RKIND
             faceMeltingThickness(:) = 0.0_RKIND
+            groundedFaceMeltingThickness(:) = 0.0_RKIND
+            floatingfaceMeltingThickness(:) = 0.0_RKIND
 
             block => block % next
          enddo   ! associated(block)
@@ -390,7 +412,7 @@ module li_iceshelf_melt
             thermalCellMask => thermalCellMaskField % array
 
             ! calculate masks - so we know where the ice is floating
-            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+            call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
             err = ior(err, err_tmp)
 
             ! calculate a mask to identify ice that is thick enough to be thermally active

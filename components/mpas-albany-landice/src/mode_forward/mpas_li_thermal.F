@@ -858,7 +858,7 @@ module li_thermal
          endif
 
          ! calculate masks - so we know where the ice is floating
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! calculate a mask to identify ice that is thick enough to be thermally active

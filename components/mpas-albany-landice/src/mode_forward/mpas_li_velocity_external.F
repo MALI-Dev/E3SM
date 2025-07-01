@@ -875,7 +875,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       ! We could call diagnostic_solve_before_velocity to do all that, but the way
       ! code is currently organized, that would be a circular dependency.a
 
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err)
 
       ! Lower surface is based on floatation for floating ice.  For grounded ice (and non-ice areas) it is the bed.
       where ( li_mask_is_floating_ice(cellMask) )

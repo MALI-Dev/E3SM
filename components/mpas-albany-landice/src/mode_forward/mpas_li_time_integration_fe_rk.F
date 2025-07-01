@@ -87,7 +87,7 @@ module li_time_integration_fe_rk
       use li_velocity
       use li_bedtopo
       use li_mask
-      use li_advection, only: li_grounded_to_floating
+      use li_advection
       use li_ocean_extrap
 
       !-----------------------------------------------------------------
@@ -244,18 +244,11 @@ module li_time_integration_fe_rk
       err = ior(err, err_tmp)
       call mpas_timer_stop("advancing clock")
 
-!TODO: Determine whether grounded melting should in fact be called first
 ! === Ocean forcing extrapolation into ice-shelf cavities ===========
       call mpas_timer_start("ocean forcing extrapolation")
       call li_ocean_extrap_solve(domain, err_tmp)
       err = ior(err, err_tmp)
       call mpas_timer_stop("ocean forcing extrapolation")
-
-! === Face melting for grounded ice ===========
-      call mpas_timer_start("face melting for grounded ice")
-      call li_face_melt_grounded_ice(domain, err_tmp)
-      err = ior(err, err_tmp)
-      call mpas_timer_stop("face melting for grounded ice")
 
 ! === Basal melting for floating ice ===========
       call mpas_timer_start("basal melting for floating ice")
@@ -373,7 +366,7 @@ module li_time_integration_fe_rk
 
       ! Calculate masks prior to RK loop, but do not update masks within the loop
       ! to preserve the accuracy of time integration.
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
 ! *** Start RK loop ***
@@ -521,7 +514,7 @@ module li_time_integration_fe_rk
 
 ! Finalize budget updates
       ! Update masks after RK integration
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
@@ -532,10 +525,6 @@ module li_time_integration_fe_rk
       call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
       call mpas_dmpar_field_halo_exch(domain, 'vertexMask')
       call mpas_timer_stop("halo updates")
-
-      ! Calculate volume converted from grounded to floating
-      ! This needs to be determined after SMB/BMB are applied because those can change floating/grounded state
-      call li_grounded_to_floating(cellMaskPrev, cellMask, thickness, groundedToFloatingThickness, nCells)
 
       sfcMassBalApplied(:) = sfcMassBalAccum(:)
       groundedSfcMassBalApplied(:) = groundedSfcMassBalAccum(:)
@@ -593,6 +582,12 @@ module li_time_integration_fe_rk
       call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
       call mpas_dmpar_field_halo_exch(domain, 'vertexMask')
       call mpas_timer_stop("halo updates")
+
+! === Face melting for grounded ice ===========
+      call mpas_timer_start("face melting for grounded ice")
+      call li_face_melt_grounded_ice(domain, err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_timer_stop("face melting for grounded ice")
 
 ! === Update bed topo =====================
 ! It's not clear when the best time to do this is.
@@ -697,6 +692,7 @@ module li_time_integration_fe_rk
       real (kind=RKIND), dimension(:,:), pointer :: layerNormalVelocity
       real (kind=RKIND), pointer :: calvingCFLdt, faceMeltingCFLdt
       integer, pointer :: processLimitingTimestep, config_rk_order, config_rk3_stages
+      real (kind=RKIND), dimension(:), pointer :: groundedToFloatingThickness
       integer, dimension(:), pointer :: edgeMask
 
       logical, pointer :: config_print_thickness_advection_info
@@ -790,8 +786,13 @@ module li_time_integration_fe_rk
 
          call mpas_pool_get_array(velocityPool, 'normalVelocity', normalVelocity)
          call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
+         call mpas_pool_get_array(geometryPool, 'groundedToFloatingThickness', groundedToFloatingThickness)
          call mpas_pool_get_array(velocityPool, 'layerNormalVelocity', layerNormalVelocity)
 
+         ! groundedToFloatingThickness is updated throughout
+         ! the timestep, so necessary to zero it at
+         ! the beginning of every timestep.
+         groundedToFloatingThickness(:) = 0.0_RKIND
          ! compute normal velocities and advective CFL limit for this block
 
          call li_layer_normal_velocity( &
@@ -1259,7 +1260,7 @@ module li_time_integration_fe_rk
             call li_calculate_layerThickness(meshPool, thickness, layerThickness)
          endif
 
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          call li_update_geometry(geometryPool)
 
          block => block % next
