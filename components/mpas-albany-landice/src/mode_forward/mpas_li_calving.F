@@ -283,7 +283,8 @@ module li_calving
          call von_Mises_calving(domain, err_tmp)
          err = ior(err, err_tmp)
 
-      elseif (trim(config_calving) == 'specified_calving_velocity') then
+      elseif ((trim(config_calving) == 'specified_calving_velocity') .or. &
+              (trim(config_calving) == 'specified_retreat_velocity')) then
 
          call specified_calving_velocity(domain, err_tmp)
          err = ior(err, err_tmp)
@@ -1378,7 +1379,6 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: eigencalvingParameter
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin
-      real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), pointer :: calvingCFLdt
@@ -1429,7 +1429,6 @@ module li_calving
 
          ! get fields
          call mpas_pool_get_array(meshPool, 'deltat', deltat)
-         call mpas_pool_get_array(meshPool, 'angleEdge', angleEdge)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'calvingFrontMask', calvingFrontMask)
          call mpas_pool_get_array(geometryPool, 'eigencalvingParameter', eigencalvingParameter)
@@ -1564,12 +1563,16 @@ module li_calving
 !
 !    routine specified_calving_velocity
 !
-!> \brief use a specified calving velocity given by input data
+!> \brief use a specified calving or retreat velocity given by input data
 !> \author Matthew Hoffman
 !> \date   Feb. 2018
 !> \details we can specify the calving velocity by i) a constant value
 !> given by config_calving_velocity_const in namelist and ii) source data
 !> specified by calvingVelocityData
+!> This subroutine handles both the specified_calving_velocity and
+!> specified_retreat_velocity options.  In the latter case, the flow speed
+!> is added to the specified retreat rate to obtain a calving rate that will
+!> yield the desired retreat rate.
 !-----------------------------------------------------------------------
    subroutine specified_calving_velocity(domain, err)
 
@@ -1597,14 +1600,15 @@ module li_calving
       type (mpas_pool_type), pointer :: velocityPool
       type (mpas_pool_type), pointer :: scratchPool
       logical, pointer :: config_print_calving_info
+      character (len=StrKIND), pointer :: config_calving
       real(kind=RKIND), pointer :: config_calving_thickness
       real(kind=RKIND), pointer :: config_calving_velocity_const
       character (len=StrKIND), pointer :: config_calving_specified_source
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), dimension(:), pointer :: calvingVelocityData
-      real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: xvelmean, yvelmean
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
@@ -1623,6 +1627,7 @@ module li_calving
 
       err = 0
 
+      call mpas_pool_get_config(liConfigs, 'config_calving', config_calving)
       call mpas_pool_get_config(liConfigs, 'config_print_calving_info', config_print_calving_info)
       call mpas_pool_get_config(liConfigs, 'config_calving_thickness', config_calving_thickness)
       call mpas_pool_get_config(liConfigs, 'config_calving_velocity_const', config_calving_velocity_const)
@@ -1643,7 +1648,6 @@ module li_calving
 
          ! get fields
          call mpas_pool_get_array(meshPool, 'deltat', deltat)
-         call mpas_pool_get_array(meshPool, 'angleEdge', angleEdge)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'calvingFrontMask', calvingFrontMask)
          call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
@@ -1673,6 +1677,12 @@ module li_calving
          if (config_print_calving_info) then
             call mpas_log_write("calvingVelocity(m s) value range on this processor: Min=$r, Max=$r", &
                     realArgs=(/minval(calvingVelocity), maxval(calvingVelocity)/))
+         endif
+
+         if (trim(config_calving) == 'specified_retreat_velocity') then
+            call mpas_pool_get_array(velocityPool, 'xvelmean', xvelmean)
+            call mpas_pool_get_array(velocityPool, 'yvelmean', yvelmean)
+            calvingVelocity = calvingVelocity + sqrt(xvelmean**2.0_RKIND + yvelmean**2.0_RKIND)
          endif
 
          ! Convert calvingVelocity to calvingThickness
@@ -2495,7 +2505,7 @@ module li_calving
       real (kind=RKIND), pointer :: config_calving_error_threshold
       logical, pointer :: config_distribute_unablatedVolumeDynCell
       real (kind=RKIND), dimension(:), pointer :: dvEdge, dcEdge
-      real (kind=RKIND), dimension(:), pointer :: angleEdge
+      real (kind=RKIND), dimension(:), pointer :: xCell, yCell, xEdge, yEdge
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity, faceMeltSpeed
       real (kind=RKIND), dimension(:), pointer :: areaCell
       real (kind=RKIND), dimension(:,:), pointer :: uReconstructX
@@ -2536,7 +2546,10 @@ module li_calving
       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(meshPool, 'dvEdge', dvEdge)
       call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
-      call mpas_pool_get_array(meshPool, 'angleEdge', angleEdge)
+      call mpas_pool_get_array(meshPool, 'xCell', xCell)
+      call mpas_pool_get_array(meshPool, 'yCell', yCell)
+      call mpas_pool_get_array(meshPool, 'xEdge', xEdge)
+      call mpas_pool_get_array(meshPool, 'yEdge', yEdge)
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
       call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
@@ -2850,10 +2863,11 @@ module li_calving
             do iNeighbor = 1, nEdgesOnCell(iCell)
                iEdge = edgesOnCell(iNeighbor, iCell)
                jCell = cellsOnCell(iNeighbor, iCell)
-               if (li_mask_is_margin(edgeMask(iEdge)) .and. & !< edge is a margin
-                   .not. li_mask_is_ice(cellMask(jCell)) .and. bedTopography(jCell) < config_sea_level & ! ensure margin is w/ocn
-                   ) then
-                  edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+               if (li_mask_is_margin(edgeMask(iEdge)) .or. &
+                   (li_mask_is_ice(cellMask(jCell)) .and. bedTopography(jCell) > config_sea_level)) then
+                  call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                          uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                  err = ior(err, err_tmp)
                   requiredAblationVolumeNonDynEdge(iEdge) = ablationVelocity(iCell) * &
                           edgeLengthScaling * dvEdge(iEdge) * thicknessForAblation(iCell) * deltat
                   requiredAblationVolumeNonDynCell(iCell) = requiredAblationVolumeNonDynCell(iCell) + &
@@ -2913,9 +2927,12 @@ module li_calving
             .and. li_mask_is_margin(cellMask(iCell)) ) then                            ! that is at the edge of the ice
             do iNeighbor = 1, nEdgesOnCell(iCell)
                jCell = cellsOnCell(iNeighbor, iCell)
-               if ((.not. li_mask_is_ice(cellMask(jCell))) .and. (bedTopography(jCell) < config_sea_level)) then
+               if ((.not. li_mask_is_ice(cellMask(jCell))) .and. (bedTopography(jCell) < config_sea_level)  .or. &
+                    (bedTopography(jCell) > config_sea_level) ) then
                   iEdge = edgesOnCell(iNeighbor, iCell)
-                  edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                  call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                          uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                  err = ior(err, err_tmp)
                   requiredAblationVolumeDynEdge(iEdge) = ablationVelocity(iCell) * &
                           edgeLengthScaling * dvEdge(iEdge) * thicknessForAblation(iCell) * deltat
                endif
@@ -2939,7 +2956,9 @@ module li_calving
             do iNeighbor = 1, nEdgesOnCell(iCell)
                iEdge = edgesOnCell(iNeighbor, iCell)
                if (li_mask_is_dynamic_ice(edgeMask(iEdge))) then
-                  edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                  call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                          uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                  err = ior(err, err_tmp)
                   ablateLengthEdge = edgeLengthScaling * dvEdge(iEdge)
                   ablateLengthCell = ablateLengthCell + ablateLengthEdge
                endif
@@ -2951,7 +2970,9 @@ module li_calving
                   iEdge = edgesOnCell(iNeighbor, iCell)
                   jCell = cellsOnCell(iNeighbor, iCell)
                   if (li_mask_is_dynamic_ice(edgeMask(iEdge))) then
-                     edgeLengthScaling = scale_edge_length(angleEdge(iEdge), uvelForAblation(iCell), vvelForAblation(iCell))
+                     call scale_edge_length(xCell(iCell), yCell(iCell), xEdge(iEdge), yEdge(iEdge), &
+                             uvelForAblation(iCell), vvelForAblation(iCell), edgeLengthScaling, err_tmp)
+                     err = ior(err, err_tmp)
                      ablateLengthEdge = edgeLengthScaling * dvEdge(iEdge)
                      if (requiredAblationVolumeDynEdge(iEdge) > 0.0_RKIND) then
                         call mpas_log_write("Unexpectedly found a dynamic edge that already has calving assigned to it." // &
@@ -3178,19 +3199,49 @@ module li_calving
 
     ! Helper function for subroutine li_apply_front_ablation_velocity
     ! Calculates the amount to scale an edge length based on the orientation of the edge with the surface velocity
-    function scale_edge_length(angleEdgeHere, u, v)
-       real(kind=RKIND), intent(in) :: angleEdgeHere
-       real(kind=RKIND), intent(in) :: u
-       real(kind=RKIND), intent(in) :: v
-       real(kind=RKIND) :: scale_edge_length
+    subroutine scale_edge_length(xc, yc, xe, ye, vx, vy, scale_factor, err)
+       real(kind=RKIND), intent(in) :: xc, yc  ! x,y coords of cell center
+       real(kind=RKIND), intent(in) :: xe, ye  ! x,y coords of edge neighboring cell
+       real(kind=RKIND), intent(in) :: vx, vy  ! x,y components of velocity vector
+       real(kind=RKIND), intent(out) :: scale_factor
+       integer, intent(out) :: err
 
-       real(kind=RKIND) :: mag
+       real(kind=RKIND) :: ux, uy, umag, vmag
 
-       mag = sqrt(u**2 + v**2)
-       if (mag == 0.0_RKIND) mag = 1.0_RKIND
-       scale_edge_length =  abs(u/mag * cos(angleEdgeHere) + v/mag * sin(angleEdgeHere))  ! dot product of unit vectors
-       !scale_edge_length = abs(cos(angleEdgeHere - atan2(v, u)))
-    end function scale_edge_length
+       err = 0
+       scale_factor = 0.0_RKIND
+
+       ! Calculate vector pointing from cell center to edge
+       ux = xe - xc
+       uy = ye - yc
+       umag = sqrt(ux**2 + uy**2)
+
+       vmag = sqrt(vx**2 + vy**2)
+
+       ! check for 0-magnitude vectors
+       if (umag == 0.0_RKIND) then
+          call mpas_log_write("In scale_edge_length, cell to edge vector has magnitude zero", MPAS_LOG_ERR)
+          err = 1
+          return
+       endif
+       if (vmag == 0.0_RKIND) then
+          call mpas_log_write("In scale_edge_length, velocity vector has magnitude zero", MPAS_LOG_ERR)
+          err = 1
+          return
+       endif
+
+       ! dot product of unit vectors
+       scale_factor = (ux / umag) * (vx / vmag) + (uy / umag) * (vy / vmag)
+       ! set scale to 0 where vectors are not pointing the same way
+       ! (i.e. where vector to edge points away from flow direction)
+       scale_factor = max(0.0,  scale_factor)
+
+       if (scale_factor > 1.0_RKIND) then
+          call mpas_log_write("In scale_edge_length, scale_factor is greater than 1.", MPAS_LOG_ERR)
+          err = 1
+       endif
+
+    end subroutine scale_edge_length
 
 
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
