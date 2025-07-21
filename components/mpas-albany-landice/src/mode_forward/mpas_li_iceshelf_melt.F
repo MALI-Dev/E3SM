@@ -279,7 +279,7 @@ module li_iceshelf_melt
            bedTopography               ! bed topography (m; negative below sea level)
 
       real (kind=RKIND), dimension(:), pointer :: &
-           draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1      ! variables used for basal melt draft dependence
+           draftDepenBasalMelt_minDraft, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1      ! variables used for basal melt draft dependence
 
       real(kind=RKIND), pointer :: daysSinceStart
 
@@ -484,8 +484,9 @@ module li_iceshelf_melt
 
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha1', draftDepenBasalMeltAlpha1)
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha0', draftDepenBasalMeltAlpha0)
+               call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_minDraft', draftDepenBasalMelt_minDraft)
                call basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                       config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha1, draftDepenBasalMeltAlpha0, err_tmp)
+                       config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha1, draftDepenBasalMeltAlpha0, draftDepenBasalMelt_minDraft, err_tmp)
                err = ior(err, err_tmp)
 
             elseif (trim(config_basal_mass_bal_float) == 'temperature_profile') then
@@ -620,11 +621,13 @@ module li_iceshelf_melt
 !> In its current form, this is a linear function form, with the draft
 !> dependent melt component calculated as:
 !> melt = alpha0 + (draft * alpha1)
+!> The linear relationship is modified by:
+!> * minDraft: a depth upto which melt is a constant minimum (=alpha0)
 
 !-----------------------------------------------------------------------
 
     subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                    config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1, err)
+                    config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1, draftDepenBasalMelt_minDraft, err)
 
       !-----------------------------------------------------------------
       ! input variables
@@ -640,6 +643,7 @@ module li_iceshelf_melt
            nCellsSolve                 !< number of locally owned cells
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMeltAlpha1  ! slope for (linear) draft dependent parameterization of basal melt 
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMeltAlpha0  ! intercept for (linear) draft dependent parameterization of basal melt
+      real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_minDraft ! min draft at which (linear) draft dependent parameterization of basal melt is valid
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
@@ -665,9 +669,15 @@ module li_iceshelf_melt
       do iCell = 1, nCellsSolve
          if ( li_mask_is_floating_ice(cellMask(iCell))) then
             ! ice is present and floating
-
             zDraft = lowerSurface(iCell) - config_sea_level
-            floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + zDraft * draftDepenBasalMeltAlpha1(iCell)
+            ! If the draft is deeper than or equal to the minimum threshold, apply linear draft dependence
+            if (zDraft >= draftDepenBasalMelt_minDraft(iCell)) then
+               ! Linear draft dependence: melt = alpha0 + alpha1 * draft
+               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + zDraft * draftDepenBasalMeltAlpha1(iCell)
+            else
+               ! For shallower draft, use only the intercept (alpha0)
+               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell)
+            end if   ! linear dependence cutoff draft 
          endif   ! ice is floating
       enddo   ! iCell
 
