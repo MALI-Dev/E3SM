@@ -675,8 +675,9 @@ module li_iceshelf_melt
                ! Linear draft dependence: melt = alpha0 + alpha1 * draft
                floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + zDraft * draftDepenBasalMeltAlpha1(iCell)
             else
-               ! For shallower draft, use only the intercept (alpha0)
-               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell)
+               ! For shallower draft, use a melt rate calculated for the
+               ! minDraft threshold
+               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + draftDepenBasalMelt_minDraft(iCell) * draftDepenBasalMeltAlpha1(iCell)
             end if   ! linear dependence cutoff draft 
          endif   ! ice is floating
       enddo   ! iCell
