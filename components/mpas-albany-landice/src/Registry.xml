@@ -1303,7 +1303,7 @@ is the value of that variable from the *previous* time level!
                 <var name="floatingBasalMassBalAdjustment" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}" default_value="0.0"
                      description="adjustment to floatingBasalMassBal."
 		/>
-		<var name="draftDepenBasalMelt_minDraft" type="real" dimensions="nCells" units="m" package="draftDependentMelt"
+		<var name="draftDepenBasalMelt_minDraft" type="real" dimensions="nCells" units="m" package="draftDependentMelt" default_value="0.0"
 		     description="Minimum draft depth at which linear draft dependence is valid. Above this depth, a constant value of draftDepenBasalMeltAlpha0 is used for the melt rate."
 		/>
 		<var name="draftDepenBasalMeltAlpha0" type="real" dimensions="nCells" units="kg m^{-2} s^{-1}" package="draftDependentMelt"
