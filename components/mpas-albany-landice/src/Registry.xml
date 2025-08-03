@@ -847,7 +847,7 @@
 			<var name="draftDepenBasalMelt_minDraft" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMelt_paramType" packages="draftDependentMelt"/>
-			<var name="draftDepenBasalMelt_constantValue" packages="draftDependentMelt"/>
+			<var name="draftDepenBasalMelt_constantMeltValue" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
 <!-- An alternate way to allow the HO variables to exist in a separate file.
@@ -962,7 +962,7 @@
 			<var name="draftDepenBasalMelt_minDraft" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
                         <var name="draftDepenBasalMelt_paramType" packages="draftDependentMelt"/>
-                        <var name="draftDepenBasalMelt_constantValue" packages="draftDependentMelt"/>
+                        <var name="draftDepenBasalMelt_constantMeltValue" packages="draftDependentMelt"/>
                         <var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
 

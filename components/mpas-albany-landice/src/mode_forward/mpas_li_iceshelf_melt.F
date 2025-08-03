@@ -279,7 +279,7 @@ module li_iceshelf_melt
            bedTopography               ! bed topography (m; negative below sea level)
 
       real (kind=RKIND), dimension(:), pointer :: &
-           draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantValue, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1 
+           draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantMeltValue, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1 
            ! variables used for basal melt draft dependence
 
       real(kind=RKIND), pointer :: daysSinceStart
@@ -487,10 +487,10 @@ module li_iceshelf_melt
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha0', draftDepenBasalMeltAlpha0)
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_minDraft', draftDepenBasalMelt_minDraft)
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_paramType', draftDepenBasalMelt_paramType)
-               call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_constantValue', draftDepenBasalMelt_constantValue)
+               call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_constantMeltValue', draftDepenBasalMelt_constantMeltValue)
                call basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
                        config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha1, draftDepenBasalMeltAlpha0, & 
-                       draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantValue, err_tmp)
+                       draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantMeltValue, err_tmp)
                err = ior(err, err_tmp)
 
             elseif (trim(config_basal_mass_bal_float) == 'temperature_profile') then
@@ -638,7 +638,7 @@ module li_iceshelf_melt
 
     subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
                     config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1, &
-                    draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantValue, err)
+                    draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantMeltValue, err)
 
       !-----------------------------------------------------------------
       ! input variables
@@ -656,7 +656,7 @@ module li_iceshelf_melt
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMeltAlpha0  ! intercept for (linear) draft dependent parameterization of basal melt
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_minDraft ! min draft at which (linear) draft dependent parameterization of basal melt is valid
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_paramType ! parameterization selector field (linear dependence = 0, constant value = 1)
-      real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_constantValue ! constant melt rate value for selected ice shelves/regions
+      real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_constantMeltValue ! constant melt rate value for selected ice shelves/regions
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
@@ -686,8 +686,8 @@ module li_iceshelf_melt
             ! If the draft is deeper than or equal to the minimum threshold, apply linear draft dependence
             if (nint(draftDepenBasalMelt_paramType(iCell)) == 1) then 
                ! No linear draft dependence, set a constant melt rate
-               ! value melt = constantValue
-               floatingBasalMassBal(iCell) = draftDepenBasalMelt_constantValue(iCell)
+               ! value melt = constantMeltValue
+               floatingBasalMassBal(iCell) = draftDepenBasalMelt_constantMeltValue(iCell)
             else
                ! Linear draft dependence: melt = alpha0 + alpha1 * draft
                ! at deeper drafts (zDraft > minDraft)
