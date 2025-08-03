@@ -846,6 +846,8 @@
 			<var name="floatingBasalMassBalAdjustment"/>
 			<var name="draftDepenBasalMelt_minDraft" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
+			<var name="draftDepenBasalMelt_paramType" packages="draftDependentMelt"/>
+			<var name="draftDepenBasalMelt_constantValue" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
 <!-- An alternate way to allow the HO variables to exist in a separate file.
@@ -959,6 +961,8 @@
 			<var name="floatingBasalMassBalAdjustment"/>
 			<var name="draftDepenBasalMelt_minDraft" packages="draftDependentMelt"/>
 			<var name="draftDepenBasalMeltAlpha1" packages="draftDependentMelt"/>
+                        <var name="draftDepenBasalMelt_paramType" packages="draftDependentMelt"/>
+                        <var name="draftDepenBasalMelt_constantValue" packages="draftDependentMelt"/>
                         <var name="draftDepenBasalMeltAlpha0" packages="draftDependentMelt"/>
 		</stream>
 
@@ -1306,6 +1310,12 @@ is the value of that variable from the *previous* time level!
 		<var name="draftDepenBasalMelt_minDraft" type="real" dimensions="nCells" units="m" package="draftDependentMelt" default_value="0.0"
 		     description="Minimum draft depth at which linear draft dependence is valid. Above this depth, a constant value of draftDepenBasalMeltAlpha0 is used for the melt rate."
 		/>
+		<var name="draftDepenBasalMelt_paramType" type="real" dimensions="nCells" units="unitless" package="draftDependentMelt" default_value="0.0"
+		     description="Parameterization type for draft dependence basal melt: 0=piecewise linear function, 1=constant value (including zero)."
+		/>
+		<var name="draftDepenBasalMelt_constantMeltValue" type="real" dimensions="nCells" units="kg m^{-2} s^{-1}" package="draftDependentMelt" default_value="0.0"
+                     description="Constant melt value for draft dependence basal melt (only used if draftDepenBasalMelt_paramType=1, including zero-melt)."
+                />
 		<var name="draftDepenBasalMeltAlpha0" type="real" dimensions="nCells" units="kg m^{-2} s^{-1}" package="draftDependentMelt"
                      description="Alpha0 (intercept) parameter in (linear) draft dependent calculation of floatingBasalMassBal."
 		/>

@@ -279,7 +279,8 @@ module li_iceshelf_melt
            bedTopography               ! bed topography (m; negative below sea level)
 
       real (kind=RKIND), dimension(:), pointer :: &
-           draftDepenBasalMelt_minDraft, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1      ! variables used for basal melt draft dependence
+           draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantValue, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1 
+           ! variables used for basal melt draft dependence
 
       real(kind=RKIND), pointer :: daysSinceStart
 
@@ -485,8 +486,11 @@ module li_iceshelf_melt
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha1', draftDepenBasalMeltAlpha1)
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMeltAlpha0', draftDepenBasalMeltAlpha0)
                call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_minDraft', draftDepenBasalMelt_minDraft)
+               call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_paramType', draftDepenBasalMelt_paramType)
+               call mpas_pool_get_array(geometryPool, 'draftDepenBasalMelt_constantValue', draftDepenBasalMelt_constantValue)
                call basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                       config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha1, draftDepenBasalMeltAlpha0, draftDepenBasalMelt_minDraft, err_tmp)
+                       config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha1, draftDepenBasalMeltAlpha0, & 
+                       draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantValue, err_tmp)
                err = ior(err, err_tmp)
 
             elseif (trim(config_basal_mass_bal_float) == 'temperature_profile') then
@@ -622,12 +626,19 @@ module li_iceshelf_melt
 !> dependent melt component calculated as:
 !> melt = alpha0 + (draft * alpha1)
 !> The linear relationship is modified by:
-!> * minDraft: a depth upto which melt is a constant minimum (=alpha0)
+!> minDraft: a depth upto which melt is a constant (melt = alpha0 + (minDraft * alpha1))
+!> For select ice shelves, a constant melt rate is set instead of the draft dependence.
+!> This constant melt rate is set by adding a selector field for the
+!> parameterization type (constant, linear function): paramType
+!> and a constantValue field for the constant melt rate values.
+!> These last two parameters can be modified to be more universal
+!> outside of this subroutine if relevant.
 
 !-----------------------------------------------------------------------
 
     subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                    config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1, draftDepenBasalMelt_minDraft, err)
+                    config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1, &
+                    draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantValue, err)
 
       !-----------------------------------------------------------------
       ! input variables
@@ -644,6 +655,8 @@ module li_iceshelf_melt
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMeltAlpha1  ! slope for (linear) draft dependent parameterization of basal melt 
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMeltAlpha0  ! intercept for (linear) draft dependent parameterization of basal melt
       real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_minDraft ! min draft at which (linear) draft dependent parameterization of basal melt is valid
+      real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_paramType ! parameterization selector field (linear dependence = 0, constant value = 1)
+      real (kind=RKIND), dimension(:), pointer :: draftDepenBasalMelt_constantValue ! constant melt rate value for selected ice shelves/regions
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
@@ -671,16 +684,19 @@ module li_iceshelf_melt
             ! ice is present and floating
             zDraft = lowerSurface(iCell) - config_sea_level
             ! If the draft is deeper than or equal to the minimum threshold, apply linear draft dependence
-            if (zDraft >= draftDepenBasalMelt_minDraft(iCell)) then
-               ! Linear draft dependence: melt = alpha0 + alpha1 * draft
-               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + zDraft * draftDepenBasalMeltAlpha1(iCell)
+            if (nint(draftDepenBasalMelt_paramType(iCell)) == 1) then 
+               ! No linear draft dependence, set a constant melt rate
+               ! value melt = constantValue
+               floatingBasalMassBal(iCell) = draftDepenBasalMelt_constantValue(iCell)
             else
+               ! Linear draft dependence: melt = alpha0 + alpha1 * draft
+               ! at deeper drafts (zDraft > minDraft)
                ! For shallower draft, use a melt rate calculated for the minDraft threshold
-               ! TODO: Add options for shallow draft melt rate to be set to constant values (0,or ice shelf mean melt rates)
-               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + draftDepenBasalMelt_minDraft(iCell) * draftDepenBasalMeltAlpha1(iCell)
-            end if   ! linear dependence cutoff draft 
+               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + max(zDraft, draftDepenBasalMelt_minDraft(iCell)) * draftDepenBasalMeltAlpha1(iCell)
+            end if   ! linear dependence selector
          endif   ! ice is floating
       enddo   ! iCell
+
 
       ! change units from m/yr to kg/m2/s
 
