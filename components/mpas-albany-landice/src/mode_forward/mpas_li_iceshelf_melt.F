@@ -690,15 +690,17 @@ module li_iceshelf_melt
                floatingBasalMassBal(iCell) = draftDepenBasalMelt_constantMeltValue(iCell)
             else
                ! Linear draft dependence: melt = alpha0 + alpha1 * draft
-               ! at deeper drafts (zDraft > minDraft)
+               ! at deeper drafts (zDraft > minDraft) minDraft is
+               ! defined as negative values.
                ! For shallower draft, use a melt rate calculated for the minDraft threshold
-               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + max(zDraft, draftDepenBasalMelt_minDraft(iCell)) * draftDepenBasalMeltAlpha1(iCell)
+               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + min(zDraft, draftDepenBasalMelt_minDraft(iCell)) * draftDepenBasalMeltAlpha1(iCell)
             end if   ! linear dependence selector
          endif   ! ice is floating
       enddo   ! iCell
 
 
       ! change units from m/yr to kg/m2/s
+      floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density / scyr
 
 
     end subroutine basal_melt_draft_dependence
