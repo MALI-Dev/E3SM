@@ -637,8 +637,11 @@ module li_iceshelf_melt
 !-----------------------------------------------------------------------
 
     subroutine basal_melt_draft_dependence(floatingBasalMassBal, daysSinceStart, lowerSurface, cellMask, &
-                    config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha0, draftDepenBasalMeltAlpha1, &
+                    config_sea_level, config_ice_density, nCellsSolve, draftDepenBasalMeltAlpha1, draftDepenBasalMeltAlpha0, &
                     draftDepenBasalMelt_minDraft, draftDepenBasalMelt_paramType, draftDepenBasalMelt_constantMeltValue, err)
+
+      use mpas_log, only: mpas_log_write
+      implicit none
 
       !-----------------------------------------------------------------
       ! input variables
@@ -673,6 +676,20 @@ module li_iceshelf_melt
       !-----------------------------------------------------------------
       real(kind=RKIND) :: zDraft                ! draft of floating ice (m below sea level)
       integer :: iCell
+      logical :: print_debug
+
+      ! Ranges for sanity checks (SI units) and debugging, min, max
+      ! values defined from original parameter fields before
+      ! interpolation onto MPAS grid.
+      real(kind=RKIND), parameter :: alpha0Min = -0.0008_RKIND
+      real(kind=RKIND), parameter :: alpha0Max = 0.002_RKIND
+      real(kind=RKIND), parameter :: alpha1Min = -5e-06_RKIND
+      real(kind=RKIND), parameter :: alpha1Max = 10.e-07_RKIND
+      real(kind=RKIND), parameter :: constantMeltMin = -0.0008_RKIND
+      real(kind=RKIND), parameter :: constantMeltMax = 0.0005_RKIND
+      real(kind=RKIND), parameter :: minDraftMin = -2500._RKIND
+      real(kind=RKIND), parameter :: minDraftMax = -0.0_RKIND
+      real(kind=RKIND), parameter :: meltMaxAbs = 0.01_RKIND ! kg/m2/s
 
       err = 0
 
@@ -683,6 +700,40 @@ module li_iceshelf_melt
          if ( li_mask_is_floating_ice(cellMask(iCell))) then
             ! ice is present and floating
             zDraft = lowerSurface(iCell) - config_sea_level
+
+            ! Logs for debugging. 
+            if (nint(draftDepenBasalMelt_paramType(iCell)) /= 0 .and. nint(draftDepenBasalMelt_paramType(iCell)) /= 1) then
+               call mpas_log_write('Warning: paramType not 0 or 1 at iCell=$i value=$r', &
+                    intArgs=(/iCell/), realArgs=(/draftDepenBasalMelt_paramType(iCell)/))
+            end if
+
+            if (draftDepenBasalMeltAlpha0(iCell) < alpha0Min .or. draftDepenBasalMeltAlpha0(iCell) > alpha0Max) then
+               call mpas_log_write('Warning: alpha0 out of range at iCell=$i value=$r', &
+                    intArgs=(/iCell/), realArgs=(/draftDepenBasalMeltAlpha0(iCell)/))
+            end if
+
+            if (draftDepenBasalMeltAlpha1(iCell) < alpha1Min .or. draftDepenBasalMeltAlpha1(iCell) > alpha1Max) then
+               call mpas_log_write('Warning: alpha1 out of range at iCell=$i value=$r', &
+                    intArgs=(/iCell/), realArgs=(/draftDepenBasalMeltAlpha1(iCell)/))
+            end if
+
+            if (draftDepenBasalMelt_constantMeltValue(iCell) < constantMeltMin .or. &
+                draftDepenBasalMelt_constantMeltValue(iCell) > constantMeltMax) then
+               call mpas_log_write('Warning: constantMeltValue out of range at iCell=$i value=$r', &
+                    intArgs=(/iCell/), realArgs=(/draftDepenBasalMelt_constantMeltValue(iCell)/))
+            end if
+
+            if (draftDepenBasalMelt_minDraft(iCell) > minDraftMax .or. draftDepenBasalMelt_minDraft(iCell) < minDraftMin) then
+               call mpas_log_write('Warning: minDraft out of expected range at iCell=$i value=$r', &
+                    intArgs=(/iCell/), realArgs=(/draftDepenBasalMelt_minDraft(iCell)/))
+            end if
+
+            if (zDraft > 0.0_RKIND) then
+               call mpas_log_write('Warning: zDraft is positive at iCell=$i value=$r', &
+                    intArgs=(/iCell/), realArgs=(/zDraft/))
+            end if     
+
+            ! --- Compute melt ---
             ! If the draft is deeper than or equal to the minimum threshold, apply linear draft dependence
             if (nint(draftDepenBasalMelt_paramType(iCell)) == 1) then 
                ! No linear draft dependence, set a constant melt rate
@@ -690,17 +741,26 @@ module li_iceshelf_melt
                floatingBasalMassBal(iCell) = draftDepenBasalMelt_constantMeltValue(iCell)
             else
                ! Linear draft dependence: melt = alpha0 + alpha1 * draft
-               ! at deeper drafts (zDraft > minDraft) minDraft is
-               ! defined as negative values.
+               ! at deeper drafts (zDraft > minDraft)
+               ! Calculation is performed by comparing absolute
+               ! magnitudes of zDraft and minDraft, 
+               ! TODO: Clean up for final version after diagnostic checks.
                ! For shallower draft, use a melt rate calculated for the minDraft threshold
-               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + min(zDraft, draftDepenBasalMelt_minDraft(iCell)) * draftDepenBasalMeltAlpha1(iCell)
+               floatingBasalMassBal(iCell) = draftDepenBasalMeltAlpha0(iCell) + max(abs(zDraft), abs(draftDepenBasalMelt_minDraft(iCell))) * draftDepenBasalMeltAlpha1(iCell)
             end if   ! linear dependence selector
+
+            ! --- Check for unreasonable melt rates ---
+            if (abs(floatingBasalMassBal(iCell)) > meltMaxAbs) then
+               call mpas_log_write('Warning: melt rate out of range at iCell=$i melt=$r', &
+                    intArgs=(/iCell/), realArgs=(/floatingBasalMassBal(iCell)/))
+            end if
          endif   ! ice is floating
       enddo   ! iCell
 
 
-      ! change units from m/yr to kg/m2/s
-      floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density / scyr
+      ! change units from m/yr to kg/m2/s. Uncomment below if using
+      ! m/yr. Not required if using SI units.
+      ! floatingBasalMassBal(:) = floatingBasalMassBal(:) * config_ice_density / scyr
 
 
     end subroutine basal_melt_draft_dependence
