@@ -287,6 +287,7 @@ module li_subglacial_hydro
       logical, pointer :: config_ocean_connection_N
       logical, pointer :: config_SGH_chnl_active
       character (len=StrKIND), pointer :: config_SGH_basal_melt
+      integer, pointer :: config_num_halos
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: hydroPool
@@ -332,6 +333,8 @@ module li_subglacial_hydro
       real (kind=RKIND) :: timeLeft ! subcycling time remaining until master dt is reached
       real (kind=RKIND) :: deltatSGHaccumulated
       integer :: numSubCycles ! number of subcycles
+      integer :: subcycle_halo_count, subcycle_halo_reset_count
+      logical :: update_halos
       integer :: err_tmp
 
       err = 0
@@ -354,6 +357,7 @@ module li_subglacial_hydro
       call mpas_pool_get_config(liConfigs, 'config_SGH_till_drainage', Cd)
       call mpas_pool_get_config(liConfigs, 'config_SGH_till_max', tillMax)
       call mpas_pool_get_config(liConfigs, 'config_SGH_basal_melt', config_SGH_basal_melt)
+      call mpas_pool_get_config(liConfigs, 'config_num_halos', config_num_halos)
 
       block => domain % blocklist
       do while (associated(block))
@@ -437,6 +441,10 @@ module li_subglacial_hydro
       endif
 
 
+      subcycle_halo_count = 999
+      subcycle_halo_reset_count = config_num_halos - 4
+      update_halos = .false.
+
 
       ! =============
       ! =============
@@ -448,6 +456,15 @@ module li_subglacial_hydro
       timecycling: do while (timeLeft > 0.0_RKIND)
       numSubCycles = numSubCycles + 1
 
+      !call mpas_log_write("numSubCycles=$i; subcycle_halo_count=$i", intArgs=(/numSubCycles, subcycle_halo_count/))
+      if (subcycle_halo_count >= subcycle_halo_reset_count) then
+         update_halos = .true.
+         subcycle_halo_count = 1
+      else
+         update_halos = .false.
+         subcycle_halo_count = subcycle_halo_count + 1
+      endif
+      !if (update_halos) call mpas_log_write("updating halos")
 
       ! apply shmip forcing if needed
       block => domain % blocklist
@@ -498,12 +515,14 @@ module li_subglacial_hydro
          block => block % next
       end do
       ! Update halos on edge quantities
-      call mpas_timer_start("halo updates")
-      call mpas_dmpar_field_halo_exch(domain, 'waterFlux')
-      ! intermediate fields will be out of date, but will be correct in output files
-      ! waterVelocity needs to be updated in order to get waterVelocityCellX/Y correct
-      call mpas_dmpar_field_halo_exch(domain, 'waterVelocity')
-      call mpas_timer_stop("halo updates")
+      if (update_halos) then
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'waterFlux')
+         ! intermediate fields will be out of date, but will be correct in output files
+         ! waterVelocity needs to be updated in order to get waterVelocityCellX/Y correct
+         call mpas_dmpar_field_halo_exch(domain, 'waterVelocity')
+         call mpas_timer_stop("halo updates")
+      endif
 
       ! Calculate reconstructed velocities on cell centers for viz
       block => domain % blocklist
@@ -539,13 +558,15 @@ module li_subglacial_hydro
 
             block => block % next
          end do
-         ! Update halos on channel
-         call mpas_timer_start("halo updates")
-         call mpas_dmpar_field_halo_exch(domain, 'channelChangeRate')
-         call mpas_dmpar_field_halo_exch(domain, 'channelDischarge')
-         call mpas_dmpar_field_halo_exch(domain, 'channelMelt')
-         call mpas_dmpar_field_halo_exch(domain, 'channelPressureFreeze')
-         call mpas_timer_stop("halo updates")
+         if (update_halos) then
+            ! Update halos on channel
+            call mpas_timer_start("halo updates")
+            call mpas_dmpar_field_halo_exch(domain, 'channelChangeRate')
+            call mpas_dmpar_field_halo_exch(domain, 'channelDischarge')
+            call mpas_dmpar_field_halo_exch(domain, 'channelMelt')
+            call mpas_dmpar_field_halo_exch(domain, 'channelPressureFreeze')
+            call mpas_timer_stop("halo updates")
+         endif
       endif
 
 
@@ -569,7 +590,7 @@ module li_subglacial_hydro
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_array(hydroPool, 'divergence', divergence)
          call mpas_pool_get_array(hydroPool, 'waterFlux', waterFlux)
-         call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
+         call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
          call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
          call mpas_pool_get_array(meshPool, 'dvEdge', dvEdge)
          call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
@@ -580,7 +601,7 @@ module li_subglacial_hydro
 
          divergence(:) = 0.0_RKIND  ! zero div before starting
          ! loop over locally owned cells
-         do iCell = 1, nCellsSolve
+         do iCell = 1, nCells
             if (li_mask_is_grounded_ice(cellMask(iCell))) then  ! can skip for non-grounded ice
                ! compute fluxes for each edge of the cell
                do iEdgeOnCell = 1, nEdgesOnCell(iCell)
@@ -590,14 +611,16 @@ module li_subglacial_hydro
                end do ! edges
             end if
          end do ! cells
-         divergence(1:nCellsSolve) = divergence(1:nCellsSolve) / areaCell(1:nCellsSolve)
+         divergence(1:nCells) = divergence(1:nCells) / areaCell(1:nCells)
 
          block => block % next
       end do
       ! Update halos on divergence
-      call mpas_timer_start("halo updates")
-      call mpas_dmpar_field_halo_exch(domain, 'divergence')
-      call mpas_timer_stop("halo updates")
+      if (update_halos) then
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'divergence')
+         call mpas_timer_stop("halo updates")
+      endif
 
 
       ! =============
@@ -612,12 +635,14 @@ module li_subglacial_hydro
 
             block => block % next
          end do
-         call mpas_timer_start("halo updates")
-         call mpas_dmpar_field_halo_exch(domain, 'divergenceChannel')
-         call mpas_dmpar_field_halo_exch(domain, 'channelAreaChangeCell')
-         call mpas_dmpar_field_halo_exch(domain, 'channelMeltInputCell')
-         call mpas_dmpar_field_halo_exch(domain, 'channelArea')
-         call mpas_timer_stop("halo updates")
+         if (update_halos) then
+            call mpas_timer_start("halo updates")
+            call mpas_dmpar_field_halo_exch(domain, 'divergenceChannel')
+            call mpas_dmpar_field_halo_exch(domain, 'channelAreaChangeCell')
+            call mpas_dmpar_field_halo_exch(domain, 'channelMeltInputCell')
+            call mpas_dmpar_field_halo_exch(domain, 'channelArea')
+            call mpas_timer_stop("halo updates")
+         endif
       endif
 
       ! =============
@@ -699,9 +724,11 @@ module li_subglacial_hydro
       end do
 
       !updates halos for waterPressure
-      call mpas_timer_start("halo updates")
-      call mpas_dmpar_field_halo_exch(domain, 'waterPressureSmooth')
-      call mpas_timer_stop("halo updates")
+      if (update_halos) then
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'waterPressureSmooth')
+         call mpas_timer_stop("halo updates")
+      endif
 
       !Average effectivePressureSGH over coupling interval for use in dynamics model 
       block => domain % blocklist
@@ -1081,10 +1108,10 @@ module li_subglacial_hydro
       case ('from_normal_slope')
          ! Do first with hydropotentialBase
          call mpas_tangential_vector_1d(hydropotentialBaseSlopeNormal, meshPool, &
-         includeHalo=.false., tangentialVector=hydropotentialBaseSlopeTangent)
+         includeHalo=.true., tangentialVector=hydropotentialBaseSlopeTangent)
          ! Repeat for full hydropotential
          call mpas_tangential_vector_1d(hydropotentialSlopeNormal, meshPool, &
-         includeHalo=.false., tangentialVector=hydropotentialSlopeTangent)
+         includeHalo=.true., tangentialVector=hydropotentialSlopeTangent)
          ! ensure that edges that don't have ice on at least one side have tangent slope set to zero
          do iEdge = 1, nEdges
             if ( .not. li_mask_is_ice(edgeMask(iEdge)) ) then
@@ -1875,7 +1902,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, pointer :: nVertLevels
-      integer, pointer :: nEdgesSolve
+      integer, pointer :: nEdges
       integer :: iEdge, cell1, cell2
 
       err = 0
@@ -1893,7 +1920,7 @@ module li_subglacial_hydro
       call mpas_pool_get_config(liConfigs, 'config_SGH_incipient_channel_width', config_SGH_incipient_channel_width)
       call mpas_pool_get_config(liConfigs, 'config_SGH_include_pressure_melt', config_SGH_include_pressure_melt)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
-      call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
+      call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
       call mpas_pool_get_array(hydroPool, 'channelArea', channelArea)
       call mpas_pool_get_array(hydroPool, 'channelMelt', channelMelt)
       call mpas_pool_get_array(hydroPool, 'channelPressureFreeze', channelPressureFreeze)
@@ -1968,7 +1995,7 @@ module li_subglacial_hydro
 
       ! Calculate terms needed for closing (creep) rate
       ! Need cell center quantities on edges
-      do iEdge = 1, nEdgesSolve
+      do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
          cell2 = cellsOnEdge(2, iEdge)
 
@@ -2036,7 +2063,7 @@ module li_subglacial_hydro
       integer, dimension(:,:), pointer :: edgeSignOnCell
       real (kind=RKIND), dimension(:), pointer :: areaCell
       real (kind=RKIND), dimension(:), pointer :: dcEdge
-      integer, pointer :: nCellsSolve
+      integer, pointer :: nCells
       integer :: iCell, iEdgeOnCell, iEdge
 
       call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
@@ -2050,7 +2077,7 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'divergenceChannel', divergenceChannel)
       call mpas_pool_get_array(hydroPool, 'channelAreaChangeCell', channelAreaChangeCell)
       call mpas_pool_get_array(hydroPool, 'channelMeltInputCell', channelMeltInputCell)
-      call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(meshPool, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
@@ -2063,7 +2090,7 @@ module li_subglacial_hydro
       channelAreaChangeCell(:) = 0.0_RKIND  ! zero before accumulating
       channelMeltInputCell(:) = 0.0_RKIND  ! zero before accumulating
       ! loop over locally owned cells
-      do iCell = 1, nCellsSolve
+      do iCell = 1, nCells
          ! TODO: could limit to grounded cells only
          ! compute fluxes for each edge of the cell
          do iEdgeOnCell = 1, nEdgesOnCell(iCell)
@@ -2076,9 +2103,9 @@ module li_subglacial_hydro
          end do ! edges
 
       end do ! cells
-      divergenceChannel(1:nCellsSolve) = divergenceChannel(1:nCellsSolve) / areaCell(1:nCellsSolve)
-      channelAreaChangeCell(1:nCellsSolve) = channelAreaChangeCell(1:nCellsSolve) / areaCell(1:nCellsSolve)
-      channelMeltInputCell(1:nCellsSolve) = channelMeltInputCell(1:nCellsSolve) / areaCell(1:nCellsSolve)
+      divergenceChannel(1:nCells) = divergenceChannel(1:nCells) / areaCell(1:nCells)
+      channelAreaChangeCell(1:nCells) = channelAreaChangeCell(1:nCells) / areaCell(1:nCells)
+      channelMeltInputCell(1:nCells) = channelMeltInputCell(1:nCells) / areaCell(1:nCells)
 
       ! Now update channel area
       channelArea = channelChangeRate * deltatSGH + channelArea
@@ -2331,7 +2358,7 @@ module li_subglacial_hydro
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, dimension(:), pointer :: cellMask
       integer, dimension(:), pointer :: waterFluxMask
-      integer, pointer :: nEdgesSolve
+      integer, pointer :: nEdges
       integer, pointer :: nCells
       integer :: cell1, cell2, iEdge
       real (kind=RKIND), pointer :: config_sea_level
@@ -2350,14 +2377,14 @@ module li_subglacial_hydro
          call mpas_pool_get_array(hydroPool, 'hydroTerrestrialMarginMask', hydroTerrestrialMarginMask)
          call mpas_pool_get_array(hydroPool, 'waterFluxMask', waterFluxMask)
          call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
-         call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
+         call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
 
          hydroMarineMarginMask(:) = 0
          hydroTerrestrialMarginMask(:) = 0
          wfmWarning = 0
 
-         do iEdge = 1, nEdgesSolve
+         do iEdge = 1, nEdges
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
 
