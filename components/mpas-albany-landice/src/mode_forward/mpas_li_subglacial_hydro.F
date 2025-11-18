@@ -1996,14 +1996,16 @@ module li_subglacial_hydro
       channelMelt = (abs(channelDischarge * hydropotentialSlopeNormal) &  ! channel dissipation
                   +  abs(waterFlux * hydropotentialSlopeNormal * config_SGH_incipient_channel_width) & !some sheet dissipation
                   ) / latent_heat_ice
-      ! disable channel melting above area limit
+      channelPressureFreeze = -1.0_RKIND * iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
+         channelDischarge * waterPressureSlopeNormal / latent_heat_ice
+      ! disable channel melting/freezing above area limit
       do iEdge = 1, nEdgesSolve
          if (channelArea(iEdge) > config_SGH_chnl_area_shutoff) then
             channelMelt(iEdge) = 0.0_RKIND
+            ! includes pressure freeze term too, because it can have either sign
+            channelPressureFreeze(iEdge) = 0.0_RKIND
          endif
       enddo
-      channelPressureFreeze = -1.0_RKIND * iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
-         channelDischarge * waterPressureSlopeNormal / latent_heat_ice
 
       if (config_SGH_include_pressure_melt) then
          channelOpeningRate = (channelMelt - channelPressureFreeze) / rhoi
