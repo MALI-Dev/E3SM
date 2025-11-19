@@ -997,6 +997,7 @@ module li_subglacial_hydro
       ! This one-sided implementation also creates outflowing conditions at terrestrial boundary
       do iEdge = 1, nEdges
          if (hydroTerrestrialMarginMask(iEdge) == 1) then
+            waterPressureSlopeNormal(iEdge) = 0.0_RKIND
             if (config_SGH_allow_terrestrial_outflow) then
                cell1 = cellsOnEdge(1, iEdge)
                cell2 = cellsOnEdge(2, iEdge)
@@ -1008,7 +1009,6 @@ module li_subglacial_hydro
                      ! If bare ground elevation is higher than elevation beneath the ice, no flux
                      hydropotentialBaseSlopeNormal(iEdge) = 0.0_RKIND
                      hydropotentialSlopeNormal(iEdge) = 0.0_RKIND
-                     waterPressureSlopeNormal(iEdge) = 0.0_RKIND
                   endif
                else ! cell1 is the icefree cell - replace phi there with cell2 Phig
                   if (bedTopography(cell1) < bedTopography(cell2)) then
@@ -1018,13 +1018,11 @@ module li_subglacial_hydro
                      ! If bare ground elevation is higher than elevation beneath the ice, no flux
                      hydropotentialBaseSlopeNormal(iEdge) = 0.0_RKIND
                      hydropotentialSlopeNormal(iEdge) = 0.0_RKIND
-                     waterPressureSlopeNormal(iEdge) = 0.0_RKIND
                   endif
                endif ! which cell is icefree
             else ! if disallow terrestrial outflow
                hydropotentialBaseSlopeNormal(iEdge) = 0.0_RKIND
                hydropotentialSlopeNormal(iEdge) = 0.0_RKIND
-               waterPressureSlopeNormal(iEdge) = 0.0_RKIND
             endif ! if allow terrestrial outflow
          endif ! if edge of grounded ice
       end do
@@ -1032,6 +1030,8 @@ module li_subglacial_hydro
       ! Disallow inflow from the marine margin by imposing a minimum outflowing hydropotential gradient at the grounding line.
       do iEdge = 1, nEdges
          if ( hydroMarineMarginMask(iEdge) == 1) then
+            waterPressureSlopeNormal(iEdge) = 0.0_RKIND
+
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
             if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the cell outside the hydro domain
