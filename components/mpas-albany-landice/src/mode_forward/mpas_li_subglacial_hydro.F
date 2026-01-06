@@ -2084,6 +2084,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: dcEdge
       integer, pointer :: nCellsSolve
       integer :: iCell, iEdgeOnCell, iEdge
+      logical, pointer :: config_SGH_include_pressure_melt
+      real (kind=RKIND) :: usePressFrz
 
       call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
       call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
@@ -2104,10 +2106,18 @@ module li_subglacial_hydro
       call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
       call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
 
+      call mpas_pool_get_config(liConfigs, 'config_SGH_include_pressure_melt', config_SGH_include_pressure_melt)
+      if (config_SGH_include_pressure_melt) then
+         usePressFrz = 1.0_RKIND
+      else
+         usePressFrz = 0.0_RKIND
+      endif
+
       ! Calculate flux divergence on cells and channel area change on cells
       divergenceChannel(:) = 0.0_RKIND  ! zero div before accumulating
       channelAreaChangeCell(:) = 0.0_RKIND  ! zero before accumulating
       channelMeltInputCell(:) = 0.0_RKIND  ! zero before accumulating
+
       ! loop over locally owned cells
       do iCell = 1, nCellsSolve
          ! TODO: could limit to grounded cells only
@@ -2118,7 +2128,9 @@ module li_subglacial_hydro
             divergenceChannel(iCell) = divergenceChannel(iCell) - channelDischarge(iEdge) * edgeSignOnCell(iEdgeOnCell, iCell)
             channelAreaChangeCell(iCell) = channelChangeRate(iEdge) * dcEdge(iEdge) * 0.5_RKIND + channelAreaChangeCell(iCell)
                ! < only half of channel is in this cell
-            channelMeltInputCell(iCell) = 0.5_RKIND * (channelMelt(iEdge) - channelPressureFreeze(iEdge)) * dcEdge(iEdge) / rho_water + channelMeltInputCell(iCell)
+            channelMeltInputCell(iCell) = 0.5_RKIND * &
+                    (channelMelt(iEdge) - usePressFrz * channelPressureFreeze(iEdge)) * dcEdge(iEdge) / rho_water &
+                    + channelMeltInputCell(iCell)
          end do ! edges
 
       end do ! cells
