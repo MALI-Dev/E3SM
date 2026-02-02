@@ -30,7 +30,6 @@ module li_subglacial_hydro
 
    use li_setup
    use li_constants
-   use li_mask
 
    implicit none
    private
@@ -169,10 +168,6 @@ module li_subglacial_hydro
             ! TODO: Move till update until after adaptive timestep has been set
             deltatSGH = 1.0e-4_RKIND ! in seconds
          endif
-
-         ! Mask needs to be initialized for pressure calcs to be correct
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
-         err = ior(err, err_tmp)
 
          call calc_hydro_mask(domain)
 
