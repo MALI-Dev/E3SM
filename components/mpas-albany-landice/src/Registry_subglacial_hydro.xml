@@ -167,6 +167,10 @@
                 <!-- state vars -->
 		<var name="iceThicknessHydro" type="real" dimensions="nCells Time" units="m"
 			description="ice thickness used by the hydrology model. Same as 'thickness' but with potential differences along domain boundaries that inhibit the formation of local hydropotential minima on boundaries." />
+		<var name="hydroDomainCell" type="integer" dimensions="nCells Time"
+                     description="logical mask of cells where subglacial hydrology model is active" />
+		<var name="hydroDomainEdge" type="integer" dimensions="nCells Time"
+                     description="logical mask of edges where subglacial hydrology model is active" />
 		<var name="flowAHydro" type="real" dimensions="nCells Time" units="s^-1 Pa^-n" default_value="3.1709792e-24"
                         description="flow parameter A value used by subglacial hydrology model" />
                 <var name="waterThickness" type="real" dimensions="nCells Time" units="m" default_value="0.01"
