@@ -343,14 +343,18 @@ module li_subglacial_hydro
          return
       endif
 
+      call mpas_log_write('Beginning subglacial hydro solve.')
+
       call calc_hydro_mask(domain)
 
-      call mpas_log_write('Beginning subglacial hydro solve.')
       call mpas_pool_get_config(liConfigs, 'config_SGH_chnl_active', config_SGH_chnl_active)
       call mpas_pool_get_config(liConfigs, 'config_SGH_till_drainage', Cd)
       call mpas_pool_get_config(liConfigs, 'config_SGH_till_max', tillMax)
       call mpas_pool_get_config(liConfigs, 'config_SGH_basal_melt', config_SGH_basal_melt)
       call mpas_pool_get_config(liConfigs, 'config_SGH_flowA_source', config_SGH_flowA_source)
+
+      call set_up_hydro_forcing(domain, err_tmp)
+      err = ior(err, err_tmp)
 
       block => domain % blocklist
       do while (associated(block))
@@ -756,6 +760,9 @@ module li_subglacial_hydro
 
       call mpas_log_write("Hydro model subcycled $i times.", intArgs=(/numSubCycles/))
 
+      ! Now that we are out of the subcycling loop, do end-of-step operations
+      call clean_up_hydro_forcing(domain, err_tmp)
+      err = ior(err, err_tmp)
 
       ! === error check
       if (err > 0) then
@@ -2818,5 +2825,266 @@ module li_subglacial_hydro
       
       deallocate(pressureField)
    end subroutine calc_waterPressureSmooth
+
+
+
+!***********************************************************************
+!
+!  routine set_up_hydro_forcing
+!
+!> \brief   Sets up hydrology forcing fields that will be interpolated
+!>          during subcycles
+!> \author  Matt Hoffman
+!> \date    02 February 2026
+!> \details ...
+!-----------------------------------------------------------------------
+   subroutine set_up_hydro_forcing(domain, err)
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain    !< Input/Output: domain object
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: err !< Output: error flag
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: geometryPool
+      type (mpas_pool_type), pointer :: velocityPool
+
+      ! fields:
+      type (field1dReal), pointer :: iceThicknessHydroNowField
+      type (field1dReal), pointer :: bedTopographyNowField
+      type (field1dReal), pointer :: basalSpeedNowField
+      type (field1dReal), pointer :: flowAHydroNowField
+      type (field1dReal), pointer :: basalMeltInputNowField
+      type (field1dReal), pointer :: externalWaterInputNowField
+
+      err = 0
+
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'hydro', hydroPool)
+
+      ! Allocate scratch fields.  These will remain allocated until the end of li_SGH_solve.
+      call mpas_pool_get_field(hydroPool, 'iceThicknessHydroNow', iceThicknessHydroNowField)
+      call mpas_allocate_scratch_field(iceThicknessHydroNowField, single_block_in = .true.)
+
+      call mpas_pool_get_field(hydroPool, 'bedTopographyNow', bedTopographyNowField)
+      call mpas_allocate_scratch_field(bedTopographyNowField, single_block_in = .true.)
+
+      call mpas_pool_get_field(hydroPool, 'basalSpeedNow', basalSpeedNowField)
+      call mpas_allocate_scratch_field(basalSpeedNowField, single_block_in = .true.)
+
+      call mpas_pool_get_field(hydroPool, 'flowAHydroNow', flowAHydroNowField)
+      call mpas_allocate_scratch_field(flowAHydroNowField, single_block_in = .true.)
+
+      call mpas_pool_get_field(hydroPool, 'basalMeltInputNow', basalMeltInputNowField)
+      call mpas_allocate_scratch_field(basalMeltInputNowField, single_block_in = .true.)
+
+      call mpas_pool_get_field(hydroPool, 'externalWaterInputNow', externalWaterInputNowField)
+      call mpas_allocate_scratch_field(externalWaterInputNowField, single_block_in = .true.)
+   
+   end subroutine set_up_hydro_forcing
+
+
+!***********************************************************************
+!
+!  routine interpolate_hydro_forcing
+!
+!> \brief   Interpolates hydrology forcing fields during subcycles
+!> \author  Matt Hoffman
+!> \date    02 February 2026
+!> \details ...
+!-----------------------------------------------------------------------
+   subroutine interpolate_hydro_forcing(domain, deltat, deltatSGHaccumulated, err)
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+      real (kind=RKIND), intent(in) :: deltat                  !< Input: master time step length
+      real (kind=RKIND), intent(in) :: deltatSGHaccumulated  !< Input: accumulated time in subglacial hydrology subcycles
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain    !< Input/Output: domain object
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: err !< Output: error flag
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: geometryPool
+      type (mpas_pool_type), pointer :: velocityPool
+      ! arrays at current master time level:
+      real (kind=RKIND), dimension(:), pointer :: iceThicknessHydro
+      real (kind=RKIND), dimension(:), pointer :: bedTopography
+      real (kind=RKIND), dimension(:), pointer :: basalSpeed
+      real (kind=RKIND), dimension(:), pointer :: flowAHydro
+      real (kind=RKIND), dimension(:), pointer :: basalMeltInput
+      real (kind=RKIND), dimension(:), pointer :: externalWaterInput
+      ! arrays at previous master time level:
+      real (kind=RKIND), dimension(:), pointer :: iceThicknessHydroPrev
+      real (kind=RKIND), dimension(:), pointer :: bedTopographyPrev
+      real (kind=RKIND), dimension(:), pointer :: basalSpeedPrev
+      real (kind=RKIND), dimension(:), pointer :: flowAHydroPrev
+      real (kind=RKIND), dimension(:), pointer :: basalMeltInputPrev
+      real (kind=RKIND), dimension(:), pointer :: externalWaterInputPrev
+      ! arrays at current subcycle:
+      real (kind=RKIND), dimension(:), pointer :: iceThicknessHydroNow
+      real (kind=RKIND), dimension(:), pointer :: bedTopographyNow
+      real (kind=RKIND), dimension(:), pointer :: basalSpeedNow
+      real (kind=RKIND), dimension(:), pointer :: flowAHydroNow
+      real (kind=RKIND), dimension(:), pointer :: basalMeltInputNow
+      real (kind=RKIND), dimension(:), pointer :: externalWaterInputNow
+      ! other local variables
+      real (kind=RKIND) :: dtFraction
+
+      err = 0
+
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'hydro', hydroPool)
+      ! get arrays at current master time level
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
+      call mpas_pool_get_array(hydroPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(hydroPool, 'basalSpeed', basalSpeed)
+      call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
+      call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
+      call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
+      ! get arrays at previous master time level
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroPrev', iceThicknessHydroPrev)
+      call mpas_pool_get_array(hydroPool, 'bedTopographyPrev', bedTopographyPrev)
+      call mpas_pool_get_array(hydroPool, 'basalSpeedPrev', basalSpeedPrev)
+      call mpas_pool_get_array(hydroPool, 'flowAHydroPrev', flowAHydroPrev)
+      call mpas_pool_get_array(hydroPool, 'basalMeltInputPrev', basalMeltInputPrev)
+      call mpas_pool_get_array(hydroPool, 'externalWaterInputPrev', externalWaterInputPrev)
+      ! get arrays at current subcycle
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroNow', iceThicknessHydroNow)
+      call mpas_pool_get_array(hydroPool, 'bedTopographyNow', bedTopographyNow)
+      call mpas_pool_get_array(hydroPool, 'basalSpeedNow', basalSpeedNow)
+      call mpas_pool_get_array(hydroPool, 'flowAHydroNow', flowAHydroNow)
+      call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInputNow)
+      call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInputNow)
+
+      ! linear interpolation between previous and current master time levels
+      dtFraction = deltatSGHaccumulated / deltat
+      iceThicknessHydroNow(:) = iceThicknessHydroPrev(:) + &
+         (iceThicknessHydro(:) - iceThicknessHydroPrev(:)) * dtFraction
+      bedTopographyNow(:) = bedTopographyPrev(:) + &
+         (bedTopography(:) - bedTopographyPrev(:)) * dtFraction
+      basalSpeedNow(:) = basalSpeedPrev(:) + &
+         (basalSpeed(:) - basalSpeedPrev(:)) * dtFraction
+      flowAHydroNow(:) = flowAHydroPrev(:) + &
+         (flowAHydro(:) - flowAHydroPrev(:)) * dtFraction
+      basalMeltInputNow(:) = basalMeltInputPrev(:) + &
+         (basalMeltInput(:) - basalMeltInputPrev(:)) * dtFraction
+      externalWaterInputNow(:) = externalWaterInputPrev(:) + &
+         (externalWaterInput(:) - externalWaterInputPrev(:)) * dtFraction
+
+   end subroutine interpolate_hydro_forcing
+
+
+!***********************************************************************
+!
+!  routine clean_up_hydro_forcing
+!
+!> \brief   Cleans up hydrology forcing fields that were interpolated
+!>          during subcycles
+!> \author  Matt Hoffman
+!> \date    02 February 2026
+!> \details ...
+!-----------------------------------------------------------------------
+   subroutine clean_up_hydro_forcing(domain, err)
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain    !< Input/Output: domain object
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: err !< Output: error flag
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      type (mpas_pool_type), pointer :: hydroPool
+      ! fields
+      type (field1dReal), pointer :: iceThicknessHydroNowField
+      type (field1dReal), pointer :: bedTopographyNowField
+      type (field1dReal), pointer :: basalSpeedNowField
+      type (field1dReal), pointer :: flowAHydroNowField
+      type (field1dReal), pointer :: basalMeltInputNowField
+      type (field1dReal), pointer :: externalWaterInputNowField
+      ! arrays
+      real (kind=RKIND), dimension(:), pointer :: iceThicknessHydro
+      real (kind=RKIND), dimension(:), pointer :: bedTopography
+      real (kind=RKIND), dimension(:), pointer :: basalSpeed
+      real (kind=RKIND), dimension(:), pointer :: flowAHydro
+      real (kind=RKIND), dimension(:), pointer :: basalMeltInput
+      real (kind=RKIND), dimension(:), pointer :: externalWaterInput
+      real (kind=RKIND), dimension(:), pointer :: iceThicknessHydroPrev
+      real (kind=RKIND), dimension(:), pointer :: bedTopographyPrev
+      real (kind=RKIND), dimension(:), pointer :: basalSpeedPrev
+      real (kind=RKIND), dimension(:), pointer :: flowAHydroPrev
+      real (kind=RKIND), dimension(:), pointer :: basalMeltInputPrev
+      real (kind=RKIND), dimension(:), pointer :: externalWaterInputPrev
+
+      err = 0
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'hydro', hydroPool)
+
+      ! cycle current forcing gields to variables for previous time level
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
+      call mpas_pool_get_array(hydroPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(hydroPool, 'basalSpeed', basalSpeed)
+      call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
+      call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
+      call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroPrev', iceThicknessHydroPrev)
+      call mpas_pool_get_array(hydroPool, 'bedTopographyPrev', bedTopographyPrev)
+      call mpas_pool_get_array(hydroPool, 'basalSpeedPrev', basalSpeedPrev)
+      call mpas_pool_get_array(hydroPool, 'flowAHydroPrev', flowAHydroPrev)
+      call mpas_pool_get_array(hydroPool, 'basalMeltInputPrev', basalMeltInputPrev)
+      call mpas_pool_get_array(hydroPool, 'externalWaterInputPrev', externalWaterInputPrev)
+      iceThicknessHydroPrev(:) = iceThicknessHydro(:)
+      bedTopographyPrev(:) = bedTopography(:)
+      basalSpeedPrev(:) = basalSpeed(:)
+      flowAHydroPrev(:) = flowAHydro(:)
+      basalMeltInputPrev(:) = basalMeltInput(:)
+      externalWaterInputPrev(:) = externalWaterInput(:)
+
+      ! deallocate scratch fields
+      call mpas_pool_get_field(hydroPool, 'iceThicknessHydroNow', iceThicknessHydroNowField)
+      call mpas_deallocate_scratch_field(iceThicknessHydroNowField, single_block_in=.true.)
+
+      call mpas_pool_get_field(hydroPool, 'bedTopographyNow', bedTopographyNowField)
+      call mpas_deallocate_scratch_field(bedTopographyNowField, single_block_in=.true.)
+
+      call mpas_pool_get_field(hydroPool, 'basalSpeedNow', basalSpeedNowField)
+      call mpas_deallocate_scratch_field(basalSpeedNowField, single_block_in=.true.)
+
+      call mpas_pool_get_field(hydroPool, 'flowAHydroNow', flowAHydroNowField)
+      call mpas_deallocate_scratch_field(flowAHydroNowField, single_block_in=.true.)
+
+      call mpas_pool_get_field(hydroPool, 'basalMeltInputNow', basalMeltInputNowField)
+      call mpas_deallocate_scratch_field(basalMeltInputNowField, single_block_in=.true.)
+
+      call mpas_pool_get_field(hydroPool, 'externalWaterInputNow', externalWaterInputNowField)
+      call mpas_deallocate_scratch_field(externalWaterInputNowField, single_block_in=.true.)
+
+   end subroutine clean_up_hydro_forcing
 
 end module li_subglacial_hydro
