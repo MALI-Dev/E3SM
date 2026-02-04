@@ -257,7 +257,6 @@ module li_subglacial_hydro
 !-----------------------------------------------------------------------
    subroutine li_SGH_solve(domain, err)
       use mpas_vector_reconstruction
-      use li_diagnostic_vars
 
       !-----------------------------------------------------------------
       ! input variables
@@ -330,6 +329,7 @@ module li_subglacial_hydro
       integer :: iCell, iEdge, iEdgeOnCell
       real (kind=RKIND) :: timeLeft ! subcycling time remaining until master dt is reached
       real (kind=RKIND) :: deltatSGHaccumulated
+      real (kind=RKIND), pointer :: deltat
       integer :: numSubCycles ! number of subcycles
       integer :: err_tmp
 
@@ -385,6 +385,7 @@ module li_subglacial_hydro
       timecycling: do while (timeLeft > 0.0_RKIND)
       numSubCycles = numSubCycles + 1
 
+      call mpas_pool_get_array(meshPool, 'deltat', masterDeltat)
       call interpolate_hydro_forcing(domain, deltat, deltatSGHaccumulated, err_tmp)
       err = ior(err, err_tmp)
 
@@ -805,7 +806,7 @@ module li_subglacial_hydro
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: hydroPool
-      type (mpas_pool_type), pointer :: hydroPoolScratch
+      type (mpas_pool_type), pointer :: hydroScratchPool
       real (kind=RKIND), dimension(:), pointer :: bedTopography
       real (kind=RKIND), dimension(:), pointer :: hydropotentialBase
       real (kind=RKIND), dimension(:), pointer :: hydropotential
@@ -921,7 +922,7 @@ module li_subglacial_hydro
 
          !waterThicknessEdge(iEdge) = 0.5_RKIND * ( waterThickness(cell1) + waterThickness(cell2) )
          ! This version ignores the thickness where there is no grounded ice (one-sided average at margin)
-         numGroundedCells = hydroDomainCell(cell1) + hydroDomainCell(cell)
+         numGroundedCells = hydroDomainCell(cell1) + hydroDomainCell(cell2)
          if (numGroundedCells > 0) then
             ! Assuming here that waterThickness has been zeroed in non-grounded locations
             waterThicknessEdge(iEdge) = ( waterThickness(cell1) + waterThickness(cell2) ) / real(numGroundedCells)
@@ -2329,7 +2330,6 @@ module li_subglacial_hydro
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: hydroTerrestrialMarginMask
       integer, dimension(:,:), pointer :: cellsOnEdge
-      integer, dimension(:), pointer :: hydroDomainCell
       integer, dimension(:), pointer :: waterFluxMask
       integer, pointer :: nEdgesSolve
       integer, pointer :: nCells
@@ -2776,6 +2776,7 @@ module li_subglacial_hydro
 !> \details ...
 !-----------------------------------------------------------------------
    subroutine set_up_hydro_forcing(domain, err)
+      use li_diagnostic_vars
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
@@ -2812,9 +2813,9 @@ module li_subglacial_hydro
 
       ! arrays:
       real (kind=RKIND), dimension(:), pointer :: flowAHydro
-      real (kind=RKIND), dimension(:), pointer :: temperature
+      real (kind=RKIND), dimension(:,:), pointer :: temperature
       real (kind=RKIND), dimension(:), pointer :: thickness
-      real (kind=RKIND), dimension(:), pointer :: flowParamA
+      real (kind=RKIND), dimension(:,:), pointer :: flowParamA
       real (kind=RKIND), dimension(:), pointer :: basalMeltInput
       real (kind=RKIND), dimension(:), pointer :: groundedBasalMassBal
       real (kind=RKIND), dimension(:), pointer :: basalHeatFlux
@@ -2881,9 +2882,9 @@ module li_subglacial_hydro
          if (trim(config_SGH_flowA_source) == 'constant') then
             call mpas_pool_get_config(liConfigs, 'config_SGH_flowA_value', config_SGH_flowA_value)
             flowAHydro(:) = config_SGH_flowA_value
-         elseif (trim(config_SGH_flowA_source) == 'data' then
+         elseif (trim(config_SGH_flowA_source) == 'data') then
             ! do nothing - use value already in flowAHydro
-         elseif (trim(config_SGH_flowA_source) == 'flowParamA' then
+         elseif (trim(config_SGH_flowA_source) == 'flowParamA') then
             call mpas_pool_get_array(thermalPool, 'temperature', temperature)
             call mpas_pool_get_array(geometryPool, 'thickness', thickness)
             call mpas_pool_get_array(velocityPool, 'flowParamA', flowParamA)
