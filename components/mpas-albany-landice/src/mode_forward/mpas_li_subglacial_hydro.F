@@ -286,6 +286,7 @@ module li_subglacial_hydro
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroScratchPool
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: thermalPool
       type (mpas_pool_type), pointer :: velocityPool
@@ -408,12 +409,13 @@ module li_subglacial_hydro
 
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+         call mpas_pool_get_subpool(block % structs, 'hydroScratch', hydroScratchPool)
 
          call mpas_pool_get_array(hydroPool, 'tillWaterThickness', Wtill)
          call mpas_pool_get_array(hydroPool, 'tillWaterThicknessOld', WtillOld)
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
-         call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
-         call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
+         call mpas_pool_get_array(hydroScratchPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
+         call mpas_pool_get_array(hydroScratchPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
          call mpas_pool_get_array(hydroPool, 'hydroDomainCell', hydroDomainCell)
 
          WtillOld = Wtill
@@ -592,14 +594,15 @@ module li_subglacial_hydro
       do while (associated(block))
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+         call mpas_pool_get_subpool(block % structs, 'hydroScratch', hydroScratchPool)
          call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
          call mpas_pool_get_array(hydroPool, 'waterThicknessOld', waterThicknessOld)
          call mpas_pool_get_array(hydroPool, 'waterThicknessTendency', waterThicknessTendency)
          call mpas_pool_get_array(hydroPool, 'tillWaterThickness', Wtill)
          call mpas_pool_get_array(hydroPool, 'tillWaterThicknessOld', WtillOld)
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
-         call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
-         call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
+         call mpas_pool_get_array(hydroScratchPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
+         call mpas_pool_get_array(hydroScratchPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
          call mpas_pool_get_array(hydroPool, 'divergence', divergence)
          call mpas_pool_get_array(hydroPool, 'divergenceChannel', divergenceChannel)
          call mpas_pool_get_array(hydroPool, 'channelAreaChangeCell', channelAreaChangeCell)
@@ -802,6 +805,7 @@ module li_subglacial_hydro
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroPoolScratch
       real (kind=RKIND), dimension(:), pointer :: bedTopography
       real (kind=RKIND), dimension(:), pointer :: hydropotentialBase
       real (kind=RKIND), dimension(:), pointer :: hydropotential
@@ -863,6 +867,7 @@ module li_subglacial_hydro
       ! Get pools things
       call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
       call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+      call mpas_pool_get_subpool(block % structs, 'hydroScratch', hydroScratchPool)
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
 
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
@@ -883,7 +888,7 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'waterPressure', waterPressure)
       call mpas_pool_get_array(hydroPool, 'hydropotentialBase', hydropotentialBase)
       call mpas_pool_get_array(hydroPool, 'hydropotential', hydropotential)
-      call mpas_pool_get_array(geometryPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'waterThicknessEdge', waterThicknessEdge)
       call mpas_pool_get_array(hydroPool, 'waterThicknessEdgeUpwind', waterThicknessEdgeUpwind)
       call mpas_pool_get_array(hydroPool, 'hydropotentialBaseSlopeNormal', hydropotentialBaseSlopeNormal)
@@ -1542,6 +1547,7 @@ module li_subglacial_hydro
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroScratchPool
       type (mpas_pool_type), pointer :: velocityPool
       real (kind=RKIND), dimension(:), pointer :: waterPressure
       real (kind=RKIND), dimension(:), pointer :: waterPressureOld
@@ -1590,6 +1596,7 @@ module li_subglacial_hydro
 
       call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
       call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+      call mpas_pool_get_subpool(block % structs, 'hydroScratch', hydroScratchPool)
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
 
@@ -1614,19 +1621,19 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'closingRate', closingRate)
       call mpas_pool_get_array(hydroPool, 'openingRate', openingRate)
       call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
-      call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
-      call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'tillWaterThickness', Wtill)
       call mpas_pool_get_array(hydroPool, 'tillWaterThicknessOld', WtillOld)
       call mpas_pool_get_array(hydroPool, 'divergence', divergence)
       call mpas_pool_get_array(hydroPool, 'divergenceChannel', divergenceChannel)
       call mpas_pool_get_array(hydroPool, 'channelAreaChangeCell', channelAreaChangeCell)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
-      call mpas_pool_get_array(velocityPool, 'basalSpeedNow', basalSpeed) ! Note: using version interpolated in time
-      call mpas_pool_get_array(hydroPool, 'flowAHydroNow', flowAHydro) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'basalSpeedNow', basalSpeed) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'flowAHydroNow', flowAHydro) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'hydroDomainCell', hydroDomainCell)
-      call mpas_pool_get_array(geometryPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
-      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroNow', iceThicknessHydro) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'iceThicknessHydroNow', iceThicknessHydro) ! Note: using version interpolated in time
 
       openingRate(:) = bedRough * basalSpeed(:) * (bedRoughMax - waterThickness(:))
       !openingRate(:) = bedRough * basalSpeed(:) * (bedRoughMax - waterThickness(:)) + &
@@ -1732,6 +1739,7 @@ module li_subglacial_hydro
       ! Pools pointers
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroScratchPool
       real (kind=RKIND), pointer :: rhoi, rhoo
       real (kind=RKIND), dimension(:), pointer :: waterPressure
       real (kind=RKIND), dimension(:), pointer :: bedTopography
@@ -1747,6 +1755,7 @@ module li_subglacial_hydro
 
       ! Get pools things
       call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+      call mpas_pool_get_subpool(block % structs, 'hydroScratch', hydroScratchPool)
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
 
       call mpas_pool_get_config(liConfigs, 'config_ice_density', rhoi)
@@ -1755,11 +1764,11 @@ module li_subglacial_hydro
 
       call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
       call mpas_pool_get_array(hydroPool, 'waterPressure', waterPressure)
-      call mpas_pool_get_array(geometryPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'hydropotentialBase', hydropotentialBase)
       call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
       call mpas_pool_get_array(hydroPool, 'hydropotential', hydropotential)
-      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroNow', iceThicknessHydro) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'iceThicknessHydroNow', iceThicknessHydro) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'hydroDomainCell', hydroDomainCell)
 
       effectivePressureSGH = rhoi * gravity * iceThicknessHydro - waterPressure
@@ -1815,6 +1824,7 @@ module li_subglacial_hydro
       !-----------------------------------------------------------------
       ! Pools pointers
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroScratchPool
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: velocityPool
       type (mpas_pool_type), pointer :: geometryPool
@@ -1858,6 +1868,7 @@ module li_subglacial_hydro
 
       ! Get pools things
       call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+      call mpas_pool_get_subpool(block % structs, 'hydro', hydroScratchPool)
       call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
       call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
@@ -1887,7 +1898,7 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'flowParamAChannel', flowParamAChannel)
       call mpas_pool_get_array(hydroPool, 'channelEffectivePressure', channelEffectivePressure)
       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
-      call mpas_pool_get_array(hydroPool, 'flowAHydroNow', flowAHydro) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'flowAHydroNow', flowAHydro) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
       call mpas_pool_get_array(hydroPool, 'waterFluxMask', waterFluxMask)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
@@ -2110,6 +2121,7 @@ module li_subglacial_hydro
       !-----------------------------------------------------------------
       ! Pools pointers
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroScratchPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: meshPool
       character (len=StrKIND), pointer :: config_SGH_shmip_forcing
@@ -2133,10 +2145,11 @@ module li_subglacial_hydro
       endif
 
       call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+      call mpas_pool_get_subpool(block % structs, 'hydroScratch', hydroScratchPool)
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
       call mpas_pool_get_array(meshPool, 'daysSinceStart', daysSinceStart)
-      call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroScratchPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
 
       select case (config_SGH_shmip_forcing(1:1))  ! Check on first character only
       case ('C')
@@ -2148,7 +2161,7 @@ module li_subglacial_hydro
          ! where I keep those separate.
 
          call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
-         call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
+         call mpas_pool_get_array(hydroScratchPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
 
          select case (config_SGH_shmip_forcing(2:2)) ! get experiment number
          case ('1')
@@ -2953,6 +2966,7 @@ module li_subglacial_hydro
       ! local variables
       !-----------------------------------------------------------------
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroScratchPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: velocityPool
       ! arrays at current master time level:
@@ -2982,10 +2996,13 @@ module li_subglacial_hydro
       err = 0
 
       call mpas_pool_get_subpool(domain % blocklist % structs, 'hydro', hydroPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'hydroScratch', hydroScratchPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
       ! get arrays at current master time level
       call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
-      call mpas_pool_get_array(hydroPool, 'bedTopography', bedTopography)
-      call mpas_pool_get_array(hydroPool, 'basalSpeed', basalSpeed)
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(velocityPool, 'basalSpeed', basalSpeed)
       call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
       call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
       call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
@@ -2997,12 +3014,12 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'basalMeltInputPrev', basalMeltInputPrev)
       call mpas_pool_get_array(hydroPool, 'externalWaterInputPrev', externalWaterInputPrev)
       ! get arrays at current subcycle
-      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroNow', iceThicknessHydroNow)
-      call mpas_pool_get_array(hydroPool, 'bedTopographyNow', bedTopographyNow)
-      call mpas_pool_get_array(hydroPool, 'basalSpeedNow', basalSpeedNow)
-      call mpas_pool_get_array(hydroPool, 'flowAHydroNow', flowAHydroNow)
-      call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInputNow)
-      call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInputNow)
+      call mpas_pool_get_array(hydroScratchPool, 'iceThicknessHydroNow', iceThicknessHydroNow)
+      call mpas_pool_get_array(hydroScratchPool, 'bedTopographyNow', bedTopographyNow)
+      call mpas_pool_get_array(hydroScratchPool, 'basalSpeedNow', basalSpeedNow)
+      call mpas_pool_get_array(hydroScratchPool, 'flowAHydroNow', flowAHydroNow)
+      call mpas_pool_get_array(hydroScratchPool, 'basalMeltInputNow', basalMeltInputNow)
+      call mpas_pool_get_array(hydroScratchPool, 'externalWaterInputNow', externalWaterInputNow)
 
       ! linear interpolation between previous and current master time levels
       dtFraction = deltatSGHaccumulated / deltat
@@ -3053,6 +3070,9 @@ module li_subglacial_hydro
       ! local variables
       !-----------------------------------------------------------------
       type (mpas_pool_type), pointer :: hydroPool
+      type (mpas_pool_type), pointer :: hydroScratchPool
+      type (mpas_pool_type), pointer :: geometryPool
+      type (mpas_pool_type), pointer :: velocityPool
       ! fields
       type (field1dReal), pointer :: iceThicknessHydroNowField
       type (field1dReal), pointer :: bedTopographyNowField
@@ -3076,11 +3096,14 @@ module li_subglacial_hydro
 
       err = 0
       call mpas_pool_get_subpool(domain % blocklist % structs, 'hydro', hydroPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'hydroScratch', hydroScratchPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
 
       ! cycle current forcing gields to variables for previous time level
       call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
-      call mpas_pool_get_array(hydroPool, 'bedTopography', bedTopography)
-      call mpas_pool_get_array(hydroPool, 'basalSpeed', basalSpeed)
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(velocityPool, 'basalSpeed', basalSpeed)
       call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
       call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
       call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
@@ -3098,22 +3121,22 @@ module li_subglacial_hydro
       externalWaterInputPrev(:) = externalWaterInput(:)
 
       ! deallocate scratch fields
-      call mpas_pool_get_field(hydroPool, 'iceThicknessHydroNow', iceThicknessHydroNowField)
+      call mpas_pool_get_field(hydroScratchPool, 'iceThicknessHydroNow', iceThicknessHydroNowField)
       call mpas_deallocate_scratch_field(iceThicknessHydroNowField, single_block_in=.true.)
 
-      call mpas_pool_get_field(hydroPool, 'bedTopographyNow', bedTopographyNowField)
+      call mpas_pool_get_field(hydroScratchPool, 'bedTopographyNow', bedTopographyNowField)
       call mpas_deallocate_scratch_field(bedTopographyNowField, single_block_in=.true.)
 
-      call mpas_pool_get_field(hydroPool, 'basalSpeedNow', basalSpeedNowField)
+      call mpas_pool_get_field(hydroScratchPool, 'basalSpeedNow', basalSpeedNowField)
       call mpas_deallocate_scratch_field(basalSpeedNowField, single_block_in=.true.)
 
-      call mpas_pool_get_field(hydroPool, 'flowAHydroNow', flowAHydroNowField)
+      call mpas_pool_get_field(hydroScratchPool, 'flowAHydroNow', flowAHydroNowField)
       call mpas_deallocate_scratch_field(flowAHydroNowField, single_block_in=.true.)
 
-      call mpas_pool_get_field(hydroPool, 'basalMeltInputNow', basalMeltInputNowField)
+      call mpas_pool_get_field(hydroScratchPool, 'basalMeltInputNow', basalMeltInputNowField)
       call mpas_deallocate_scratch_field(basalMeltInputNowField, single_block_in=.true.)
 
-      call mpas_pool_get_field(hydroPool, 'externalWaterInputNow', externalWaterInputNowField)
+      call mpas_pool_get_field(hydroScratchPool, 'externalWaterInputNow', externalWaterInputNowField)
       call mpas_deallocate_scratch_field(externalWaterInputNowField, single_block_in=.true.)
 
    end subroutine clean_up_hydro_forcing

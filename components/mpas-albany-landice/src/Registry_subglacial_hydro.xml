@@ -169,16 +169,10 @@
 			description="ice thickness used by the hydrology model. Same as 'thickness' but with potential differences along domain boundaries that inhibit the formation of local hydropotential minima on boundaries." />
 		<var name="iceThicknessHydroPrev" type="real" dimensions="nCells Time" units="m"
 			description="ice thickness used by the hydrology model from previous master time step" />
-		<var name="iceThicknessHydroNow" type="real" dimensions="nCells Time" units="m" persistence="scratch"
-			description="ice thickness used by the hydrology model for current subcycle" />
 		<var name="bedTopographyPrev" type="real" dimensions="nCells Time" units="m"
 			description="bed topography used by the hydrology model from previous master time step" />
-		<var name="bedTopographyNow" type="real" dimensions="nCells Time" units="m" persistence="scratch"
-			description="bed topography used by the hydrology model for current subcycle" />
 		<var name="basalSpeedPrev" type="real" dimensions="nCells Time" units="m s^-1"
 			description="basal speed used by the hydrology model from previous master time step" />
-		<var name="basalSpeedNow" type="real" dimensions="nCells Time" units="m s^-1" persistence="scratch"
-			description="basal speed used by the hydrology model for current subcycle" />
 		<var name="hydroDomainCell" type="integer" dimensions="nCells Time"
                      description="logical mask of cells where subglacial hydrology model is active" />
 		<var name="hydroDomainEdge" type="integer" dimensions="nCells Time"
@@ -187,8 +181,6 @@
                         description="flow parameter A value used by subglacial hydrology model" />
 		<var name="flowAHydroPrev" type="real" dimensions="nCells Time" units="s^-1 Pa^-n" default_value="3.1709792e-24"
                         description="flow parameter A value used by subglacial hydrology model from previous master time step" />
-		<var name="flowAHydroNow" type="real" dimensions="nCells Time" units="s^-1 Pa^-n" default_value="3.1709792e-24" persistence="scratch"
-                        description="flow parameter A value used by subglacial hydrology model for current subcycle" />
                 <var name="waterThickness" type="real" dimensions="nCells Time" units="m" default_value="0.01"
                      description="water layer thickness in subglacial hydrology system" />
                 <var name="waterThicknessOld" type="real" dimensions="nCells Time" units="m"
@@ -212,14 +204,10 @@
                      description="basal meltwater input to subglacial hydrology system" />
                 <var name="basalMeltInputPrev" type="real" dimensions="nCells Time" units="kg m^-2 s^-1"
                      description="basal meltwater input to subglacial hydrology system from previous master time step" />
-                <var name="basalMeltInputNow" type="real" dimensions="nCells Time" units="kg m^-2 s^-1" persistence="scratch"
-                     description="basal meltwater input to subglacial hydrology system at current subcycle" />
                 <var name="externalWaterInput" type="real" dimensions="nCells Time" units="kg m^-2 s^-1"
                      description="external water input to subglacial hydrology system" />
                 <var name="externalWaterInputPrev" type="real" dimensions="nCells Time" units="kg m^-2 s^-1"
                      description="external water input to subglacial hydrology system from previous master time step" />
-                <var name="externalWaterInputNow" type="real" dimensions="nCells Time" units="kg m^-2 s^-1" persistence="scratch"
-                     description="external water input to subglacial hydrology system at current subcycle" />
                 <var name="frictionAngle" type="real" dimensions="nCells Time"
                      description="subglacial till friction angle" />
                 <!-- convenience variables -->
@@ -331,7 +319,21 @@
                 <var name="channelDiffusivity" type="real" dimensions="nEdges Time" units="m^2 s^-1"
                      description="diffusivity in channel in subglacial hydrology system" />
 	</var_struct>
-
+	<!-- Hydro Scratch Variables -->
+	<var_struct name="hydro_scratch" time_levs="1">
+		<var name="iceThicknessHydroNow" type="real" dimensions="nCells Time" units="m" persistence="scratch"
+			description="ice thickness used by the hydrology model for current subcycle" />
+		<var name="bedTopographyNow" type="real" dimensions="nCells Time" units="m" persistence="scratch"
+			description="bed topography used by the hydrology model for current subcycle" />
+		<var name="basalSpeedNow" type="real" dimensions="nCells Time" units="m s^-1" persistence="scratch"
+			description="basal speed used by the hydrology model for current subcycle" />
+		<var name="flowAHydroNow" type="real" dimensions="nCells Time" units="s^-1 Pa^-n" default_value="3.1709792e-24" persistence="scratch"
+			description="flow parameter A value used by subglacial hydrology model for current subcycle" />
+		<var name="basalMeltInputNow" type="real" dimensions="nCells Time" units="kg m^-2 s^-1" persistence="scratch"
+			description="basal meltwater input to subglacial hydrology system at current subcycle" />
+		<var name="externalWaterInputNow" type="real" dimensions="nCells Time" units="kg m^-2 s^-1" persistence="scratch"
+			description="external water input to subglacial hydrology system at current subcycle" />
+	</var_struct>
 <!-- ======================================================================= -->
 
 
