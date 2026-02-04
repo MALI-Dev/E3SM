@@ -412,8 +412,8 @@ module li_subglacial_hydro
          call mpas_pool_get_array(hydroPool, 'tillWaterThickness', Wtill)
          call mpas_pool_get_array(hydroPool, 'tillWaterThicknessOld', WtillOld)
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
-         call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
-         call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
+         call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
+         call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
          call mpas_pool_get_array(hydroPool, 'hydroDomainCell', hydroDomainCell)
 
          WtillOld = Wtill
@@ -598,8 +598,8 @@ module li_subglacial_hydro
          call mpas_pool_get_array(hydroPool, 'tillWaterThickness', Wtill)
          call mpas_pool_get_array(hydroPool, 'tillWaterThicknessOld', WtillOld)
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
-         call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
-         call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
+         call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
+         call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
          call mpas_pool_get_array(hydroPool, 'divergence', divergence)
          call mpas_pool_get_array(hydroPool, 'divergenceChannel', divergenceChannel)
          call mpas_pool_get_array(hydroPool, 'channelAreaChangeCell', channelAreaChangeCell)
@@ -883,7 +883,7 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'waterPressure', waterPressure)
       call mpas_pool_get_array(hydroPool, 'hydropotentialBase', hydropotentialBase)
       call mpas_pool_get_array(hydroPool, 'hydropotential', hydropotential)
-      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(geometryPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'waterThicknessEdge', waterThicknessEdge)
       call mpas_pool_get_array(hydroPool, 'waterThicknessEdgeUpwind', waterThicknessEdgeUpwind)
       call mpas_pool_get_array(hydroPool, 'hydropotentialBaseSlopeNormal', hydropotentialBaseSlopeNormal)
@@ -1614,19 +1614,19 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'closingRate', closingRate)
       call mpas_pool_get_array(hydroPool, 'openingRate', openingRate)
       call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
-      call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
-      call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
+      call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'tillWaterThickness', Wtill)
       call mpas_pool_get_array(hydroPool, 'tillWaterThicknessOld', WtillOld)
       call mpas_pool_get_array(hydroPool, 'divergence', divergence)
       call mpas_pool_get_array(hydroPool, 'divergenceChannel', divergenceChannel)
       call mpas_pool_get_array(hydroPool, 'channelAreaChangeCell', channelAreaChangeCell)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
-      call mpas_pool_get_array(velocityPool, 'basalSpeed', basalSpeed)
-      call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
+      call mpas_pool_get_array(velocityPool, 'basalSpeedNow', basalSpeed) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroPool, 'flowAHydroNow', flowAHydro) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'hydroDomainCell', hydroDomainCell)
-      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
-      call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
+      call mpas_pool_get_array(geometryPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroNow', iceThicknessHydro) ! Note: using version interpolated in time
 
       openingRate(:) = bedRough * basalSpeed(:) * (bedRoughMax - waterThickness(:))
       !openingRate(:) = bedRough * basalSpeed(:) * (bedRoughMax - waterThickness(:)) + &
@@ -1755,11 +1755,11 @@ module li_subglacial_hydro
 
       call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
       call mpas_pool_get_array(hydroPool, 'waterPressure', waterPressure)
-      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(geometryPool, 'bedTopographyNow', bedTopography) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'hydropotentialBase', hydropotentialBase)
       call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
       call mpas_pool_get_array(hydroPool, 'hydropotential', hydropotential)
-      call mpas_pool_get_array(hydroPool, 'iceThicknessHydro', iceThicknessHydro)
+      call mpas_pool_get_array(hydroPool, 'iceThicknessHydroNow', iceThicknessHydro) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'hydroDomainCell', hydroDomainCell)
 
       effectivePressureSGH = rhoi * gravity * iceThicknessHydro - waterPressure
@@ -1887,7 +1887,7 @@ module li_subglacial_hydro
       call mpas_pool_get_array(hydroPool, 'flowParamAChannel', flowParamAChannel)
       call mpas_pool_get_array(hydroPool, 'channelEffectivePressure', channelEffectivePressure)
       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
-      call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
+      call mpas_pool_get_array(hydroPool, 'flowAHydroNow', flowAHydro) ! Note: using version interpolated in time
       call mpas_pool_get_array(hydroPool, 'effectivePressureSGH', effectivePressureSGH)
       call mpas_pool_get_array(hydroPool, 'waterFluxMask', waterFluxMask)
       call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
@@ -2136,7 +2136,7 @@ module li_subglacial_hydro
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
       call mpas_pool_get_array(meshPool, 'daysSinceStart', daysSinceStart)
-      call mpas_pool_get_array(hydroPool, 'externalWaterInput', externalWaterInput)
+      call mpas_pool_get_array(hydroPool, 'externalWaterInputNow', externalWaterInput) ! Note: using version interpolated in time
 
       select case (config_SGH_shmip_forcing(1:1))  ! Check on first character only
       case ('C')
@@ -2148,7 +2148,7 @@ module li_subglacial_hydro
          ! where I keep those separate.
 
          call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
-         call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
+         call mpas_pool_get_array(hydroPool, 'basalMeltInputNow', basalMeltInput) ! Note: using version interpolated in time
 
          select case (config_SGH_shmip_forcing(2:2)) ! get experiment number
          case ('1')
