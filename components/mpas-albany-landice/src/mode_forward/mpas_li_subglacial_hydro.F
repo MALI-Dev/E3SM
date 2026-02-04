@@ -356,45 +356,7 @@ module li_subglacial_hydro
       call set_up_hydro_forcing(domain, err_tmp)
       err = ior(err, err_tmp)
 
-      block => domain % blocklist
-      do while (associated(block))
-         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
-         call mpas_pool_get_subpool(block % structs, 'thermal', thermalPool)
-         call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
-         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
-         call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
-
-         call calc_iceThicknessHydro(block, err_tmp)
-         err = ior(err, err_tmp)
-
-         call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
-         if (trim(config_SGH_flowA_source) == 'constant') then
-            call mpas_pool_get_config(liConfigs, 'config_SGH_flowA_value', config_SGH_flowA_value)
-            flowAHydro(:) = config_SGH_flowA_value
-         elseif (trim(config_SGH_flowA_source) == 'data') then
-            ! do nothing - use value already in flowAHydro
-         elseif (trim(config_SGH_flowA_source) == 'flowParamA') then
-            call mpas_pool_get_array(thermalPool, 'temperature', temperature)
-            call mpas_pool_get_array(geometryPool, 'thickness', thickness)
-            call mpas_pool_get_array(velocityPool, 'flowParamA', flowParamA)
-            call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
-            call li_calculate_flowParamA(meshPool, temperature, thickness, flowParamA, err_tmp)
-            err = ior(err, err_tmp)
-            flowAHydro(:) = flowParamA(nVertLevels, :)
-         else
-            err = ior(err, 1)
-            call mpas_log_write("Unknown value for 'config_SGH_flowA_source': " // trim(config_SGH_flowA_source), MPAS_LOG_ERR)
-         endif
-
-         block => block % next
-      end do
-
-      !update halo for iceThicknessHydro
-      call mpas_timer_start("halo updates")
-      call mpas_dmpar_field_halo_exch(domain, 'iceThicknessHydro')
-      call mpas_timer_stop("halo updates")
-
-      ! initialize while loop
+     ! initialize while loop
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)  ! can get from any block
       call mpas_pool_get_array(meshPool, 'deltat', masterDeltat)
       timeLeft = masterDeltat  ! in seconds
@@ -411,47 +373,6 @@ module li_subglacial_hydro
          block => block % next
       end do
 
-      ! =============
-      ! Calculate time-varying forcing, as needed
-      ! =============
-      block => domain % blocklist
-      do while (associated(block))
-
-         ! Decide where the basal melt input comes from
-         ! Either prescribed, from the temperature model, or calculated here
-         if (trim(config_SGH_basal_melt) == 'file') then
-             ! do nothing
-         elseif (trim(config_SGH_basal_melt) == 'thermal') then
-             call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
-             call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
-             call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
-             call mpas_pool_get_array(geometryPool,'groundedBasalMassBal',groundedBasalMassBal)
-             basalMeltInput = -1.0_RKIND * groundedBasalMassBal ! TODO: Ensure positive flux?
-         elseif (trim(config_SGH_basal_melt) == 'basal_heat') then
-             call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
-             call mpas_pool_get_subpool(block % structs, 'thermal', thermalPool)
-             call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
-             call mpas_pool_get_array(thermalPool, 'basalHeatFlux', basalHeatFlux)
-             call mpas_pool_get_array(thermalPool, 'basalFrictionFlux', basalFrictionFlux)
-             basalMeltInput = (basalHeatFlux + basalFrictionFlux) / latent_heat_ice
-         else
-            call mpas_log_write("Unknown value provided for config_SGH_basal_melt: " // trim(config_SGH_basal_melt), MPAS_LOG_ERR)
-            err = ior(err, 1)
-         endif
-
-         block => block % next
-      end do
-
-      ! Perform halo update, if needed
-      if ((trim(config_SGH_basal_melt) == 'thermal') .or. (trim(config_SGH_basal_melt) == 'basal_heat')) then
-         call mpas_timer_start("halo updates")
-         ! (groundedBasalMassBal will not have had a halo update,
-         !  because a halo update for it is unneeded except for the SGH model.)
-         call mpas_dmpar_field_halo_exch(domain, 'basalMeltInput')
-         call mpas_timer_stop("halo updates")
-      endif
-
-
 
       ! =============
       ! =============
@@ -463,11 +384,15 @@ module li_subglacial_hydro
       timecycling: do while (timeLeft > 0.0_RKIND)
       numSubCycles = numSubCycles + 1
 
+      call interpolate_hydro_forcing(domain, deltat, deltatSGHaccumulated, err_tmp)
+      err = ior(err, err_tmp)
 
       ! apply shmip forcing if needed
       block => domain % blocklist
       do while (associated(block))
          ! SHMIP forcing will override basalMeltInput from above
+         ! Note that SHMIP forcing is not interpolating during subcycles;
+         ! if this is ever used again, this should be fixed.
          call shmip_timevarying_forcing(block, err_tmp)
          err = ior(err, err_tmp)
 
@@ -2856,9 +2781,14 @@ module li_subglacial_hydro
       !-----------------------------------------------------------------
       ! local variables
       !-----------------------------------------------------------------
+      type (block_type), pointer :: block
+
+      ! pools:
       type (mpas_pool_type), pointer :: hydroPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: velocityPool
+      type (mpas_pool_type), pointer :: meshPool
+      type (mpas_pool_type), pointer :: thermalPool
 
       ! fields:
       type (field1dReal), pointer :: iceThicknessHydroNowField
@@ -2867,6 +2797,27 @@ module li_subglacial_hydro
       type (field1dReal), pointer :: flowAHydroNowField
       type (field1dReal), pointer :: basalMeltInputNowField
       type (field1dReal), pointer :: externalWaterInputNowField
+
+      ! arrays:
+      real (kind=RKIND), dimension(:), pointer :: flowAHydro
+      real (kind=RKIND), dimension(:), pointer :: temperature
+      real (kind=RKIND), dimension(:), pointer :: thickness
+      real (kind=RKIND), dimension(:), pointer :: flowParamA
+      real (kind=RKIND), dimension(:), pointer :: basalMeltInput
+      real (kind=RKIND), dimension(:), pointer :: groundedBasalMassBal
+      real (kind=RKIND), dimension(:), pointer :: basalHeatFlux
+      real (kind=RKIND), dimension(:), pointer :: basalFrictionFlux
+
+      ! dimensions:
+      integer, pointer :: nVertLevels
+
+      ! config values
+      character(len=StrKIND), pointer :: config_SGH_flowA_source
+      real (kind=RKIND), pointer :: config_SGH_flowA_value
+      character(len=StrKIND), pointer :: config_SGH_basal_melt
+
+      ! other:
+      integer :: err_tmp
 
       err = 0
 
@@ -2891,6 +2842,85 @@ module li_subglacial_hydro
       call mpas_pool_get_field(hydroPool, 'externalWaterInputNow', externalWaterInputNowField)
       call mpas_allocate_scratch_field(externalWaterInputNowField, single_block_in = .true.)
    
+
+      ! set up any forcing fields that require calculation
+      ! this includes: iceThicknessHydro, flowAHydro, basalMeltInput
+      ! this is not required for: bedTopography, basalSpeed, externalWaterInput
+
+      block => domain % blocklist
+      do while (associated(block))
+         ! get pools
+         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
+         call mpas_pool_get_subpool(block % structs, 'thermal', thermalPool)
+         call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
+         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+
+         ! get config values
+         call mpas_pool_get_config(liConfigs, 'config_SGH_flowA_source', config_SGH_flowA_source)
+         call mpas_pool_get_config(liConfigs, 'config_SGH_basal_melt', config_SGH_basal_melt)
+
+         ! iceThicknessHydro
+         call calc_iceThicknessHydro(block, err_tmp)
+         err = ior(err, err_tmp)
+
+         ! flowAHydro
+         call mpas_pool_get_array(hydroPool, 'flowAHydro', flowAHydro)
+         if (trim(config_SGH_flowA_source) == 'constant') then
+            call mpas_pool_get_config(liConfigs, 'config_SGH_flowA_value', config_SGH_flowA_value)
+            flowAHydro(:) = config_SGH_flowA_value
+         elseif (trim(config_SGH_flowA_source) == 'data' then
+            ! do nothing - use value already in flowAHydro
+         elseif (trim(config_SGH_flowA_source) == 'flowParamA' then
+            call mpas_pool_get_array(thermalPool, 'temperature', temperature)
+            call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+            call mpas_pool_get_array(velocityPool, 'flowParamA', flowParamA)
+            call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
+            call li_calculate_flowParamA(meshPool, temperature, thickness, flowParamA, err_tmp)
+            err = ior(err, err_tmp)
+            flowAHydro(:) = flowParamA(nVertLevels, :)
+         else
+            err = ior(err, 1)
+            call mpas_log_write("Unknown value for 'config_SGH_flowA_source': " // trim(config_SGH_flowA_source), MPAS_LOG_ERR)
+         endif
+
+         ! basalMeltInput
+         if (trim(config_SGH_basal_melt) == 'file') then
+             ! do nothing
+         elseif (trim(config_SGH_basal_melt) == 'thermal') then
+             call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+             call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+             call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
+             call mpas_pool_get_array(geometryPool,'groundedBasalMassBal',groundedBasalMassBal)
+             basalMeltInput = -1.0_RKIND * groundedBasalMassBal ! TODO: Ensure positive flux?
+         elseif (trim(config_SGH_basal_melt) == 'basal_heat') then
+             call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
+             call mpas_pool_get_subpool(block % structs, 'thermal', thermalPool)
+             call mpas_pool_get_array(hydroPool, 'basalMeltInput', basalMeltInput)
+             call mpas_pool_get_array(thermalPool, 'basalHeatFlux', basalHeatFlux)
+             call mpas_pool_get_array(thermalPool, 'basalFrictionFlux', basalFrictionFlux)
+             basalMeltInput = (basalHeatFlux + basalFrictionFlux) / latent_heat_ice
+         else
+            call mpas_log_write("Unknown value provided for config_SGH_basal_melt: " // trim(config_SGH_basal_melt), MPAS_LOG_ERR)
+            err = ior(err, 1)
+         endif
+
+         block => block % next
+      end do
+
+      !update halo for iceThicknessHydro
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'iceThicknessHydro')
+      call mpas_timer_stop("halo updates")
+      ! Perform halo update of basalMeltInput, if needed
+      if ((trim(config_SGH_basal_melt) == 'thermal') .or. (trim(config_SGH_basal_melt) == 'basal_heat')) then
+         call mpas_timer_start("halo updates")
+         ! (groundedBasalMassBal will not have had a halo update,
+         !  because a halo update for it is unneeded except for the SGH model.)
+         call mpas_dmpar_field_halo_exch(domain, 'basalMeltInput')
+         call mpas_timer_stop("halo updates")
+      endif
+
    end subroutine set_up_hydro_forcing
 
 
