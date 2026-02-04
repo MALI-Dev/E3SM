@@ -106,7 +106,7 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: waterThickness
       real (kind=RKIND), dimension(:), pointer :: tillWaterThickness
       real (kind=RKIND), dimension(:), pointer :: waterPressure
-      real (kind=RKIND), dimension(:), pointer :: bedTopography
+      real (kind=RKIND), dimension(:), pointer :: bedTopography, thickness
       real (kind=RKIND), dimension(:), pointer :: iceThicknessHydro
       real (kind=RKIND), dimension(:), pointer :: hydropotential
       integer, dimension(:), pointer :: hydroDomainCell
@@ -157,6 +157,8 @@ module li_subglacial_hydro
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
 
          call mpas_pool_get_array(hydroPool, 'deltatSGH', deltatSGH)
+         call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+         call mpas_pool_get_array(geometryPool, 'thickness', thickness)
 
          if (.not. config_do_restart) then
             ! On cold start, set initial timestep to a small value.
@@ -168,8 +170,6 @@ module li_subglacial_hydro
             ! TODO: Move till update until after adaptive timestep has been set
             deltatSGH = 1.0e-4_RKIND ! in seconds
          endif
-
-         call calc_hydro_mask(domain)
 
          ! remove invalid values - not necessary on restart, but shouldn't hurt
          call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
@@ -183,6 +183,8 @@ module li_subglacial_hydro
          err = ior(err,err_tmp)
          block => block % next
       end do
+
+      call calc_hydro_mask(domain, thickness, bedTopography)
 
       !update halo for iceThicknessHydro
       call mpas_timer_start("halo updates")
@@ -344,8 +346,6 @@ module li_subglacial_hydro
       endif
 
       call mpas_log_write('Beginning subglacial hydro solve.')
-
-      call calc_hydro_mask(domain)
 
       call mpas_pool_get_config(liConfigs, 'config_SGH_chnl_active', config_SGH_chnl_active)
       call mpas_pool_get_config(liConfigs, 'config_SGH_till_drainage', Cd)
@@ -2287,11 +2287,14 @@ module li_subglacial_hydro
 !>  This routine calculates a mask of the boundaries of the active hydrology domain.
 !>  If there is no waterFluxMask set around domain boundaries, then calc_hydro_mask creates one.
 !-----------------------------------------------------------------------
-   subroutine calc_hydro_mask(domain)
+   subroutine calc_hydro_mask(domain, thickness, bedTopography)
 
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
+      ! Note that thickness and bedTopography are passed in because different calls
+      ! may want to use different time levels of these variables
+      real (kind=RKIND), dimension(:) :: thickness, bedTopography
 
       !-----------------------------------------------------------------
       ! input/output variables
@@ -2309,8 +2312,6 @@ module li_subglacial_hydro
       type (mpas_pool_type), pointer :: hydroPool
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: meshPool
-      real (kind=RKIND), dimension(:), pointer :: bedTopography
-      real (kind=RKIND), dimension(:), pointer :: thickness
       integer, dimension(:), pointer :: hydroDomainCell, hydroDomainEdge
       integer, dimension(:), pointer :: hydroMarineMarginMask
       integer, dimension(:), pointer :: hydroTerrestrialMarginMask
@@ -2334,8 +2335,6 @@ module li_subglacial_hydro
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'hydro', hydroPool)
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
-         call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
-         call mpas_pool_get_array(hydroPool, 'thickness', thickness)
          call mpas_pool_get_array(hydroPool, 'hydroDomainCell', hydroDomainCell)
          call mpas_pool_get_array(hydroPool, 'hydroDomainEdge', hydroDomainEdge)
          call mpas_pool_get_array(hydroPool, 'hydroMarineMarginMask', hydroMarineMarginMask)
@@ -3020,6 +3019,8 @@ module li_subglacial_hydro
       externalWaterInputNow(:) = externalWaterInputPrev(:) + &
          (externalWaterInput(:) - externalWaterInputPrev(:)) * dtFraction
 
+      ! recalculate masks based on iceThicknessHydroNow and bedTopographyNow
+      call calc_hydro_mask(domain, iceThicknessHydroNow, bedTopographyNow)
    end subroutine interpolate_hydro_forcing
 
 
