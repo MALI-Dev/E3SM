@@ -78,7 +78,7 @@ module li_iceshelf_melt
 
 !-----------------------------------------------------------------------
 
-   subroutine li_face_melt_grounded_ice(domain, err)
+   subroutine li_face_melt_grounded_ice(domain, err, applyFaceMeltNow, computeFaceMeltNow)
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
@@ -88,6 +88,8 @@ module li_iceshelf_melt
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: &
          domain          !< Input/Output: domain object
+      logical, intent(in), optional :: applyFaceMeltNow !< If present and false, compute melt fields/CFL only
+      logical, intent(in), optional :: computeFaceMeltNow !< If present and false, apply existing faceMeltingThickness field
 
       !-----------------------------------------------------------------
       ! output variables
@@ -111,9 +113,15 @@ module li_iceshelf_melt
       integer, dimension(:), pointer :: cellMask
       integer :: err_tmp
       logical :: applyToFloating, applyToGrounded, applyToGroundingLine
+      logical :: doApplyFaceMelt
+      logical :: doComputeFaceMelt
 
       err = 0
       err_tmp = 0
+      doApplyFaceMelt = .true.
+      doComputeFaceMelt = .true.
+      if (present(applyFaceMeltNow)) doApplyFaceMelt = applyFaceMeltNow
+      if (present(computeFaceMeltNow)) doComputeFaceMelt = computeFaceMeltNow
 
       call mpas_pool_get_config(liConfigs, 'config_front_mass_bal_grounded', config_front_mass_bal_grounded)
       call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_float', config_basal_mass_bal_float)
@@ -133,8 +141,11 @@ module li_iceshelf_melt
       if ( trim(config_front_mass_bal_grounded) == 'ismip6' &
           .or. trim(config_front_mass_bal_grounded) == 'uniform' ) then
          call grounded_face_melt_ismip6(domain, applyToGrounded, &
-                    applyToFloating, applyToGroundingLine, err_tmp)
+                    applyToFloating, applyToGroundingLine, err_tmp, &
+                    computeFaceMeltSpeedNow=doComputeFaceMelt, applyFrontAblationNow=doApplyFaceMelt)
          err = ior(err, err_tmp)
+
+          if (.not. doApplyFaceMelt) return
          
          block => domain % blocklist
          do while (associated(block))
@@ -1405,7 +1416,7 @@ module li_iceshelf_melt
 
 
     subroutine grounded_face_melt_ismip6(domain, applyToGrounded, &
-                    applyToFloating, applyToGroundingLine, err)
+               applyToFloating, applyToGroundingLine, err, computeFaceMeltSpeedNow, applyFrontAblationNow)
 
       use li_calving
       use li_constants, only: oceanFreezingTempDepthDependence
@@ -1416,6 +1427,8 @@ module li_iceshelf_melt
       type (domain_type), intent(inout) :: &
          domain          !< Input/Output: domain object
       logical, intent(in) :: applyToFloating, applyToGrounded, applyToGroundingLine
+      logical, intent(in), optional :: computeFaceMeltSpeedNow
+      logical, intent(in), optional :: applyFrontAblationNow
       !-----------------------------------------------------------------
       ! output variables
       !-----------------------------------------------------------------
@@ -1464,11 +1477,16 @@ module li_iceshelf_melt
       logical, pointer :: config_calculate_thermal_forcing
       logical, pointer :: config_ocean_data_extrapolation
       integer, pointer :: config_ocean_data_extrap_ncells_extra
+      logical :: doComputeFaceMeltSpeed, doApplyFrontAblation
       real (kind=RKIND) :: dzAccumulated, dz
       integer :: err_tmp, kk, iLayer
 
       err = 0
       call mpas_log_write('Starting face melt routine')
+      doComputeFaceMeltSpeed = .true.
+      doApplyFrontAblation = .true.
+      if (present(computeFaceMeltSpeedNow)) doComputeFaceMeltSpeed = computeFaceMeltSpeedNow
+      if (present(applyFrontAblationNow)) doApplyFrontAblation = applyFrontAblationNow
 
       ! Get sea level, bedTopography, ice density
       call mpas_pool_get_config(liConfigs, 'config_ice_density', rhoi)
@@ -1511,7 +1529,7 @@ module li_iceshelf_melt
          call mpas_pool_get_array(geometryPool, 'faceMeltingCFLdt', faceMeltingCFLdt)
          call mpas_pool_get_array(geometryPool, 'dtFaceMeltingCFLratio', dtFaceMeltingCFLratio)
 
-         if ( config_use_3d_thermal_forcing_for_face_melt ) then
+         if (doComputeFaceMeltSpeed .and. config_use_3d_thermal_forcing_for_face_melt ) then
             call mpas_pool_get_dimension(meshPool, 'nISMIP6OceanLayers', nISMIP6OceanLayers)
             call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_3dThermalForcing', ismip6shelfMelt_3dThermalForcing)
             call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_zOcean', zOcean)
@@ -1624,29 +1642,37 @@ module li_iceshelf_melt
                TFocean = TFocean + ismip6shelfMelt_deltaT !apply dT correction
          endif
 
-         faceMeltSpeed(:) = 0.0_RKIND
-         allocate(faceMeltSpeedVertAvg(nCells+1))
-         faceMeltSpeedVertAvg(:) = 0.0_RKIND
+          if (doComputeFaceMeltSpeed) then
+            faceMeltSpeed(:) = 0.0_RKIND
 
-       ! Calculate face melting for each cell
-         do iCell = 1, nCells
+            ! Calculate face-melt speed for each cell
+            do iCell = 1, nCells
 
-            if ( bedTopography(iCell) < 0.0_RKIND ) then
-                waterDepth = seaLevel - bedTopography(iCell)
-            else
-                waterDepth = 0.0_RKIND
-            endif
+               if ( bedTopography(iCell) < 0.0_RKIND ) then
+                  waterDepth = seaLevel - bedTopography(iCell)
+               else
+                  waterDepth = 0.0_RKIND
+               endif
 
-            if (trim(config_front_mass_bal_grounded) == 'ismip6') then
-                ! Calculate ice front melt rate at each cell
-               faceMeltSpeed(iCell) = (aSubglacial * waterDepth * & ! m s^-1
-                         (ismip6Runoff(iCell) / rhow * secPerDay)**alphaSubglacial &
-                         + B) *  max(0.0_RKIND, TFocean(iCell) + addTFocean)**betaTF / secPerDay
-            elseif (trim(config_front_mass_bal_grounded) == 'uniform') then
-                   faceMeltSpeed(iCell) = config_uniform_face_melt_rate
-            endif
+               if (trim(config_front_mass_bal_grounded) == 'ismip6') then
+                  ! Calculate ice front melt rate at each cell
+                 faceMeltSpeed(iCell) = (aSubglacial * waterDepth * & ! m s^-1
+                        (ismip6Runoff(iCell) / rhow * secPerDay)**alphaSubglacial &
+                        + B) *  max(0.0_RKIND, TFocean(iCell) + addTFocean)**betaTF / secPerDay
+               elseif (trim(config_front_mass_bal_grounded) == 'uniform') then
+                    faceMeltSpeed(iCell) = config_uniform_face_melt_rate
+               endif
 
-         enddo
+            enddo
+          endif
+
+          if (.not. doApplyFrontAblation) then
+            block => block % next
+            cycle
+          endif
+
+          allocate(faceMeltSpeedVertAvg(nCells+1))
+          faceMeltSpeedVertAvg(:) = 0.0_RKIND
 
          where ( (thickness > 0.0_RKIND) .and. (lowerSurface < 0.0_RKIND) )
                faceMeltSpeedVertAvg(:) = faceMeltSpeed(:) * abs(lowerSurface(:)) / thickness(:)
@@ -1660,11 +1686,11 @@ module li_iceshelf_melt
                                             maxDt=faceMeltingCFLdt, CFLratio=dtFaceMeltingCFLratio, err=err_tmp)
          err = ior(err, err_tmp)
 
+             deallocate(faceMeltSpeedVertAvg)
+
 
          block => block % next
       enddo    ! associated(block)
-
-    deallocate(faceMeltSpeedVertAvg)
 
     end subroutine grounded_face_melt_ismip6
 !-----------------------------------------------------------------------

@@ -558,6 +558,38 @@
                         description="Number of stages for strong stability preserving RK3 time integration. If set to 3, this involves 3 velocity solves and a maximum CFL fraction of 1. If set to 4, this involves 4 velocity solves, but the maximum CFL fraction is 2."
                         possible_values="3 or 4"
 		/>
+		<nml_option name="config_use_embedded_ssprk" type="logical" default_value=".false." units="unitless"
+			description="Enable embedded SSPRK error estimation and retry-based timestep control for RK3 methods."
+			possible_values=".true. or .false."
+		/>
+		<nml_option name="config_embedded_rk_rtol" type="real" default_value="1.0e-3" units="unitless"
+			description="Relative tolerance used by embedded SSPRK error control."
+			possible_values="Any positive real value."
+		/>
+		<nml_option name="config_embedded_rk_atol_thickness" type="real" default_value="1.0e-2" units="m"
+			description="Absolute tolerance for thickness in embedded SSPRK error control."
+			possible_values="Any positive real value."
+		/>
+		<nml_option name="config_embedded_rk_atol_tracer" type="real" default_value="1.0e-4" units="unitless"
+			description="Absolute tolerance for tracer-like fields in embedded SSPRK error control."
+			possible_values="Any positive real value."
+		/>
+		<nml_option name="config_embedded_rk_safety_factor" type="real" default_value="0.9" units="unitless"
+			description="Safety factor applied to timestep updates after embedded SSPRK error estimation."
+			possible_values="Any positive real value less than or equal to 1.0."
+		/>
+		<nml_option name="config_embedded_rk_max_growth" type="real" default_value="1.5" units="unitless"
+			description="Maximum multiplicative timestep increase allowed between embedded SSPRK attempts."
+			possible_values="Any real value greater than or equal to 1.0."
+		/>
+		<nml_option name="config_embedded_rk_min_shrink" type="real" default_value="0.2" units="unitless"
+			description="Minimum multiplicative timestep shrink factor for rejected embedded SSPRK attempts."
+			possible_values="Any real value between 0 and 1.0."
+		/>
+		<nml_option name="config_embedded_rk_max_retries" type="integer" default_value="3" units="count"
+			description="Maximum number of embedded SSPRK retry attempts after a rejected step."
+			possible_values="Any non-negative integer."
+		/>
 		<nml_option name="config_adaptive_timestep" type="logical" default_value=".false." units="unitless"
 			description="Determines if the time step should be adjusted based on the CFL condition or should be steady in time. If true, the config_dt_* options are ignored."
 			possible_values=".true. or .false."
