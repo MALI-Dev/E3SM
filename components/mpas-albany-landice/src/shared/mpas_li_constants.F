@@ -44,12 +44,12 @@ module li_constants
    save
 
    ! physical constants
-   real (kind=RKIND), parameter, public :: cp_ice = 2.11727e3_RKIND        !< heat capacity of ice (J/kg/K)
-   real (kind=RKIND), parameter, public :: latent_heat_ice = 3.337e5_RKIND !< Latent heat of melting of ice (J/kg)
+   real (kind=RKIND), parameter, public :: cp_ice = 2.11727e3_RKIND        !< heat capacity of ice (J/kg/K), aligned with SHR_CONST_CPICE
+   real (kind=RKIND), parameter, public :: latent_heat_ice = 3.337e5_RKIND !< Latent heat of melting of ice (J/kg), aligned with SHR_CONST_LATICE
    real (kind=RKIND), parameter, public :: triple_point = 273.16_RKIND  !< Triple point of water (K)
    real (kind=RKIND), parameter, public :: rho_water = 1000.0_RKIND     !< Density of fresh water (kg m^-3)
    real (kind=RKIND), parameter, public :: cp_freshwater = 4.188e3_RKIND        !< heat capacity of freshwater (J/kg/K)
-   real (kind=RKIND), parameter, public :: cp_seawater = 3.996e3_RKIND        !< heat capacity of seawater (J/kg/K)
+   real (kind=RKIND), parameter, public :: cp_seawater = 3.996e3_RKIND        !< heat capacity of seawater (J/kg/K), aligned with SHR_CONST_CPSW
    real (kind=RKIND), parameter, public :: pii = 3.141592653589793_RKIND !< Constant: Pi
    real (kind=RKIND), parameter, public :: gravity = 9.80616_RKIND       !< Constant: Acceleration due to gravity [m s-2]
    real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
