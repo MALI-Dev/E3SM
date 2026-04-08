@@ -31,7 +31,10 @@ module li_constants
           cp_freshwater => SHR_CONST_CPFW, &
           cp_seawater => SHR_CONST_CPSW, &
           pii => SHR_CONST_PI, &
-          gravity => SHR_CONST_G
+          gravity => SHR_CONST_G, &
+          iceConductivity => SHR_CONST_CONDICE, &
+          kelvin_to_celsius => SHR_CONST_TKFRZ, &
+          seconds_per_day => SHR_CONST_CDAY
    implicit none
    save
 
@@ -41,20 +44,22 @@ module li_constants
    save
 
    ! physical constants
-   real (kind=RKIND), parameter, public :: cp_ice = 2009.0_RKIND        !< heat capacity of ice (J/kg/K)
-   real (kind=RKIND), parameter, public :: latent_heat_ice = 335.0e3_RKIND !< Latent heat of melting of ice (J/kg)
+   real (kind=RKIND), parameter, public :: cp_ice = 2.11727e3_RKIND        !< heat capacity of ice (J/kg/K)
+   real (kind=RKIND), parameter, public :: latent_heat_ice = 3.337e5_RKIND !< Latent heat of melting of ice (J/kg)
    real (kind=RKIND), parameter, public :: triple_point = 273.16_RKIND  !< Triple point of water (K)
    real (kind=RKIND), parameter, public :: rho_water = 1000.0_RKIND     !< Density of fresh water (kg m^-3)
    real (kind=RKIND), parameter, public :: cp_freshwater = 4.188e3_RKIND        !< heat capacity of freshwater (J/kg/K)
-   real (kind=RKIND), parameter, public :: cp_seawater = 3.974e3_RKIND        !< heat capacity of seawater (J/kg/K)
+   real (kind=RKIND), parameter, public :: cp_seawater = 3.996e3_RKIND        !< heat capacity of seawater (J/kg/K)
    real (kind=RKIND), parameter, public :: pii = 3.141592653589793_RKIND !< Constant: Pi
    real (kind=RKIND), parameter, public :: gravity = 9.80616_RKIND       !< Constant: Acceleration due to gravity [m s-2]
+   real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
+   real (kind=RKIND), parameter, public :: kelvin_to_celsius = 273.15_RKIND    !< factor to convert Kelvin to Celsius
+   real (kind=RKIND), parameter, public :: seconds_per_day = 86400.0_RKIND  !< Conversion from days to seconds
 
 #endif
 
    real (kind=RKIND), parameter, public :: kin_visc_water = 1.793e-6_RKIND  !< kinematic viscosity of freshwater at 0 deg C (m^2 s^-1)
    real (kind=RKIND), parameter, public :: idealGasConstant = 8.314_RKIND  !< ideal gas constant (J mol^-1 K^-1)
-   real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
 
    real (kind=RKIND), parameter, public :: &
         oceanFreezingTempSurface = -1.92_RKIND,  &  !< Freezing temperature of seawater (deg C) at surface pressure,
@@ -68,9 +73,7 @@ module li_constants
       !< Clausius-Clapeyron constant: Dependence of ice melting point on pressure (K Pa^-1)
 
    !  conversion factors
-   real (kind=RKIND), parameter, public :: kelvin_to_celsius = 273.15_RKIND    !< factor to convert Kelvin to Celsius
    real (kind=RKIND), parameter, public :: scyr = 31536000.0_RKIND       !< seconds in a 365-day year; used for diagnostics
-   real (kind=RKIND), parameter, public :: seconds_per_day = 86400.0_RKIND  !< Conversion from days to seconds
 
 !***********************************************************************
 
