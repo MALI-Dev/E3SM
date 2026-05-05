@@ -64,7 +64,7 @@ module li_constants
    real (kind=RKIND), parameter, private :: oceanFreezingTempPressureDependence = -7.43e-8_RKIND
    real (kind=RKIND), parameter, public :: kin_visc_water = 1.793e-6_RKIND  !< kinematic viscosity of freshwater at 0 deg C (m^2 s^-1)
    real (kind=RKIND), parameter, public :: idealGasConstant = shr_gas_constant * 1.0e-3_RKIND  !< ideal gas constant (J mol^-1 K^-1), converted from SHR_CONST_RGAS
-   real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = oceanFreezingTempPressureDependence * rho_water * gravity  !< Rate of change of freezing temperature with depth (deg m^-1), fallback equivalent to ocean_freezing_temperature_depth_dependence_reference
+   real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = oceanFreezingTempPressureDependence * rho_water * gravity  !< Rate of change of freezing temperature with depth (deg m^-1), standalone equivalent to ocean_freezing_temperature_depth_dependence_reference
    real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
    real (kind=RKIND), parameter, public :: kelvin_to_celsius = 273.15_RKIND    !< factor to convert Kelvin to Celsius
    real (kind=RKIND), parameter, public :: seconds_per_day = 86400.0_RKIND  !< Conversion from days to seconds
