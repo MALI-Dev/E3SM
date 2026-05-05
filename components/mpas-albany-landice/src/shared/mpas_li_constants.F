@@ -59,8 +59,8 @@ module li_constants
    real (kind=RKIND), parameter, public :: cp_seawater = 3.996e3_RKIND        !< heat capacity of seawater (J/kg/K), aligned with SHR_CONST_CPSW
    real (kind=RKIND), parameter, public :: pii = 3.14159265358979323846_RKIND !< Constant: Pi
    real (kind=RKIND), parameter, public :: gravity = 9.80616_RKIND       !< Constant: Acceleration due to gravity [m s-2]
-   real (kind=RKIND), parameter :: shr_gas_constant = 8314.467591_RKIND
-   real (kind=RKIND), parameter :: oceanFreezingTempPressureDependence = -7.43e-8_RKIND
+   real (kind=RKIND), parameter, private :: shr_gas_constant = 8314.467591_RKIND
+   real (kind=RKIND), parameter, private :: oceanFreezingTempPressureDependence = -7.43e-8_RKIND
    real (kind=RKIND), parameter, public :: kin_visc_water = 1.793e-6_RKIND  !< kinematic viscosity of freshwater at 0 deg C (m^2 s^-1)
    real (kind=RKIND), parameter, public :: idealGasConstant = shr_gas_constant * 1.0e-3_RKIND  !< ideal gas constant (J mol^-1 K^-1), converted from SHR_CONST_RGAS
    real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = oceanFreezingTempPressureDependence * rho_water * gravity  !< Rate of change of freezing temperature with depth (deg m^-1), from SHR_CONST_DTF_DZ
