@@ -23,22 +23,23 @@ module li_constants
    use mpas_kind_types
 
 #ifdef MPAS_ESM_SHR_CONST
-   use shr_const_mod, only: &
-          cp_ice => SHR_CONST_CPICE,&
-          latent_heat_ice => SHR_CONST_LATICE,&
-          triple_point => SHR_CONST_TKTRIP,&
-          rho_water => SHR_CONST_RHOFW, &
-          glacier_ice_density => SHR_CONST_RHOGLACIERICE, &
-          cp_freshwater => SHR_CONST_CPFW, &
-          cp_seawater => SHR_CONST_CPSW, &
-          pii => SHR_CONST_PI, &
-          gravity => SHR_CONST_G, &
-          kin_visc_water => SHR_CONST_KINVISCFW, &
-          shr_gas_constant => SHR_CONST_RGAS, &
-          oceanFreezingTempDepthDependence => SHR_CONST_DTF_DZ, &
-          iceConductivity => SHR_CONST_CONDICE, &
-          kelvin_to_celsius => SHR_CONST_TKFRZ, &
-          seconds_per_day => SHR_CONST_CDAY
+    use shr_const_mod, only: &
+           cp_ice => SHR_CONST_CPICE,&
+           latent_heat_ice => SHR_CONST_LATICE,&
+           triple_point => SHR_CONST_TKTRIP,&
+           rho_water => SHR_CONST_RHOFW, &
+           cp_freshwater => SHR_CONST_CPFW, &
+           cp_seawater => SHR_CONST_CPSW, &
+           pii => SHR_CONST_PI, &
+           gravity => SHR_CONST_G, &
+           shr_gas_constant => SHR_CONST_RGAS, &
+           iceConductivity => SHR_CONST_CONDICE, &
+           kelvin_to_celsius => SHR_CONST_TKFRZ, &
+           seconds_per_day => SHR_CONST_CDAY
+    use pcd, only: &
+           glacier_ice_density => glacier_ice_density_reference, &
+           kin_visc_water => freshwater_kinematic_viscosity_at_freezing_reference, &
+           oceanFreezingTempDepthDependence => ocean_freezing_temperature_pressure_depth_dependence_reference
     implicit none
     save
 
@@ -63,7 +64,7 @@ module li_constants
    real (kind=RKIND), parameter, private :: oceanFreezingTempPressureDependence = -7.43e-8_RKIND
    real (kind=RKIND), parameter, public :: kin_visc_water = 1.793e-6_RKIND  !< kinematic viscosity of freshwater at 0 deg C (m^2 s^-1)
    real (kind=RKIND), parameter, public :: idealGasConstant = shr_gas_constant * 1.0e-3_RKIND  !< ideal gas constant (J mol^-1 K^-1), converted from SHR_CONST_RGAS
-   real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = oceanFreezingTempPressureDependence * rho_water * gravity  !< Rate of change of freezing temperature with depth (deg m^-1), from SHR_CONST_DTF_DZ
+   real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = oceanFreezingTempPressureDependence * rho_water * gravity  !< Rate of change of freezing temperature with depth (deg m^-1), aligned with shared depth coefficient
    real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
    real (kind=RKIND), parameter, public :: kelvin_to_celsius = 273.15_RKIND    !< factor to convert Kelvin to Celsius
    real (kind=RKIND), parameter, public :: seconds_per_day = 86400.0_RKIND  !< Conversion from days to seconds

@@ -1,0 +1,18 @@
+physical_constants_dictionary:
+  version_number: 0.1.0
+  institution: E3SM Project
+  description: Minimal PCD constants used by MALI/MPAS-Ocean shared-constant wiring
+
+  earth_seawater:
+    glacier_ice_density_reference:
+      value: 910.0
+      units: kg m-3
+      description: Reference density for glacier ice
+    freshwater_kinematic_viscosity_at_freezing_reference:
+      value: 1.793e-6
+      units: m2 s-1
+      description: Kinematic viscosity of freshwater at 0 C
+    ocean_freezing_temperature_pressure_depth_dependence_reference:
+      value: -7.28617688e-4
+      units: C m-1
+      description: Depth coefficient for pressure-driven ocean freezing temperature

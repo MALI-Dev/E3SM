@@ -6,6 +6,7 @@
 MODULE shr_const_mod
 
    use shr_kind_mod, only : R8 => shr_kind_r8
+   use pcd, only : glacier_ice_density_reference
 
    !----------------------------------------------------------------------------
    ! physical constants (all data public)
@@ -46,7 +47,7 @@ MODULE shr_const_mod
    real(R8),parameter :: SHR_CONST_RHOFW   = 1.000e3_R8      ! density of fresh water     ~ kg/m^3
    real(R8),parameter :: SHR_CONST_RHOSW   = 1.026e3_R8      ! density of sea water       ~ kg/m^3
    real(R8),parameter :: SHR_CONST_RHOICE  = 0.917e3_R8      ! density of ice             ~ kg/m^3
-   real(R8),parameter :: SHR_CONST_RHOGLACIERICE = 0.910e3_R8 ! density of glacier ice    ~ kg/m^3
+   real(R8),parameter :: SHR_CONST_RHOGLACIERICE = glacier_ice_density_reference ! density of glacier ice ~ kg/m^3
    real(R8),parameter :: SHR_CONST_CPDAIR  = 1.00464e3_R8    ! specific heat of dry air   ~ J/kg/K
    real(R8),parameter :: SHR_CONST_CPWV    = 1.810e3_R8      ! specific heat of water vap ~ J/kg/K
    real(R8),parameter :: SHR_CONST_CPVIR   = (SHR_CONST_CPWV/SHR_CONST_CPDAIR)-1.0_R8 ! CPWV/CPDAIR - 1.0
@@ -57,7 +58,6 @@ MODULE shr_const_mod
    real(R8),parameter :: SHR_CONST_LATVAP  = 2.501e6_R8      ! latent heat of evaporation ~ J/kg
    real(R8),parameter :: SHR_CONST_LATSUB  = &               ! latent heat of sublimation ~ J/kg
                          SHR_CONST_LATICE + SHR_CONST_LATVAP
-   real(R8),parameter :: SHR_CONST_KINVISCFW = 1.793e-6_R8   ! kinematic viscosity of freshwater at 0 C ~ m^2/s
    real(R8),parameter :: SHR_CONST_CONDICE = 2.1_R8          ! thermal conductivity of ice ~ W/m/K
    real(R8),parameter :: SHR_CONST_KAPPA_LAND_ICE = &        ! Diffusivity of heat in land ice ~
                          SHR_CONST_CONDICE / (SHR_CONST_RHOICE*SHR_CONST_CPICE)
@@ -69,7 +69,6 @@ MODULE shr_const_mod
    ! the freezing temperature in sub-ice-ice ocean cavities ~ C PSU^{-1}
    real(R8),parameter :: SHR_CONST_DTF_DPDS = -1.74e-10_R8   ! The coefficient for the term proportional to salinity times
    ! pressure in the freezing temperature in sub-ice-shelf ocean cavities ~ C PSU^{-1} Pa^{-1}
-   real(R8),parameter :: SHR_CONST_DTF_DZ = SHR_CONST_DTF_DP*SHR_CONST_RHOFW*SHR_CONST_G  ! coefficient for pressure-driven cavity Tf with depth ~ C m^{-1}
    real(R8),parameter :: SHR_CONST_OCN_REF_SAL = 34.7_R8     ! ocn ref salinity (psu)
    real(R8),parameter :: SHR_CONST_ICE_REF_SAL =  4.0_R8     ! ice ref salinity (psu)
 
