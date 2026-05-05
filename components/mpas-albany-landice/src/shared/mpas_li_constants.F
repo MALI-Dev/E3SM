@@ -60,8 +60,8 @@ module li_constants
    real (kind=RKIND), parameter, public :: pii = 3.14159265358979323846_RKIND !< Constant: Pi
    real (kind=RKIND), parameter, public :: gravity = 9.80616_RKIND       !< Constant: Acceleration due to gravity [m s-2]
    real (kind=RKIND), parameter, public :: kin_visc_water = 1.793e-6_RKIND  !< kinematic viscosity of freshwater at 0 deg C (m^2 s^-1)
-   real (kind=RKIND), parameter, public :: idealGasConstant = 8.31445891_RKIND  !< ideal gas constant (J mol^-1 K^-1), converted from SHR_CONST_RGAS = 8314.45891 (J kmol^-1 K^-1)
-   real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = -7.28617688e-4_RKIND  !< Rate of change of freezing temperature with depth (deg m^-1), from SHR_CONST_DTF_DZ = SHR_CONST_DTF_DP*SHR_CONST_RHOFW*SHR_CONST_G
+   real (kind=RKIND), parameter, public :: idealGasConstant = 8.314467591_RKIND  !< ideal gas constant (J mol^-1 K^-1), converted from SHR_CONST_RGAS
+   real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = -7.28617688e-4_RKIND  !< Rate of change of freezing temperature with depth (deg m^-1), from SHR_CONST_DTF_DZ
    real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
    real (kind=RKIND), parameter, public :: kelvin_to_celsius = 273.15_RKIND    !< factor to convert Kelvin to Celsius
    real (kind=RKIND), parameter, public :: seconds_per_day = 86400.0_RKIND  !< Conversion from days to seconds
