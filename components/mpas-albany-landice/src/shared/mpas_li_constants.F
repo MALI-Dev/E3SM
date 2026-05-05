@@ -50,7 +50,7 @@ module li_constants
    real (kind=RKIND), parameter, public :: rho_water = 1000.0_RKIND     !< Density of fresh water (kg m^-3)
    real (kind=RKIND), parameter, public :: cp_freshwater = 4.188e3_RKIND        !< heat capacity of freshwater (J/kg/K)
    real (kind=RKIND), parameter, public :: cp_seawater = 3.996e3_RKIND        !< heat capacity of seawater (J/kg/K), aligned with SHR_CONST_CPSW
-   real (kind=RKIND), parameter, public :: pii = 3.141592653589793_RKIND !< Constant: Pi
+   real (kind=RKIND), parameter, public :: pii = 3.14159265358979323846_RKIND !< Constant: Pi
    real (kind=RKIND), parameter, public :: gravity = 9.80616_RKIND       !< Constant: Acceleration due to gravity [m s-2]
    real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
    real (kind=RKIND), parameter, public :: kelvin_to_celsius = 273.15_RKIND    !< factor to convert Kelvin to Celsius
@@ -73,7 +73,7 @@ module li_constants
       !< Clausius-Clapeyron constant: Dependence of ice melting point on pressure (K Pa^-1)
 
    !  conversion factors
-   real (kind=RKIND), parameter, public :: scyr = 31536000.0_RKIND       !< seconds in a 365-day year; used for diagnostics
+   real (kind=RKIND), parameter, public :: scyr = seconds_per_day * 365.0_RKIND       !< seconds in a 365-day year; used for diagnostics
 
 !***********************************************************************
 
