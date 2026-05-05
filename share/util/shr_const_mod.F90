@@ -47,7 +47,7 @@ MODULE shr_const_mod
    real(R8),parameter :: SHR_CONST_RHOFW   = 1.000e3_R8      ! density of fresh water     ~ kg/m^3
    real(R8),parameter :: SHR_CONST_RHOSW   = 1.026e3_R8      ! density of sea water       ~ kg/m^3
    real(R8),parameter :: SHR_CONST_RHOICE  = 0.917e3_R8      ! density of ice             ~ kg/m^3
-   real(R8),parameter :: SHR_CONST_RHOGLACIERICE = glacier_ice_density_reference ! density of glacier ice ~ kg/m^3
+   real(R8),parameter :: SHR_CONST_RHOGLACIERICE = glacier_ice_density_reference ! density of glacier ice    ~ kg/m^3
    real(R8),parameter :: SHR_CONST_CPDAIR  = 1.00464e3_R8    ! specific heat of dry air   ~ J/kg/K
    real(R8),parameter :: SHR_CONST_CPWV    = 1.810e3_R8      ! specific heat of water vap ~ J/kg/K
    real(R8),parameter :: SHR_CONST_CPVIR   = (SHR_CONST_CPWV/SHR_CONST_CPDAIR)-1.0_R8 ! CPWV/CPDAIR - 1.0
