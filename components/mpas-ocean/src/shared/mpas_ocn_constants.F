@@ -26,7 +26,6 @@ module ocn_constants
 #ifdef MPAS_ESM_SHR_CONST
     use shr_kind_mod, only: SHR_KIND_R8
     use shr_const_mod
-    use pcd_const, only: glacier_ice_density_reference
 #endif
 
    implicit none
@@ -168,7 +167,6 @@ contains
        rho_air                = SHR_CONST_RHODAIR       ! kg/m^3
        rho_sw                 = SHR_CONST_RHOSW         ! kg/m^3
        rho_fw                 = SHR_CONST_RHOFW         ! kg/m^3
-       rho_glacier_ice_default = glacier_ice_density_reference ! kg/m^3
        vonkar                 = SHR_CONST_KARMAN
        stefan_boltzmann       = SHR_CONST_STEBOL        ! W/m^2/K^4
        latent_heat_vapor_mks  = SHR_CONST_LATVAP        ! J/kg
