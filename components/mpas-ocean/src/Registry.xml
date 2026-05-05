@@ -1117,7 +1117,7 @@
 		/>
 		<nml_option name="config_land_ice_flux_rho_ice" type="real" default_value="918" units="kg m^-3"
 					description="The density of land ice."
-					possible_values="Any positive real number"
+					possible_values="Any positive real number, or a negative value to use model default"
 		/>
 		<nml_option name="config_land_ice_flux_explicit_topDragCoeff" type="real" default_value="2.5e-3"
 					description="The top drag coefficient if config_use_implicit_top_drag_coeff is false."

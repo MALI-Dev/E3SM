@@ -28,15 +28,21 @@ module li_constants
           latent_heat_ice => SHR_CONST_LATICE,&
           triple_point => SHR_CONST_TKTRIP,&
           rho_water => SHR_CONST_RHOFW, &
+          glacier_ice_density => SHR_CONST_RHOGLACIERICE, &
           cp_freshwater => SHR_CONST_CPFW, &
           cp_seawater => SHR_CONST_CPSW, &
           pii => SHR_CONST_PI, &
           gravity => SHR_CONST_G, &
+          kin_visc_water => SHR_CONST_KINVISCFW, &
+          shr_gas_constant => SHR_CONST_RGAS, &
+          oceanFreezingTempDepthDependence => SHR_CONST_DTF_DZ, &
           iceConductivity => SHR_CONST_CONDICE, &
           kelvin_to_celsius => SHR_CONST_TKFRZ, &
           seconds_per_day => SHR_CONST_CDAY
-   implicit none
-   save
+    implicit none
+    save
+
+    real (kind=RKIND), parameter, public :: idealGasConstant = shr_gas_constant * 1.0e-3_RKIND  !< ideal gas constant (J mol^-1 K^-1), aligned with SHR_CONST_RGAS
 
 #else
 
@@ -48,26 +54,23 @@ module li_constants
    real (kind=RKIND), parameter, public :: latent_heat_ice = 3.337e5_RKIND !< Latent heat of melting of ice (J/kg), aligned with SHR_CONST_LATICE
    real (kind=RKIND), parameter, public :: triple_point = 273.16_RKIND  !< Triple point of water (K)
    real (kind=RKIND), parameter, public :: rho_water = 1000.0_RKIND     !< Density of fresh water (kg m^-3)
+   real (kind=RKIND), parameter, public :: glacier_ice_density = 910.0_RKIND !< Density of glacier ice (kg m^-3)
    real (kind=RKIND), parameter, public :: cp_freshwater = 4.188e3_RKIND        !< heat capacity of freshwater (J/kg/K)
    real (kind=RKIND), parameter, public :: cp_seawater = 3.996e3_RKIND        !< heat capacity of seawater (J/kg/K), aligned with SHR_CONST_CPSW
    real (kind=RKIND), parameter, public :: pii = 3.14159265358979323846_RKIND !< Constant: Pi
    real (kind=RKIND), parameter, public :: gravity = 9.80616_RKIND       !< Constant: Acceleration due to gravity [m s-2]
+   real (kind=RKIND), parameter, public :: kin_visc_water = 1.793e-6_RKIND  !< kinematic viscosity of freshwater at 0 deg C (m^2 s^-1)
+   real (kind=RKIND), parameter, public :: idealGasConstant = 8.31446261815324_RKIND  !< ideal gas constant (J mol^-1 K^-1)
+   real (kind=RKIND), parameter, public :: oceanFreezingTempDepthDependence = -7.28617688e-4_RKIND  !< Rate of change of freezing temperature with depth (deg m^-1), from SHR_CONST_DTF_DZ
    real (kind=RKIND), parameter, public :: iceConductivity = 2.1_RKIND  !< thermal conductivity of ice (W m^-1 K^-1)
    real (kind=RKIND), parameter, public :: kelvin_to_celsius = 273.15_RKIND    !< factor to convert Kelvin to Celsius
    real (kind=RKIND), parameter, public :: seconds_per_day = 86400.0_RKIND  !< Conversion from days to seconds
 
 #endif
 
-   real (kind=RKIND), parameter, public :: kin_visc_water = 1.793e-6_RKIND  !< kinematic viscosity of freshwater at 0 deg C (m^2 s^-1)
-   real (kind=RKIND), parameter, public :: idealGasConstant = 8.314_RKIND  !< ideal gas constant (J mol^-1 K^-1)
-
    real (kind=RKIND), parameter, public :: &
-        oceanFreezingTempSurface = -1.92_RKIND,  &  !< Freezing temperature of seawater (deg C) at surface pressure,
-                                                    !< given S = 35 PSU
-        oceanFreezingTempDepthDependence = -7.53e-4_RKIND  !< Rate of change of freezing temperature of seawater
-                                                           !< with depth (deg m^-1), given S = 35 PSU
-                                                           !< These values are from the Ocean Water Freezing Point Calculator,
-                                                           !< http://www.csgnetwork.com/h2ofreezecalc.html (25 Nov. 2014)
+        oceanFreezingTempSurface = -1.92_RKIND  !< Freezing temperature of seawater (deg C) at surface pressure,
+                                                 !< given S = 35 PSU
 
    real (kind=RKIND), parameter, public :: iceMeltingPointPressureDependence = 7.9e-8_RKIND
       !< Clausius-Clapeyron constant: Dependence of ice melting point on pressure (K Pa^-1)
