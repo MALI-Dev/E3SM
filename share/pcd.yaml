@@ -1,5 +1,6 @@
 physical_constants_dictionary:
   version_number: 0.1.0
+  version_note: Initial in-repo PCD constants for MALI/MPAS-Ocean shared-default alignment; increment when values or names change.
   institution: E3SM Project
   description: Minimal PCD constants used by MALI/MPAS-Ocean shared-constant wiring
 
