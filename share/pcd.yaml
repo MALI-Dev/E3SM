@@ -3,7 +3,7 @@ physical_constants_dictionary:
   institution: E3SM Project
   description: Minimal PCD constants used by MALI/MPAS-Ocean shared-constant wiring
 
-  earth_seawater:
+  ice_ocean_properties:
     glacier_ice_density_reference:
       value: 910.0
       units: kg m^-3
