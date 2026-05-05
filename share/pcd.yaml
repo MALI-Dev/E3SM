@@ -14,5 +14,5 @@ physical_constants_dictionary:
       description: Kinematic viscosity of freshwater at 0 C
     ocean_freezing_temperature_pressure_depth_dependence_reference:
       value: -7.28617688e-4
-      units: C m-1
+      units: C m^-1
       description: Depth coefficient for pressure-driven ocean freezing temperature
