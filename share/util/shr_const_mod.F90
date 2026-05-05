@@ -6,7 +6,7 @@
 MODULE shr_const_mod
 
    use shr_kind_mod, only : R8 => shr_kind_r8
-   use pcd, only : glacier_ice_density_reference
+   use pcd_const, only : glacier_ice_density_reference
 
    !----------------------------------------------------------------------------
    ! physical constants (all data public)

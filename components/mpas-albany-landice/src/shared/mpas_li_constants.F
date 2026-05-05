@@ -36,7 +36,7 @@ module li_constants
            iceConductivity => SHR_CONST_CONDICE, &
            kelvin_to_celsius => SHR_CONST_TKFRZ, &
            seconds_per_day => SHR_CONST_CDAY
-    use pcd, only: &
+    use pcd_const, only: &
            glacier_ice_density => glacier_ice_density_reference, &
            kin_visc_water => freshwater_kinematic_viscosity_at_freezing_reference, &
            oceanFreezingTempDepthDependence => ocean_freezing_temperature_pressure_depth_dependence_reference
