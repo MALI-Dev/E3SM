@@ -4074,7 +4074,7 @@ module li_calving
          crevasseWaterDepth(:) = config_crevasse_water_depth
       elseif (trim(config_crevasse_water_depth_source) == "data") then
          ! Do nothing. This was already retrieved above.
-      elseif (trim(config_crevasse_water_depth_source) == "scaled_smb") then
+      elseif (trim(config_crevasse_water_depth_source) == "scaled_smb_cumulative") then
          where (sfcMassBalApplied < 0.0_RKIND)
              crevasseWaterDepth = crevasseWaterDepth + &
                  (-1.0_RKIND * config_smb_fraction_to_water_depth * &
@@ -4082,8 +4082,11 @@ module li_calving
          elsewhere
              crevasseWaterDepth = 0.0_RKIND
          endwhere
+      elseif (trim(config_crevasse_water_depth_source) == "scaled_smb_instantaneous") then
+         crevasseWaterDepth = config_smb_fraction_to_water_depth * max(0.0_RKIND, -1.0_RKIND * sfcMassBalApplied)
       else
-         call mpas_log_write("config_crevasse_water_depth_source must be set to 'scalar', 'data', or 'scaled_smb'.", MPAS_LOG_ERR)
+         call mpas_log_write("config_crevasse_water_depth_source must be set to 'scalar', 'data', 'scaled_smb_cumulative', " // &
+                             "or 'scaled_smb_instantaneous'.", MPAS_LOG_ERR)
          err = 1
          return
       endif
