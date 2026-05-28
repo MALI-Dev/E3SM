@@ -24,8 +24,8 @@ module ocn_constants
    use mpas_kind_types
 
 #ifdef MPAS_ESM_SHR_CONST
-   use shr_kind_mod, only: SHR_KIND_R8
-   use shr_const_mod
+    use shr_kind_mod, only: SHR_KIND_R8
+    use shr_const_mod
 #endif
 
    implicit none
@@ -44,7 +44,7 @@ module ocn_constants
       rho_air               ,&! ambient air density (kg/m^3)
       rho_fw                ,&! density of fresh water (kg/m^3)
       rho_sw                ,&! density of salt water (kg/m^3)
-      rho_ice               ,&! density of sea ice (kg/m^3)
+      rho_glacier_ice_default,&! default density of glacier ice (kg/m^3)
       cp_sw                 ,&! specific heat salt water (J/kg/K)
       cp_air                ,&! heat capacity of air (J/kg/K)
       sound                 ,&! speed of sound (m/s)
@@ -122,7 +122,7 @@ contains
        rho_air   = 1.2_RKIND                  ! ambient air density (kg/m^3)
        rho_sw    = config_density0            ! density of salt water (kg/m^3)
        rho_fw    = 1.0e3_RKIND                ! avg. water density (kg/m^3)
-       rho_ice   = 0.917e3_RKIND              ! density of ice (kg/m^3)
+       rho_glacier_ice_default = 0.910e3_RKIND ! density of glacier ice (kg/m^3)
        cp_sw     = 3.996e3_RKIND              ! specific heat salt water
        cp_air    = 1005.0_RKIND               ! heat capacity of air (J/kg/K)
        sound     = 1.5e2_RKIND                ! speed of sound (m/s)
@@ -167,7 +167,6 @@ contains
        rho_air                = SHR_CONST_RHODAIR       ! kg/m^3
        rho_sw                 = SHR_CONST_RHOSW         ! kg/m^3
        rho_fw                 = SHR_CONST_RHOFW         ! kg/m^3
-       rho_ice                = SHR_CONST_RHOICE        ! kg/m^3
        vonkar                 = SHR_CONST_KARMAN
        stefan_boltzmann       = SHR_CONST_STEBOL        ! W/m^2/K^4
        latent_heat_vapor_mks  = SHR_CONST_LATVAP        ! J/kg

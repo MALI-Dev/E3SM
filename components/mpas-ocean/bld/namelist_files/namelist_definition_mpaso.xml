@@ -1819,7 +1819,7 @@ Default: Defined in namelist_defaults.xml
 	category="land_ice_fluxes" group="land_ice_fluxes">
 The density of land ice.
 
-Valid values: Any positive real number
+Valid values: Any positive real number, or a negative value to use model default
 Default: Defined in namelist_defaults.xml
 </entry>
 

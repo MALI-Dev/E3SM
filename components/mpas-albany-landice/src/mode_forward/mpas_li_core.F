@@ -109,6 +109,7 @@ module li_core
       type (MPAS_Time_Type) :: startTime
       integer :: i, err, err_tmp, globalErr
       logical, pointer :: config_do_restart
+      real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND), pointer :: deltat  ! variable in each block
       real (kind=RKIND) :: dtSeconds ! local variable
       type (MPAS_Pool_type), pointer :: meshPool, geometryPool, velocityPool, timeAveragingPool
@@ -127,6 +128,12 @@ module li_core
 
       call li_config_init(domain % configs)
       call mpas_pool_get_config(domain % configs, 'config_do_restart', config_do_restart)
+      call mpas_pool_get_config(domain % configs, 'config_ice_density', config_ice_density)
+
+      if (config_ice_density < 0.0_RKIND) then
+         config_ice_density = glacier_ice_density
+         call mpas_log_write('config_ice_density < 0: using glacier_ice_density from li_constants.')
+      end if
 
       !
       ! Initialize config option settings as needed
