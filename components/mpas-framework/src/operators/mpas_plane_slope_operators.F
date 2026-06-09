@@ -63,10 +63,10 @@ contains
       integer, pointer :: config_num_halos
 
       integer, allocatable, dimension(:) :: visited, ringByCell, frontier, nextFrontier, stencil
-      integer :: iCell, i, iRing, iFront, iNbr, iCellNbr
-      integer :: frontierCount, nextFrontierCount, stencilCount
+      integer :: iCell, stencilCount
       integer :: maxBuiltRing, effectiveRing
       integer :: visitTag
+      integer :: seedCells(1)
       real(kind=RKIND) :: aCoeff, bCoeff
       logical :: fitOK
 
@@ -132,53 +132,12 @@ contains
             end if
          end if
 
-         visitTag = visitTag + 1
-         if (visitTag == huge(visitTag)) then
-            visited = 0
-            visitTag = 1
-         end if
+         seedCells(1) = iCell
+         call mpas_build_contiguous_cell_stencil(seedCells, 1, ringCount, nCells, nEdgesOnCell, cellsOnCell, &
+                                                 visited, ringByCell, frontier, nextFrontier, stencil, visitTag, &
+                                                 stencilCount, maxBuiltRing, validMask)
 
-         frontierCount = 1
-         frontier(1) = iCell
-         visited(iCell) = visitTag
-         ringByCell(iCell) = 0
-
-         stencilCount = 1
-         stencil(1) = iCell
-         maxBuiltRing = 0
-
-         ! Breadth-first expansion over cellsOnCell builds a contiguous stencil up to ringCount.
-         do iRing = 1, ringCount
-            nextFrontierCount = 0
-
-            do iFront = 1, frontierCount
-               do iNbr = 1, nEdgesOnCell(frontier(iFront))
-                  iCellNbr = cellsOnCell(iNbr, frontier(iFront))
-
-                  if (iCellNbr < 1 .or. iCellNbr > nCells) cycle
-                  if (visited(iCellNbr) == visitTag) cycle
-
-                  if (present(validMask)) then
-                     if (.not. validMask(iCellNbr)) cycle
-                  end if
-
-                  visited(iCellNbr) = visitTag
-                  ringByCell(iCellNbr) = iRing
-
-                  nextFrontierCount = nextFrontierCount + 1
-                  nextFrontier(nextFrontierCount) = iCellNbr
-
-                  stencilCount = stencilCount + 1
-                  stencil(stencilCount) = iCellNbr
-               end do
-            end do
-
-            if (nextFrontierCount == 0) exit
-
-            frontier(1:nextFrontierCount) = nextFrontier(1:nextFrontierCount)
-            frontierCount = nextFrontierCount
-            maxBuiltRing = iRing
-         end do
+         if (stencilCount <= 0) cycle
 
          ! Reduce outer rings until a stable linear fit is available.
          effectiveRing = maxBuiltRing
@@ -210,6 +169,98 @@ contains
 
 !***********************************************************************
 !
+!  routine mpas_build_contiguous_cell_stencil
+!
+!> \brief   Build a mask-aware contiguous ring stencil from one or more seed cells
+!> \author  MPAS Development Team
+!> \date    06/09/26
+!
+!-----------------------------------------------------------------------
+   subroutine mpas_build_contiguous_cell_stencil(seedCells, nSeed, ringCount, nCells, nEdgesOnCell, cellsOnCell, &
+                                                 visited, ringByCell, frontier, nextFrontier, stencil, visitTag, &
+                                                 stencilCount, maxBuiltRing, validMask)!{{{
+
+      integer, dimension(:), intent(in) :: seedCells
+      integer, intent(in) :: nSeed, ringCount, nCells
+      integer, dimension(:), intent(in) :: nEdgesOnCell
+      integer, dimension(:,:), intent(in) :: cellsOnCell
+      integer, dimension(:), intent(inout) :: visited, ringByCell, frontier, nextFrontier, stencil
+      integer, intent(inout) :: visitTag
+      integer, intent(out) :: stencilCount, maxBuiltRing
+      logical, dimension(:), intent(in), optional :: validMask
+
+      integer :: iSeed, iRing, iFront, iNbr, iCell, iCellNbr
+      integer :: frontierCount, nextFrontierCount
+
+      visitTag = visitTag + 1
+      if (visitTag == huge(visitTag)) then
+         visited = 0
+         visitTag = 1
+      end if
+
+      frontierCount = 0
+      stencilCount = 0
+      maxBuiltRing = 0
+
+      do iSeed = 1, nSeed
+         iCell = seedCells(iSeed)
+
+         if (iCell < 1 .or. iCell > nCells) cycle
+         if (visited(iCell) == visitTag) cycle
+
+         if (present(validMask)) then
+            if (.not. validMask(iCell)) cycle
+         end if
+
+         visited(iCell) = visitTag
+         ringByCell(iCell) = 0
+
+         frontierCount = frontierCount + 1
+         frontier(frontierCount) = iCell
+
+         stencilCount = stencilCount + 1
+         stencil(stencilCount) = iCell
+      end do
+
+      if (frontierCount == 0) return
+
+      do iRing = 1, ringCount
+         nextFrontierCount = 0
+
+         do iFront = 1, frontierCount
+            do iNbr = 1, nEdgesOnCell(frontier(iFront))
+               iCellNbr = cellsOnCell(iNbr, frontier(iFront))
+
+               if (iCellNbr < 1 .or. iCellNbr > nCells) cycle
+               if (visited(iCellNbr) == visitTag) cycle
+
+               if (present(validMask)) then
+                  if (.not. validMask(iCellNbr)) cycle
+               end if
+
+               visited(iCellNbr) = visitTag
+               ringByCell(iCellNbr) = iRing
+
+               nextFrontierCount = nextFrontierCount + 1
+               nextFrontier(nextFrontierCount) = iCellNbr
+
+               stencilCount = stencilCount + 1
+               stencil(stencilCount) = iCellNbr
+            end do
+         end do
+
+         if (nextFrontierCount == 0) exit
+
+         frontier(1:nextFrontierCount) = nextFrontier(1:nextFrontierCount)
+         frontierCount = nextFrontierCount
+         maxBuiltRing = iRing
+      end do
+
+   end subroutine mpas_build_contiguous_cell_stencil!}}}
+
+
+!***********************************************************************
+!
 !  routine mpas_try_plane_fit
 !
 !> \brief   Attempt linear plane fit over a reduced ring stencil
@@ -227,9 +278,40 @@ contains
       real(kind=RKIND), intent(out) :: aCoeff, bCoeff                ! Plane slopes dz/dx and dz/dy
       logical, intent(out) :: fitOK                                  ! .true. when solve is well-posed
 
+      real(kind=RKIND) :: x0, y0, z0
+
+      x0 = xCell(iCenter)
+      y0 = yCell(iCenter)
+      z0 = fieldCell(iCenter)
+
+      call mpas_try_plane_fit_reference(x0, y0, z0, maxRing, stencil, stencilCount, ringByCell, &
+                                        xCell, yCell, fieldCell, aCoeff, bCoeff, fitOK)
+
+   end subroutine mpas_try_plane_fit!}}}
+
+
+!***********************************************************************
+!
+!  routine mpas_try_plane_fit_reference
+!
+!> \brief   Attempt linear plane fit over a reduced ring stencil around a reference point
+!> \author  MPAS Development Team
+!> \date    06/09/26
+!
+!-----------------------------------------------------------------------
+   subroutine mpas_try_plane_fit_reference(xRef, yRef, zRef, maxRing, stencil, stencilCount, ringByCell, &
+                                           xCell, yCell, fieldCell, aCoeff, bCoeff, fitOK)!{{{
+
+      real(kind=RKIND), intent(in) :: xRef, yRef, zRef
+      integer, intent(in) :: maxRing, stencilCount
+      integer, dimension(:), intent(in) :: stencil, ringByCell
+      real(kind=RKIND), dimension(:), intent(in) :: xCell, yCell, fieldCell
+      real(kind=RKIND), intent(out) :: aCoeff, bCoeff
+      logical, intent(out) :: fitOK
+
       integer :: i, iCell
       integer :: nPoints
-      real(kind=RKIND) :: x0, y0, z0, dx, dy, dz
+      real(kind=RKIND) :: dx, dy, dz
       real(kind=RKIND), dimension(3,3) :: mat
       real(kind=RKIND), dimension(3) :: rhs, soln
       real(kind=RKIND) :: detScale
@@ -238,22 +320,18 @@ contains
       aCoeff = 0.0_RKIND
       bCoeff = 0.0_RKIND
 
-      x0 = xCell(iCenter)
-      y0 = yCell(iCenter)
-      z0 = fieldCell(iCenter)
-
       mat = 0.0_RKIND
       rhs = 0.0_RKIND
       nPoints = 0
 
-      ! Build normal equations for dz = a*dx + b*dy + c in center-relative coordinates.
+      ! Build normal equations for dz = a*dx + b*dy + c in reference-relative coordinates.
       do i = 1, stencilCount
          iCell = stencil(i)
          if (ringByCell(iCell) > maxRing) cycle
 
-         dx = xCell(iCell) - x0
-         dy = yCell(iCell) - y0
-         dz = fieldCell(iCell) - z0
+         dx = xCell(iCell) - xRef
+         dy = yCell(iCell) - yRef
+         dz = fieldCell(iCell) - zRef
 
          mat(1,1) = mat(1,1) + dx*dx
          mat(1,2) = mat(1,2) + dx*dy
@@ -286,7 +364,7 @@ contains
       aCoeff = soln(1)
       bCoeff = soln(2)
 
-   end subroutine mpas_try_plane_fit!}}}
+   end subroutine mpas_try_plane_fit_reference!}}}
 
 
 !***********************************************************************
