@@ -29,6 +29,7 @@ module mpas_plane_slope_operators
    save
 
    public :: mpas_max_plane_slope_ring
+   public :: mpas_edge_plane_slopes_ring
 
 contains
 
@@ -165,6 +166,152 @@ contains
       deallocate(stencil)
 
    end subroutine mpas_max_plane_slope_ring!}}}
+
+
+!***********************************************************************
+!
+!  routine mpas_edge_plane_slopes_ring
+!
+!> \brief   Compute signed normal and tangent plane-fit slopes on edges
+!> \author  MPAS Development Team
+!> \date    06/09/26
+!> \details
+!> For each owned edge, this routine fits a linear plane to neighboring
+!> cell-center values over a contiguous ring stencil around the edge and
+!> returns the projected slope components along edge-normal and edge-
+!> tangent directions. The routine is planar-mesh only.
+!
+!-----------------------------------------------------------------------
+   subroutine mpas_edge_plane_slopes_ring(fieldCell, meshPool, configPool, ringCount, normalSlopeEdge, &
+                                          tangentSlopeEdge, validMask)!{{{
+
+      real(kind=RKIND), dimension(:), intent(in) :: fieldCell
+      type(mpas_pool_type), intent(in) :: meshPool
+      type(mpas_pool_type), intent(in) :: configPool
+      integer, intent(in) :: ringCount
+      real(kind=RKIND), dimension(:), intent(out) :: normalSlopeEdge
+      real(kind=RKIND), dimension(:), intent(out) :: tangentSlopeEdge
+      logical, dimension(:), intent(in), optional :: validMask
+
+      integer, pointer :: nCells, nEdgesSolve
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: cellsOnCell, cellsOnEdge
+      real(kind=RKIND), dimension(:), pointer :: xCell, yCell, xEdge, yEdge, angleEdge
+      logical, pointer :: on_a_sphere
+      integer, pointer :: config_num_halos
+
+      integer, allocatable, dimension(:) :: visited, ringByCell, frontier, nextFrontier, stencil
+      integer :: iEdge, iCell1, iCell2, stencilCount
+      integer :: maxBuiltRing, effectiveRing
+      integer :: visitTag
+      integer :: seedCells(2)
+      real(kind=RKIND) :: xRef, yRef, zRef
+      real(kind=RKIND) :: aCoeff, bCoeff
+      real(kind=RKIND) :: edgeCos, edgeSin
+      logical :: fitOK
+
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+      call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
+
+      call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
+      call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(meshPool, 'xCell', xCell)
+      call mpas_pool_get_array(meshPool, 'yCell', yCell)
+      call mpas_pool_get_array(meshPool, 'xEdge', xEdge)
+      call mpas_pool_get_array(meshPool, 'yEdge', yEdge)
+      call mpas_pool_get_array(meshPool, 'angleEdge', angleEdge)
+      call mpas_pool_get_config(meshPool, 'on_a_sphere', on_a_sphere)
+      call mpas_pool_get_config(configPool, 'config_num_halos', config_num_halos)
+
+      if (ringCount < 1) then
+         call mpas_log_write('mpas_edge_plane_slopes_ring: ringCount must be >= 1.', MPAS_LOG_CRIT)
+      end if
+
+      if (ringCount > config_num_halos) then
+         call mpas_log_write('mpas_edge_plane_slopes_ring: requested ring count $i exceeds config_num_halos $i.', &
+            MPAS_LOG_CRIT, intArgs=(/ringCount, config_num_halos/))
+      end if
+
+      if (on_a_sphere) then
+         call mpas_log_write('mpas_edge_plane_slopes_ring currently supports planar meshes only.', MPAS_LOG_CRIT)
+      end if
+
+      if (size(normalSlopeEdge) < nEdgesSolve) then
+         call mpas_log_write('mpas_edge_plane_slopes_ring: output array normalSlopeEdge is too small.', MPAS_LOG_CRIT)
+      end if
+
+      if (size(tangentSlopeEdge) < nEdgesSolve) then
+         call mpas_log_write('mpas_edge_plane_slopes_ring: output array tangentSlopeEdge is too small.', MPAS_LOG_CRIT)
+      end if
+
+      if (size(fieldCell) < nCells) then
+         call mpas_log_write('mpas_edge_plane_slopes_ring: input array fieldCell is too small.', MPAS_LOG_CRIT)
+      end if
+
+      if (present(validMask)) then
+         if (size(validMask) < nCells) then
+            call mpas_log_write('mpas_edge_plane_slopes_ring: optional validMask is too small.', MPAS_LOG_CRIT)
+         end if
+      end if
+
+      normalSlopeEdge = 0.0_RKIND
+      tangentSlopeEdge = 0.0_RKIND
+
+      allocate(visited(nCells))
+      allocate(ringByCell(nCells))
+      allocate(frontier(nCells))
+      allocate(nextFrontier(nCells))
+      allocate(stencil(nCells))
+
+      visited = 0
+      ringByCell = -1
+      visitTag = 0
+
+      do iEdge = 1, nEdgesSolve
+
+         iCell1 = cellsOnEdge(1, iEdge)
+         iCell2 = cellsOnEdge(2, iEdge)
+
+         seedCells(1) = iCell1
+         seedCells(2) = iCell2
+
+         call mpas_build_contiguous_cell_stencil(seedCells, 2, ringCount, nCells, nEdgesOnCell, cellsOnCell, &
+                                                 visited, ringByCell, frontier, nextFrontier, stencil, visitTag, &
+                                                 stencilCount, maxBuiltRing, validMask)
+
+         if (stencilCount <= 0) cycle
+
+         xRef = xEdge(iEdge)
+         yRef = yEdge(iEdge)
+         zRef = fieldCell(stencil(1))
+
+         effectiveRing = maxBuiltRing
+         fitOK = .false.
+
+         do while (effectiveRing >= 1 .and. .not. fitOK)
+            call mpas_try_plane_fit_reference(xRef, yRef, zRef, effectiveRing, stencil, stencilCount, ringByCell, &
+                                              xCell, yCell, fieldCell, aCoeff, bCoeff, fitOK)
+            if (.not. fitOK) effectiveRing = effectiveRing - 1
+         end do
+
+         if (.not. fitOK) cycle
+
+         edgeCos = cos(angleEdge(iEdge))
+         edgeSin = sin(angleEdge(iEdge))
+
+         normalSlopeEdge(iEdge) = aCoeff*edgeCos + bCoeff*edgeSin
+         tangentSlopeEdge(iEdge) = -aCoeff*edgeSin + bCoeff*edgeCos
+
+      end do
+
+      deallocate(visited)
+      deallocate(ringByCell)
+      deallocate(frontier)
+      deallocate(nextFrontier)
+      deallocate(stencil)
+
+   end subroutine mpas_edge_plane_slopes_ring!}}}
 
 
 !***********************************************************************
