@@ -48,12 +48,12 @@ contains
 !-----------------------------------------------------------------------
    subroutine mpas_max_plane_slope_ring(fieldCell, meshPool, configPool, ringCount, maxSlope, validMask)!{{{
 
-      real(kind=RKIND), dimension(:), intent(in) :: fieldCell
-      type(mpas_pool_type), intent(in) :: meshPool
-      type(mpas_pool_type), intent(in) :: configPool
-      integer, intent(in) :: ringCount
-      real(kind=RKIND), dimension(:), intent(out) :: maxSlope
-      logical, dimension(:), intent(in), optional :: validMask
+      real(kind=RKIND), dimension(:), intent(in) :: fieldCell  ! Cell-centered scalar field to fit
+      type(mpas_pool_type), intent(in) :: meshPool             ! Mesh geometry/connectivity pool
+      type(mpas_pool_type), intent(in) :: configPool           ! Config pool (used for halo-depth guard)
+      integer, intent(in) :: ringCount                         ! Requested contiguous ring depth
+      real(kind=RKIND), dimension(:), intent(out) :: maxSlope  ! Output unsigned slope magnitude per solve cell
+      logical, dimension(:), intent(in), optional :: validMask ! Optional mask of cells eligible for stencils
 
       integer, pointer :: nCells, nCellsSolve
       integer, dimension(:), pointer :: nEdgesOnCell
@@ -70,6 +70,7 @@ contains
       real(kind=RKIND) :: aCoeff, bCoeff
       logical :: fitOK
 
+      ! Gather mesh/config metadata and connectivity needed to build local ring stencils.
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
 
@@ -80,6 +81,7 @@ contains
       call mpas_pool_get_config(meshPool, 'on_a_sphere', on_a_sphere)
       call mpas_pool_get_config(configPool, 'config_num_halos', config_num_halos)
 
+      ! Input and configuration validation.
       if (ringCount < 1) then
          call mpas_log_write('mpas_max_plane_slope_ring: ringCount must be >= 1.', MPAS_LOG_CRIT)
       end if
@@ -109,6 +111,7 @@ contains
 
       maxSlope = 0.0_RKIND
 
+      ! Work arrays are sized once to avoid repeated allocation in the per-cell loop.
       allocate(visited(nCells))
       allocate(ringByCell(nCells))
       allocate(frontier(nCells))
@@ -121,6 +124,7 @@ contains
 
       do iCell = 1, nCellsSolve
 
+         ! If the center cell is masked out, return the requested fallback immediately.
          if (present(validMask)) then
             if (.not. validMask(iCell)) then
                maxSlope(iCell) = 0.0_RKIND
@@ -143,6 +147,7 @@ contains
          stencil(1) = iCell
          maxBuiltRing = 0
 
+         ! Breadth-first expansion over cellsOnCell builds a contiguous stencil up to ringCount.
          do iRing = 1, ringCount
             nextFrontierCount = 0
 
@@ -175,6 +180,7 @@ contains
             maxBuiltRing = iRing
          end do
 
+         ! Reduce outer rings until a stable linear fit is available.
          effectiveRing = maxBuiltRing
          fitOK = .false.
 
@@ -192,6 +198,7 @@ contains
 
       end do
 
+      ! Explicit cleanup of workspace arrays.
       deallocate(visited)
       deallocate(ringByCell)
       deallocate(frontier)
@@ -214,11 +221,11 @@ contains
 !-----------------------------------------------------------------------
    subroutine mpas_try_plane_fit(iCenter, maxRing, stencil, stencilCount, ringByCell, xCell, yCell, fieldCell, aCoeff, bCoeff, fitOK)!{{{
 
-      integer, intent(in) :: iCenter, maxRing, stencilCount
-      integer, dimension(:), intent(in) :: stencil, ringByCell
+      integer, intent(in) :: iCenter, maxRing, stencilCount          ! Center cell index and reduced-ring depth
+      integer, dimension(:), intent(in) :: stencil, ringByCell       ! Candidate stencil cells and ring assignment
       real(kind=RKIND), dimension(:), intent(in) :: xCell, yCell, fieldCell
-      real(kind=RKIND), intent(out) :: aCoeff, bCoeff
-      logical, intent(out) :: fitOK
+      real(kind=RKIND), intent(out) :: aCoeff, bCoeff                ! Plane slopes dz/dx and dz/dy
+      logical, intent(out) :: fitOK                                  ! .true. when solve is well-posed
 
       integer :: i, iCell
       integer :: nPoints
@@ -239,6 +246,7 @@ contains
       rhs = 0.0_RKIND
       nPoints = 0
 
+      ! Build normal equations for dz = a*dx + b*dy + c in center-relative coordinates.
       do i = 1, stencilCount
          iCell = stencil(i)
          if (ringByCell(iCell) > maxRing) cycle
@@ -263,12 +271,14 @@ contains
          nPoints = nPoints + 1
       end do
 
+      ! Fewer than 3 points cannot constrain a linear plane robustly.
       if (nPoints < 3) return
 
       mat(2,1) = mat(1,2)
       mat(3,1) = mat(1,3)
       mat(3,2) = mat(2,3)
 
+      ! Use matrix scale to set a relative singularity tolerance.
       detScale = max(1.0_RKIND, maxval(abs(mat)))
       call mpas_solve_3x3(mat, rhs, detScale*1.0e-12_RKIND, soln, fitOK)
       if (.not. fitOK) return
@@ -290,15 +300,16 @@ contains
 !-----------------------------------------------------------------------
    subroutine mpas_solve_3x3(a, b, detTol, x, ok)!{{{
 
-      real(kind=RKIND), dimension(3,3), intent(in) :: a
-      real(kind=RKIND), dimension(3), intent(in) :: b
-      real(kind=RKIND), intent(in) :: detTol
-      real(kind=RKIND), dimension(3), intent(out) :: x
-      logical, intent(out) :: ok
+      real(kind=RKIND), dimension(3,3), intent(in) :: a     ! Coefficient matrix
+      real(kind=RKIND), dimension(3), intent(in) :: b       ! Right-hand side
+      real(kind=RKIND), intent(in) :: detTol                ! Determinant tolerance for singularity
+      real(kind=RKIND), dimension(3), intent(out) :: x      ! Solution vector
+      logical, intent(out) :: ok                            ! .true. when matrix is invertible
 
       real(kind=RKIND) :: detA, detX1, detX2, detX3
       real(kind=RKIND), dimension(3,3) :: work
 
+      ! Cramer's rule is sufficient here because the system is fixed-size (3x3).
       detA = a(1,1)*(a(2,2)*a(3,3) - a(2,3)*a(3,2)) - &
              a(1,2)*(a(2,1)*a(3,3) - a(2,3)*a(3,1)) + &
              a(1,3)*(a(2,1)*a(3,2) - a(2,2)*a(3,1))
