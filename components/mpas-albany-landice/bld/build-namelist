@@ -489,6 +489,10 @@ add_default($nl, 'config_uplift_method');
 add_default($nl, 'config_slm_coupling_interval');
 add_default($nl, 'config_MALI_to_SLM_weights_file');
 add_default($nl, 'config_SLM_to_MALI_weights_file');
+add_default($nl, 'config_fastisostasy_coupling_interval');
+add_default($nl, 'config_MALI_to_FASTISOSTASY_weights_file');
+add_default($nl, 'config_FASTISOSTASY_to_MALI_weights_file');
+add_default($nl, 'config_fastisostasy_parameter_file');
 
 ###########################
 # Namelist group: calving #
