@@ -8,6 +8,16 @@ SHARED_INCLUDES += -I$(PWD)/shared -I$(PWD)/analysis_members -I$(PWD)/mode_forwa
 ifeq "$(SLM)" "true"
 SHARED_INCLUDES += -I$(PWD)/SeaLevelModel
 endif
+ifeq "$(FASTISOSTASY)" "true"
+SHARED_INCLUDES += -I$(PWD)/FastIsostasy/libisostasy/include
+SHARED_INCLUDES += -I$(PWD)/fesm-utils/utils/include-serial
+endif
+
+FASTISOSTASY_FESM_MACHINE ?= linux
+FASTISOSTASY_FESM_COMPILER ?= gfortran
+FASTISOSTASY_CONFIG ?= config/foehn_gfortran
+FASTISOSTASY_NC_INCLUDES ?= $(FCINCLUDES)
+FASTISOSTASY_NC_LIBS ?= $(LIBS)
 
 all: core_landice
 
@@ -18,7 +28,7 @@ analysis_members: shared
 	(cd analysis_members; $(MAKE) FCINCLUDES="$(FCINCLUDES) $(SHARED_INCLUDES)")
 
 
-mode_forward: shared analysis_members sea_level_model
+mode_forward: shared analysis_members sea_level_model fastisostasy_lib
 	(cd mode_forward; $(MAKE) FCINCLUDES="$(FCINCLUDES) $(SHARED_INCLUDES)")
 
 sea_level_model:
@@ -30,7 +40,28 @@ ifeq "$(SLM)" "true"
 	fi
 endif
 
-core_landice: mode_forward shared analysis_members sea_level_model
+fastisostasy_lib:
+ifeq "$(FASTISOSTASY)" "true"
+	if [ -e FastIsostasy/.git ]; then \
+		if [ -e fesm-utils/.git ]; then \
+			(cd fesm-utils; python3 build.py -m $(FASTISOSTASY_FESM_MACHINE) -c $(FASTISOSTASY_FESM_COMPILER) --component fftw --variant serial); \
+			(cd fesm-utils; python3 build.py -m $(FASTISOSTASY_FESM_MACHINE) -c $(FASTISOSTASY_FESM_COMPILER) --component utils --variant serial); \
+			(cd FastIsostasy; python3 config.py $(FASTISOSTASY_CONFIG)); \
+			(cd FastIsostasy; $(MAKE) isostasy-static \
+				FC="$(FC)" \
+				INC_NC="$(FASTISOSTASY_NC_INCLUDES)" \
+				LIB_NC="$(FASTISOSTASY_NC_LIBS)" \
+				FESMUTILSROOT=../fesm-utils/utils \
+				FFTWROOT=../fesm-utils/fftw-serial); \
+		else \
+			(echo "Missing components/mpas-albany-landice/src/fesm-utils/.git, did you forget to add or init the submodule?"; exit 1); \
+		fi \
+	else \
+		(echo "Missing components/mpas-albany-landice/src/FastIsostasy/.git, did you forget to 'git submodule update --init --recursive'?"; exit 1); \
+	fi
+endif
+
+core_landice: mode_forward shared analysis_members sea_level_model fastisostasy_lib
 	ar -ru libdycore.a `find . -type f -name "*.o"`
 
 core_input_gen:
@@ -63,4 +94,10 @@ clean:
 	(cd analysis_members; $(MAKE) clean)
 	if [ -e SeaLevelModel/.git ]; then \
 		(cd SeaLevelModel; $(MAKE) clean) \
+	fi
+	if [ -e FastIsostasy/.git ] && [ -e FastIsostasy/Makefile ]; then \
+		(cd FastIsostasy; $(MAKE) clean) \
+	fi
+	if [ -e fesm-utils/.git ] && [ -e fesm-utils/utils/Makefile ]; then \
+		(cd fesm-utils/utils; $(MAKE) clean) \
 	fi
