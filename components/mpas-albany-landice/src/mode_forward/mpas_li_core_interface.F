@@ -104,12 +104,21 @@ module li_core_interface
       character (len=StrKIND), pointer :: config_basal_mass_bal_float
       character (len=StrKIND), pointer :: config_front_mass_bal_grounded
       character (len=StrKIND), pointer :: config_thermal_solver
+      character (len=StrKIND), pointer :: config_calving_specified_source
+      character (len=StrKIND), pointer :: config_calving_eigencalving_parameter_source
+      character (len=StrKIND), pointer :: config_grounded_von_Mises_threshold_stress_source
+      character (len=StrKIND), pointer :: config_floating_von_Mises_threshold_stress_source
+      character (len=StrKIND), pointer :: config_calving_strainrate_scaling_source
+      character (len=StrKIND), pointer :: config_uplift_method
       logical, pointer :: config_use_3d_thermal_forcing_for_face_melt
       logical, pointer :: config_SGH
       logical, pointer :: config_adaptive_timestep_include_DCFL
       logical, pointer :: config_write_albany_ascii_mesh
       logical, pointer :: config_ocean_data_extrapolation
       logical, pointer :: config_enable_timeAvgRestarts
+      logical, pointer :: config_calculate_damage
+      logical, pointer :: config_apply_calving_mask
+      logical, pointer :: config_apply_facemelt_strainrate_enhancement
 
       logical, pointer :: higherOrderVelocityActive
       logical, pointer :: SIAvelocityActive
@@ -120,6 +129,15 @@ module li_core_interface
       logical, pointer :: thermalActive
       logical, pointer :: extrapOceanDataActive
       logical, pointer :: timeAvgRestartsActive
+      logical, pointer :: damageCalvingActive
+      logical, pointer :: calvingDataActive
+      logical, pointer :: crevasseActive
+      logical, pointer :: eigencalvingDataActive
+      logical, pointer :: vonMisesGroundedThresholdDataActive
+      logical, pointer :: vonMisesFloatingThresholdDataActive
+      logical, pointer :: calvingStrainrateScalingDataActive
+      logical, pointer :: calvingMaskAppliedActive
+      logical, pointer :: upliftDataActive
 
       ierr = 0
 
@@ -133,6 +151,15 @@ module li_core_interface
       call mpas_pool_get_config(configPool, 'config_ocean_data_extrapolation', config_ocean_data_extrapolation)
       call mpas_pool_get_config(configPool, 'config_thermal_solver', config_thermal_solver)
       call mpas_pool_get_config(configPool, 'config_enable_timeAvgRestarts', config_enable_timeAvgRestarts)
+      call mpas_pool_get_config(configPool, 'config_calculate_damage', config_calculate_damage)
+      call mpas_pool_get_config(configPool, 'config_apply_calving_mask', config_apply_calving_mask)
+      call mpas_pool_get_config(configPool, 'config_calving_specified_source', config_calving_specified_source)
+      call mpas_pool_get_config(configPool, 'config_calving_eigencalving_parameter_source', config_calving_eigencalving_parameter_source)
+      call mpas_pool_get_config(configPool, 'config_grounded_von_Mises_threshold_stress_source', config_grounded_von_Mises_threshold_stress_source)
+      call mpas_pool_get_config(configPool, 'config_floating_von_Mises_threshold_stress_source', config_floating_von_Mises_threshold_stress_source)
+      call mpas_pool_get_config(configPool, 'config_apply_facemelt_strainrate_enhancement', config_apply_facemelt_strainrate_enhancement)
+      call mpas_pool_get_config(configPool, 'config_calving_strainrate_scaling_source', config_calving_strainrate_scaling_source)
+      call mpas_pool_get_config(configPool, 'config_uplift_method', config_uplift_method)
 
       call mpas_pool_get_package(packagePool, 'SIAvelocityActive', SIAvelocityActive)
       call mpas_pool_get_package(packagePool, 'higherOrderVelocityActive', higherOrderVelocityActive)
@@ -143,6 +170,15 @@ module li_core_interface
       call mpas_pool_get_package(packagePool, 'thermalActive', thermalActive)
       call mpas_pool_get_package(packagePool, 'extrapOceanDataActive', extrapOceanDataActive)
       call mpas_pool_get_package(packagePool, 'timeAvgRestartsActive', timeAvgRestartsActive)
+      call mpas_pool_get_package(packagePool, 'damageCalvingActive', damageCalvingActive)
+      call mpas_pool_get_package(packagePool, 'calvingDataActive', calvingDataActive)
+      call mpas_pool_get_package(packagePool, 'crevasseActive', crevasseActive)
+      call mpas_pool_get_package(packagePool, 'eigencalvingDataActive', eigencalvingDataActive)
+      call mpas_pool_get_package(packagePool, 'vonMisesGroundedThresholdDataActive', vonMisesGroundedThresholdDataActive)
+      call mpas_pool_get_package(packagePool, 'vonMisesFloatingThresholdDataActive', vonMisesFloatingThresholdDataActive)
+      call mpas_pool_get_package(packagePool, 'calvingStrainrateScalingDataActive', calvingStrainrateScalingDataActive)
+      call mpas_pool_get_package(packagePool, 'calvingMaskAppliedActive', calvingMaskAppliedActive)
+      call mpas_pool_get_package(packagePool, 'upliftDataActive', upliftDataActive)
 
       if (trim(config_velocity_solver) == 'sia') then
          SIAvelocityActive = .true.
@@ -192,6 +228,91 @@ module li_core_interface
          thermalActive = .true.
          call mpas_log_write("The 'thermal' package and assocated variables have been enabled because " // &
               "'config_thermal_solver' is set to either 'temperature' or 'enthalpy'.")
+      endif
+
+      if (config_calculate_damage) then
+         damageCalvingActive = .true.
+         call mpas_log_write("The 'damageCalving' package and associated variables have been enabled because " // &
+              "'config_calculate_damage' is set to .true.")
+      else
+         damageCalvingActive = .false.
+      endif
+
+      if (((trim(config_calving) == 'specified_calving_velocity') .or. &
+           (trim(config_calving) == 'specified_retreat_velocity')) .and. &
+          (trim(config_calving_specified_source) == 'data')) then
+         calvingDataActive = .true.
+         call mpas_log_write("The 'calvingData' package and associated variables have been enabled because " // &
+              "'config_calving' is set to a specified calving/retreat option and " // &
+              "'config_calving_specified_source' is set to 'data'.")
+      else
+         calvingDataActive = .false.
+      endif
+
+      if (trim(config_calving) == 'crevasse_depth') then
+         crevasseActive = .true.
+         call mpas_log_write("The 'crevasse' package and associated variables have been enabled because " // &
+              "'config_calving' is set to 'crevasse_depth'.")
+      else
+         crevasseActive = .false.
+      endif
+
+      if ((trim(config_calving) == 'eigencalving') .and. &
+          (trim(config_calving_eigencalving_parameter_source) == 'data')) then
+         eigencalvingDataActive = .true.
+         call mpas_log_write("The 'eigencalvingData' package and associated variables have been enabled because " // &
+              "'config_calving' is set to 'eigencalving' and " // &
+              "'config_calving_eigencalving_parameter_source' is set to 'data'.")
+      else
+         eigencalvingDataActive = .false.
+      endif
+
+      if ((trim(config_calving) == 'von_Mises_stress') .and. &
+          (trim(config_grounded_von_Mises_threshold_stress_source) == 'data')) then
+         vonMisesGroundedThresholdDataActive = .true.
+         call mpas_log_write("The 'vonMisesGroundedThresholdData' package and associated variables have been enabled because " // &
+              "'config_calving' is set to 'von_Mises_stress' and " // &
+              "'config_grounded_von_Mises_threshold_stress_source' is set to 'data'.")
+      else
+         vonMisesGroundedThresholdDataActive = .false.
+      endif
+
+      if ((trim(config_calving) == 'von_Mises_stress') .and. &
+          (trim(config_floating_von_Mises_threshold_stress_source) == 'data')) then
+         vonMisesFloatingThresholdDataActive = .true.
+         call mpas_log_write("The 'vonMisesFloatingThresholdData' package and associated variables have been enabled because " // &
+              "'config_calving' is set to 'von_Mises_stress' and " // &
+              "'config_floating_von_Mises_threshold_stress_source' is set to 'data'.")
+      else
+         vonMisesFloatingThresholdDataActive = .false.
+      endif
+
+      if ((trim(config_calving) == 'crevasse_depth') .and. &
+          (config_apply_facemelt_strainrate_enhancement) .and. &
+          (trim(config_calving_strainrate_scaling_source) == 'data')) then
+         calvingStrainrateScalingDataActive = .true.
+         call mpas_log_write("The 'calvingStrainrateScalingData' package and associated variables have been enabled because " // &
+              "'config_calving' is set to 'crevasse_depth', " // &
+              "'config_apply_facemelt_strainrate_enhancement' is .true., and " // &
+              "'config_calving_strainrate_scaling_source' is set to 'data'.")
+      else
+         calvingStrainrateScalingDataActive = .false.
+      endif
+
+      if (config_apply_calving_mask) then
+         calvingMaskAppliedActive = .true.
+         call mpas_log_write("The 'calvingMaskApplied' package and associated variables have been enabled because " // &
+              "'config_apply_calving_mask' is set to .true.")
+      else
+         calvingMaskAppliedActive = .false.
+      endif
+
+      if (trim(config_uplift_method) == 'data') then
+         upliftDataActive = .true.
+         call mpas_log_write("The 'upliftData' package and associated variables have been enabled because " // &
+              "'config_uplift_method' is set to 'data'.")
+      else
+         upliftDataActive = .false.
       endif
 
       if (config_enable_timeAvgRestarts) then
