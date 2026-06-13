@@ -198,7 +198,7 @@ Default: Defined in namelist_defaults.xml
 	category="solidearth" group="solidearth">
 Selection of the method for bedrock uplift calculation.
 
-Valid values: 'none', 'data', 'sealevelmodel'
+Valid values: 'none', 'data', 'sealevelmodel', 'fastisostasy'
 Default: Defined in namelist_defaults.xml
 </entry>
 
@@ -221,6 +221,38 @@ Default: Defined in namelist_defaults.xml
 <entry id="config_SLM_to_MALI_weights_file" type="char*1024"
 	category="solidearth" group="solidearth">
 File containing the interpolation weights for regridding from the Gaussian grid used by the Sea Level Model to the MPAS mesh.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_coupling_interval" type="integer"
+	category="solidearth" group="solidearth">
+Time interval at which FastIsostasy is called by MALI. Only integer years are currently supported. The user needs to set config_adaptive_timestep_force_interval to divide evenly into config_fastisostasy_coupling_interval.
+
+Valid values: Any positive integer
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_MALI_to_FASTISOSTASY_weights_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File containing interpolation weights for regridding from MPAS mesh to the regular Cartesian grid used by FastIsostasy.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_FASTISOSTASY_to_MALI_weights_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File containing interpolation weights for regridding from the regular Cartesian grid used by FastIsostasy to the MPAS mesh.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_parameter_file" type="char*1024"
+	category="solidearth" group="solidearth">
+Path to the FastIsostasy parameter namelist file containing the isostasy and barysealevel records.
 
 Valid values: Any file name string
 Default: Defined in namelist_defaults.xml

@@ -150,7 +150,7 @@
 	<nml_record name="solidearth" in_defaults="true">
 		<nml_option name="config_uplift_method" type="character" default_value="none" units="unitless"
 		            description="Selection of the method for bedrock uplift calculation."
-		            possible_values="'none', 'data', 'sealevelmodel'"
+		            possible_values="'none', 'data', 'sealevelmodel', 'fastisostasy'"
         />
         <nml_option name="config_slm_coupling_interval" type="integer" default_value="2" units="years"
             description="Time interval at which the sea-level model is called by MALI. Only integer years are currently supported. The user must set 'dt1' in namelist.sealevel to match this value.  Note that the user needs to set config_adaptive_timestep_force_interval to divide evenly into config_slm_coupling_interval.  Also, restart file output_interval needs to be a multiple of config_slm_coupling_interval."
@@ -164,6 +164,22 @@
             description="File containing the interpolation weights for regridding from the Gaussian grid used by the Sea Level Model to the MPAS mesh."
             possible_values="Any file name string"
         />
+		<nml_option name="config_fastisostasy_coupling_interval" type="integer" default_value="2" units="years"
+			description="Time interval at which FastIsostasy is called by MALI. Only integer years are currently supported. The user needs to set config_adaptive_timestep_force_interval to divide evenly into config_fastisostasy_coupling_interval."
+			possible_values="Any positive integer"
+		/>
+		<nml_option name="config_MALI_to_FASTISOSTASY_weights_file" type="character" default_value="mpas_to_fastisostasy.nc" units="unitless"
+			description="File containing interpolation weights for regridding from MPAS mesh to the regular Cartesian grid used by FastIsostasy."
+			possible_values="Any file name string"
+		/>
+		<nml_option name="config_FASTISOSTASY_to_MALI_weights_file" type="character" default_value="fastisostasy_to_mpas.nc" units="unitless"
+			description="File containing interpolation weights for regridding from the regular Cartesian grid used by FastIsostasy to the MPAS mesh."
+			possible_values="Any file name string"
+		/>
+		<nml_option name="config_fastisostasy_parameter_file" type="character" default_value="fastisostasy.nml" units="unitless"
+			description="Path to the FastIsostasy parameter namelist file containing the isostasy and barysealevel records."
+			possible_values="Any file name string"
+		/>
 	</nml_record>
 
 	<nml_record name="calving" in_defaults="true">
