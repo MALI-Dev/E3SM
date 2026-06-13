@@ -9,12 +9,17 @@ ifeq "$(SLM)" "true"
 SHARED_INCLUDES += -I$(PWD)/SeaLevelModel
 endif
 ifeq "$(FASTISOSTASY)" "true"
+SHARED_INCLUDES += -I$(PWD)/FastIsostasy
 SHARED_INCLUDES += -I$(PWD)/FastIsostasy/libisostasy/include
 SHARED_INCLUDES += -I$(PWD)/fesm-utils/utils/include-serial
 endif
 
 FASTISOSTASY_FESM_MACHINE ?= linux
 FASTISOSTASY_FESM_COMPILER ?= gfortran
+FASTISOSTASY_FESM_CPP ?= cpp -P
+FASTISOSTASY_FESM_UTILS_CONFIG ?= config/pik_hpc2024_gfortran
+FASTISOSTASY_NETCDFF_ROOT ?= $(shell nf-config --prefix 2>/dev/null)
+FASTISOSTASY_NETCDFC_ROOT ?= $(shell nc-config --prefix 2>/dev/null)
 FASTISOSTASY_CONFIG ?= config/foehn_gfortran
 FASTISOSTASY_NC_INCLUDES ?= $(FCINCLUDES)
 FASTISOSTASY_NC_LIBS ?= $(LIBS)
@@ -44,15 +49,20 @@ fastisostasy_lib:
 ifeq "$(FASTISOSTASY)" "true"
 	if [ -e FastIsostasy/.git ]; then \
 		if [ -e fesm-utils/.git ]; then \
-			(cd fesm-utils; python3 build.py -m $(FASTISOSTASY_FESM_MACHINE) -c $(FASTISOSTASY_FESM_COMPILER) --component fftw --variant serial); \
-			(cd fesm-utils; python3 build.py -m $(FASTISOSTASY_FESM_MACHINE) -c $(FASTISOSTASY_FESM_COMPILER) --component utils --variant serial); \
+			if [ -z "$(FASTISOSTASY_NETCDFF_ROOT)" ] || [ -z "$(FASTISOSTASY_NETCDFC_ROOT)" ]; then \
+				(echo "Unable to determine NetCDF roots for fesm-utils (nf-config/nc-config)."; exit 1); \
+			fi; \
+			(cd fesm-utils; CPP="$(FASTISOSTASY_FESM_CPP)" python3 build.py -m $(FASTISOSTASY_FESM_MACHINE) -c $(FASTISOSTASY_FESM_COMPILER) --component fftw --variant serial); \
+			(cd fesm-utils/utils; NETCDFF_ROOT="$(FASTISOSTASY_NETCDFF_ROOT)" NETCDFC_ROOT="$(FASTISOSTASY_NETCDFC_ROOT)" python3 config.py $(FASTISOSTASY_FESM_UTILS_CONFIG)); \
+			(cd fesm-utils/utils; NETCDFF_ROOT="$(FASTISOSTASY_NETCDFF_ROOT)" NETCDFC_ROOT="$(FASTISOSTASY_NETCDFC_ROOT)" MAKEFLAGS= MAKEOVERRIDES= $(MAKE) -j 1 fesmutils-static openmp=0 debug=0); \
+					(cd fesm-utils/utils; ar rc include-serial/libfesmutils.a include-serial/*.o && ranlib include-serial/libfesmutils.a); \
 			(cd FastIsostasy; python3 config.py $(FASTISOSTASY_CONFIG)); \
-			(cd FastIsostasy; $(MAKE) isostasy-static \
-				FC="$(FC)" \
+			(cd FastIsostasy; MAKEFLAGS= MAKEOVERRIDES= $(MAKE) -j 1 isostasy-static \
 				INC_NC="$(FASTISOSTASY_NC_INCLUDES)" \
 				LIB_NC="$(FASTISOSTASY_NC_LIBS)" \
 				FESMUTILSROOT=../fesm-utils/utils \
-				FFTWROOT=../fesm-utils/fftw-serial); \
+				FFTWROOT=../fesm-utils/fftw-serial \
+				openmp=0 debug=0); \
 		else \
 			(echo "Missing components/mpas-albany-landice/src/fesm-utils/.git, did you forget to add or init the submodule?"; exit 1); \
 		fi \
@@ -62,7 +72,8 @@ ifeq "$(FASTISOSTASY)" "true"
 endif
 
 core_landice: mode_forward shared analysis_members sea_level_model fastisostasy_lib
-	ar -ru libdycore.a `find . -type f -name "*.o"`
+	rm -f libdycore.a
+	ar -ru libdycore.a `find mode_forward shared analysis_members SeaLevelModel -type f -name "*.o" 2>/dev/null`
 
 core_input_gen:
 	if [ ! -e default_inputs ]; then  mkdir default_inputs; fi
