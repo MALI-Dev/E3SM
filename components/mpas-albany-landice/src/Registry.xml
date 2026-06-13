@@ -764,6 +764,16 @@
 
                 <package name="extrapOceanData" description="This package includes variables required for extrapolating ocean data into MALI ice shelf cavities." />
 
+		<package name="damageCalving" description="Variables required for damage-based calving and damage restart state."/>
+		<package name="calvingData" description="Variables required when specified calving/retreat velocity comes from data input."/>
+		<package name="crevasse" description="Variables required for crevasse-depth calving."/>
+		<package name="eigencalvingData" description="Variables required when eigencalving parameter is read from data."/>
+		<package name="vonMisesGroundedThresholdData" description="Variables required when grounded von Mises threshold stress is read from data."/>
+		<package name="vonMisesFloatingThresholdData" description="Variables required when floating von Mises threshold stress is read from data."/>
+		<package name="calvingStrainrateScalingData" description="Variables required when calving strainrate scaling is read from data."/>
+		<package name="calvingMaskApplied" description="Variables required when calving mask application is enabled."/>
+		<package name="upliftData" description="Variables required when bed uplift is prescribed from data."/>
+
 		<package name="timeAvgRestarts" description="Variables needed to be included in restart files for time averaging to work correctly"/>
 	</packages>
 
@@ -936,16 +946,16 @@
                         <!-- If restart file sizes become too large, eigencalvingParameter,
                              groundedVonMisesThresholdStress, and floatingVonMisesThresholdStress
                              could be moved to packages. -->
-                        <var name="eigencalvingParameter"/>
-                        <var name="groundedVonMisesThresholdStress"/>
-                        <var name="floatingVonMisesThresholdStress"/>
-                        <var name="calvingStrainRateScaling"/>
-						<var name="crevasseWaterDepth"/>
+						<var name="eigencalvingParameter" packages="eigencalvingData"/>
+						<var name="groundedVonMisesThresholdStress" packages="vonMisesGroundedThresholdData"/>
+						<var name="floatingVonMisesThresholdStress" packages="vonMisesFloatingThresholdData"/>
+						<var name="calvingStrainRateScaling" packages="calvingStrainrateScalingData"/>
+						<var name="crevasseWaterDepth" packages="crevasse"/>
                         <var name="stiffnessFactor"/>
-                        <var name="calvingMask"/>
+						<var name="calvingMask" packages="calvingMaskApplied"/>
                         <!-- calvingCFLdt only needed if calving CFL is being applied, but it is a scalar value so no harm in including it always -->
                         <var name="calvingCFLdt"/>
-                        <var name="upliftRate"/>
+						<var name="upliftRate" packages="upliftData"/>
 			<!-- normalVelocity is needed for advection on the next timestep -->
 			<var name="normalVelocity"/>
 			<!-- uReconstructX/Y are only needed for exact restarts of HO iterative solvers -->
@@ -970,9 +980,9 @@
                         <var name="channelArea" packages="hydro"/>  <!-- this is only needed if running with channels - could be package-controlled -->
 			<var name="waterFluxMask" packages="hydro"/>
                         <var name="passiveTracer2d"/>
-			<var name="damage"/>
-			<var name="calvingVelocityData"/>
-			<var name="damageMax"/>
+			<var name="damage" packages="damageCalving"/>
+			<var name="calvingVelocityData" packages="calvingData"/>
+			<var name="damageMax" packages="damageCalving"/>
                         <!-- these variables just for ISMIP6 forcing -->
                         <var name="ismip6shelfMelt_basin" packages="ismip6ShelfMelt"/>
                         <var name="ismip6shelfMelt_gamma0" packages="ismip6ShelfMelt"/>
