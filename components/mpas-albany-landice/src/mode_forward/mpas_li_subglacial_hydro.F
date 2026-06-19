@@ -1020,6 +1020,7 @@ module li_subglacial_hydro
       ! This one-sided implementation also creates outflowing conditions at terrestrial boundary
       do iEdge = 1, nEdges
          if (hydroTerrestrialMarginMask(iEdge) == 1) then
+            waterPressureSlopeNormal(iEdge) = 0.0_RKIND
             if (config_SGH_allow_terrestrial_outflow) then
                cell1 = cellsOnEdge(1, iEdge)
                cell2 = cellsOnEdge(2, iEdge)
@@ -1031,7 +1032,6 @@ module li_subglacial_hydro
                      ! If bare ground elevation is higher than elevation beneath the ice, no flux
                      hydropotentialBaseSlopeNormal(iEdge) = 0.0_RKIND
                      hydropotentialSlopeNormal(iEdge) = 0.0_RKIND
-                     waterPressureSlopeNormal(iEdge) = 0.0_RKIND
                   endif
                else ! cell1 is the icefree cell - replace phi there with cell2 Phig
                   if (bedTopography(cell1) < bedTopography(cell2)) then
@@ -1041,13 +1041,11 @@ module li_subglacial_hydro
                      ! If bare ground elevation is higher than elevation beneath the ice, no flux
                      hydropotentialBaseSlopeNormal(iEdge) = 0.0_RKIND
                      hydropotentialSlopeNormal(iEdge) = 0.0_RKIND
-                     waterPressureSlopeNormal(iEdge) = 0.0_RKIND
                   endif
                endif ! which cell is icefree
             else ! if disallow terrestrial outflow
                hydropotentialBaseSlopeNormal(iEdge) = 0.0_RKIND
                hydropotentialSlopeNormal(iEdge) = 0.0_RKIND
-               waterPressureSlopeNormal(iEdge) = 0.0_RKIND
             endif ! if allow terrestrial outflow
          endif ! if edge of grounded ice
       end do
@@ -1055,6 +1053,8 @@ module li_subglacial_hydro
       ! Disallow inflow from the marine margin by imposing a minimum outflowing hydropotential gradient at the grounding line.
       do iEdge = 1, nEdges
          if ( hydroMarineMarginMask(iEdge) == 1) then
+            waterPressureSlopeNormal(iEdge) = 0.0_RKIND
+
             cell1 = cellsOnEdge(1, iEdge)
             cell2 = cellsOnEdge(2, iEdge)
             if (li_mask_is_grounded_ice(cellMask(cell1))) then ! cell2 is the cell outside the hydro domain
@@ -2049,15 +2049,16 @@ module li_subglacial_hydro
       channelMelt = (abs(channelDischarge * hydropotentialSlopeNormal) &  ! channel dissipation
                   +  abs(waterFlux * hydropotentialSlopeNormal * config_SGH_incipient_channel_width) & !some sheet dissipation
                   ) / latent_heat_ice
-      ! disable channel melting above area limit
+      channelPressureFreeze = -1.0_RKIND * iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
+         channelDischarge * waterPressureSlopeNormal / latent_heat_ice
+      ! disable channel melting/freezing above area limit
       do iEdge = 1, nEdgesSolve
          if (channelArea(iEdge) > config_SGH_chnl_area_shutoff) then
             channelMelt(iEdge) = 0.0_RKIND
+            ! includes pressure freeze term too, because it can have either sign
+            channelPressureFreeze(iEdge) = 0.0_RKIND
          endif
       enddo
-      channelPressureFreeze = -1.0_RKIND * iceMeltingPointPressureDependence * cp_freshwater * rho_water * &
-         (channelDischarge + waterFlux * config_SGH_incipient_channel_width) &
-         * waterPressureSlopeNormal / latent_heat_ice
 
       if (config_SGH_include_pressure_melt) then
          channelOpeningRate = (channelMelt - channelPressureFreeze) / rhoi
@@ -2137,6 +2138,8 @@ module li_subglacial_hydro
       real (kind=RKIND), dimension(:), pointer :: dcEdge
       integer, pointer :: nCellsSolve
       integer :: iCell, iEdgeOnCell, iEdge
+      logical, pointer :: config_SGH_include_pressure_melt
+      real (kind=RKIND) :: usePressFrz
 
       err = 0
 
@@ -2159,10 +2162,18 @@ module li_subglacial_hydro
       call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
       call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
 
+      call mpas_pool_get_config(liConfigs, 'config_SGH_include_pressure_melt', config_SGH_include_pressure_melt)
+      if (config_SGH_include_pressure_melt) then
+         usePressFrz = 1.0_RKIND
+      else
+         usePressFrz = 0.0_RKIND
+      endif
+
       ! Calculate flux divergence on cells and channel area change on cells
       divergenceChannel(:) = 0.0_RKIND  ! zero div before accumulating
       channelAreaChangeCell(:) = 0.0_RKIND  ! zero before accumulating
       channelMeltInputCell(:) = 0.0_RKIND  ! zero before accumulating
+
       ! loop over locally owned cells
       do iCell = 1, nCellsSolve
          ! TODO: could limit to grounded cells only
@@ -2173,7 +2184,9 @@ module li_subglacial_hydro
             divergenceChannel(iCell) = divergenceChannel(iCell) - channelDischarge(iEdge) * edgeSignOnCell(iEdgeOnCell, iCell)
             channelAreaChangeCell(iCell) = channelChangeRate(iEdge) * dcEdge(iEdge) * 0.5_RKIND + channelAreaChangeCell(iCell)
                ! < only half of channel is in this cell
-            channelMeltInputCell(iCell) = 0.5_RKIND * (channelMelt(iEdge) - channelPressureFreeze(iEdge)) * dcEdge(iEdge) / rho_water + channelMeltInputCell(iCell)
+            channelMeltInputCell(iCell) = 0.5_RKIND * &
+                    (channelMelt(iEdge) - usePressFrz * channelPressureFreeze(iEdge)) * dcEdge(iEdge) / rho_water &
+                    + channelMeltInputCell(iCell)
          end do ! edges
 
       end do ! cells
