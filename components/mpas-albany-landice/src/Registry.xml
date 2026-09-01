@@ -65,8 +65,20 @@
 
 	<nml_record name="velocity_solver" in_defaults="true">
 		<nml_option name="config_velocity_solver" type="character" default_value="sia" units="unitless"
-		            description="Selection of the method for solving ice velocity. 'L1L2', 'FO', and 'Stokes' require compiling with external dycores. 'none' skips the calculation of velocity so the velocity field will be 0 or set to a field read from an input file.  'simple' gives a simple prescribed velocity field computed at initialization."
-		            possible_values="'sia', 'L1L2', 'FO', 'Stokes', 'simple', 'none'"
+		            description="Selection of the method for solving ice velocity. 'L1L2', 'FO', and 'Stokes' require compiling with external dycores. 'gnn' uses a GNN emulator via FTorch. 'none' skips the calculation of velocity so the velocity field will be 0 or set to a field read from an input file.  'simple' gives a simple prescribed velocity field computed at initialization."
+		            possible_values="'sia', 'L1L2', 'FO', 'Stokes', 'gnn', 'simple', 'none'"
+		/>
+		<nml_option name="config_gnn_model_path" type="character" default_value="gnn_velocity_model.pt" units="unitless"
+		            description="Path to the TorchScript GNN model file for the 'gnn' velocity solver."
+		            possible_values="Any valid file path."
+		/>
+		<nml_option name="config_gnn_device_type" type="character" default_value="cpu" units="unitless"
+		            description="Device type for GNN inference. 'cpu' or 'cuda'."
+		            possible_values="'cpu', 'cuda'"
+		/>
+		<nml_option name="config_gnn_solver_init" type="character" default_value="FO" units="unitless"
+		            description="Velocity solver used for the initial velocity solve of a 'gnn' run when the run is not a restart. This provides a physically consistent starting velocity field before the GNN emulator is used for all subsequent solves. 'FO' uses the external Blatter-Pattyn dycore (requires compiling with it). 'sia' uses the native shallow-ice-approximation solver. 'gnn' uses the GNN emulator from the first solve (no separate initial solve). 'none' skips the initial velocity solve entirely. On a restart this option is ignored and the velocity is taken from the restart file."
+		            possible_values="'FO', 'sia', 'gnn', 'none'"
 		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.

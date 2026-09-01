@@ -456,6 +456,8 @@ contains
       integer, dimension(:), pointer :: vertexMask, cellMask, edgeMask
       integer, dimension(:,:), pointer :: dirichletVelocityMask
       character (len=StrKIND), pointer :: config_velocity_solver
+      character (len=StrKIND), pointer :: config_gnn_solver_init
+      character (len=StrKIND) :: effectiveSolver
       logical, pointer :: config_always_compute_fem_grid
       logical, pointer :: config_output_external_velocity_solver_data
       logical, pointer :: config_nonconvergence_error
@@ -476,8 +478,6 @@ contains
          !< The value of seconds in a year assumed by external dycores
       integer, pointer :: albanyVelocityError
 
-      err = 0
-
       ! configs
       call mpas_pool_get_config(liConfigs, 'config_velocity_solver', config_velocity_solver)
       call mpas_pool_get_config(liConfigs, 'config_always_compute_fem_grid', config_always_compute_fem_grid)
@@ -486,6 +486,17 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_nonconvergence_error', config_nonconvergence_error)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_effective_pressure_max', config_effective_pressure_max)
+
+      ! Determine the effective solver to use.  A GNN run performs its initial
+      ! velocity solve with the solver specified by config_gnn_solver_init
+      ! (e.g. 'FO', the Blatter-Pattyn solver), so map a config_velocity_solver
+      ! value of 'gnn' to that solver here.
+      if (trim(config_velocity_solver) == 'gnn') then
+         call mpas_pool_get_config(liConfigs, 'config_gnn_solver_init', config_gnn_solver_init)
+         effectiveSolver = trim(config_gnn_solver_init)
+      else
+         effectiveSolver = trim(config_velocity_solver)
+      endif
 
       ! Mesh variables
       call mpas_pool_get_array(meshPool, 'layerThicknessFractions', layerThicknessFractions)
@@ -547,7 +558,7 @@ contains
       if ((anyDynamicVertexMaskChanged == 1) .or. (config_always_compute_fem_grid) .or. &
           (dirichletMaskChanged == 1) ) then
          call mpas_log_write("Generating new external velocity solver FEM grid.", flushNow=.true.)
-         call generate_fem_grid(config_velocity_solver, vertexMask, cellMask, dirichletVelocityMask, &
+         call generate_fem_grid(effectiveSolver, vertexMask, cellMask, dirichletVelocityMask, &
               layerThicknessFractions, lowerSurface, thickness, err)
       endif
 
@@ -563,7 +574,7 @@ contains
 
       call mpas_log_write("Beginning velocity solve using external velocity solver.", flushNow=.true.)
 
-      select case (config_velocity_solver)
+      select case (trim(effectiveSolver))
       case ('L1L2') ! ===============================================
 #ifdef USE_EXTERNAL_L1L2
           call mpas_timer_start("velocity_solver_solve_L1L2")
@@ -1015,7 +1026,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
-      character (len=StrKIND), pointer :: config_velocity_solver
+      character (len=StrKIND), intent(in) :: config_velocity_solver
       integer, pointer, dimension(:), intent(in) :: vertexMask, cellMask
       integer, pointer, dimension(:,:), intent(in) :: dirichletVelocityMask
       real(kind=RKIND), pointer, dimension(:), intent(in) :: layerThicknessFractions, &

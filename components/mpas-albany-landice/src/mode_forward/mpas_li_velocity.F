@@ -30,6 +30,7 @@ module li_velocity
 
    use li_velocity_external
    use li_velocity_simple
+   use li_velocity_gnn
    use li_sia
    use li_setup
 
@@ -58,6 +59,15 @@ module li_velocity
    ! Private module variables
    !
    !--------------------------------------------------------------------
+
+   ! For a GNN run that is not a restart, the initial velocity solve is
+   ! performed with the solver named by config_gnn_solver_init.  These flags
+   ! record which initial solver (if any) to use and whether that initial solve
+   ! has already been completed.
+   logical, save :: gnnUseExternalInitialSolve = .false.  ! 'FO' external dycore
+   logical, save :: gnnUseSIAInitialSolve = .false.       ! 'sia' native solver
+   logical, save :: gnnSkipInitialSolve = .false.         ! 'none' (no initial solve)
+   logical, save :: gnnInitialSolveDone = .false.
 
 
 !***********************************************************************
@@ -106,6 +116,8 @@ contains
       !
       !-----------------------------------------------------------------
       character (len=StrKIND), pointer :: config_velocity_solver
+      logical, pointer :: config_do_restart
+      character (len=StrKIND), pointer :: config_gnn_solver_init
       integer :: err_tmp
 
       err = 0
@@ -120,6 +132,34 @@ contains
           call li_sia_init(domain, err)
       case ('simple')
           call li_velocity_simple_init(domain, err)
+      case ('gnn')
+          call li_velocity_gnn_init(domain, err)
+          ! Unless this is a restart, the initial velocity solve of a GNN run is
+          ! performed with the solver named by config_gnn_solver_init to generate
+          ! a physically consistent starting velocity field.  Initialize that
+          ! solver here as needed.
+          call mpas_pool_get_config(liConfigs, 'config_do_restart', config_do_restart)
+          call mpas_pool_get_config(liConfigs, 'config_gnn_solver_init', config_gnn_solver_init)
+          if (.not. config_do_restart) then
+             select case (trim(config_gnn_solver_init))
+             case ('FO')
+                gnnUseExternalInitialSolve = .true.
+                call li_velocity_external_init(domain, err_tmp)
+                err = ior(err, err_tmp)
+             case ('sia')
+                gnnUseSIAInitialSolve = .true.
+                call li_sia_init(domain, err_tmp)
+                err = ior(err, err_tmp)
+             case ('none')
+                gnnSkipInitialSolve = .true.
+             case ('gnn')
+                ! Use the GNN emulator from the first solve; nothing to set up.
+             case default
+                call mpas_log_write(trim(config_gnn_solver_init) // &
+                   ' is not a valid config_gnn_solver_init option.', MPAS_LOG_ERR)
+                err = 1
+             end select
+          endif
       case ('L1L2', 'FO', 'Stokes')
           call li_velocity_external_init(domain, err)
       case default
@@ -193,6 +233,15 @@ contains
           call li_sia_block_init(block, err)
       case ('simple')
           call li_velocity_simple_block_init(block, err)
+      case ('gnn')
+          ! No block-level init needed for the GNN solver itself, but if the
+          ! initial solve will use another solver (config_gnn_solver_init), set
+          ! up that solver's block-level data.
+          if (gnnUseExternalInitialSolve) then
+             call li_velocity_external_block_init(block, err)
+          elseif (gnnUseSIAInitialSolve) then
+             call li_sia_block_init(block, err)
+          endif
       case ('L1L2', 'FO', 'Stokes')
           call li_velocity_external_block_init(block, err)
       case default
@@ -303,6 +352,7 @@ contains
       real (kind=RKIND) :: xVelEdge, yVelEdge
       integer :: blockDynamicVertexMaskChanged, procDynamicVertexMaskChanged
       integer :: blockDirichletMaskChanged, procDirichletMaskChanged
+      logical :: gnnDoExternalInitSolve, gnnDoSIAInitSolve, gnnDoSkipInitSolve
 
       call mpas_timer_start("velocity solve")
 
@@ -317,6 +367,13 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_adaptive_timestep_include_DCFL', config_adaptive_timestep_include_DCFL)
 
       uphillMarginEdgesFixed = 0
+
+      ! Determine whether this call should perform the initial GNN-run velocity
+      ! solve with a different solver (config_gnn_solver_init).  This applies
+      ! only to non-restart GNN runs and only for the first solve.
+      gnnDoExternalInitSolve = gnnUseExternalInitialSolve .and. (.not. gnnInitialSolveDone)
+      gnnDoSIAInitSolve      = gnnUseSIAInitialSolve      .and. (.not. gnnInitialSolveDone)
+      gnnDoSkipInitSolve     = gnnSkipInitialSolve        .and. (.not. gnnInitialSolveDone)
 
 
       ! In some situations (first time level of a restart), we don't want to actually solve
@@ -351,7 +408,8 @@ contains
 
       !   This first block for calculating normalSlopeEdge is also needed for the DCFL calculation
       !   that could occur with any velocity solver
-      if ( (trim(config_velocity_solver) == 'sia') .or. (config_adaptive_timestep_include_DCFL) ) then
+      if ( (trim(config_velocity_solver) == 'sia') .or. (config_adaptive_timestep_include_DCFL) .or. &
+           gnnDoSIAInitSolve ) then
          block => domain % blocklist
          do while (associated(block))
             call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
@@ -382,7 +440,8 @@ contains
 
       if ( (trim(config_velocity_solver) == 'L1L2') .or. &
            (trim(config_velocity_solver) == 'FO') .or. &
-           (trim(config_velocity_solver) == 'Stokes') ) then
+           (trim(config_velocity_solver) == 'Stokes') .or. &
+           gnnDoExternalInitSolve ) then
 
          ! External solvers may not be able to cope with no ice in the domain, so determine if that is the case
          ! Don't bother checking this with SIA because it requires an extra global reduce
@@ -518,6 +577,40 @@ contains
                endif
             enddo
 
+        case('gnn')
+
+            if (gnnDoExternalInitSolve) then
+               ! Initial solve of a (non-restart) GNN run: use the external
+               ! dycore specified by config_gnn_solver_init (e.g. the
+               ! Blatter-Pattyn 'FO' solver) to generate a physically consistent
+               ! starting velocity field.
+               if (maxThicknessAllProcs < config_dynamic_thickness) then
+                  ! External dycores may not be able to handle case when there is no ice
+                  call mpas_pool_get_array(velocityPool, 'uReconstructX', uReconstructX)
+                  call mpas_pool_get_array(velocityPool, 'uReconstructY', uReconstructY)
+                  call mpas_pool_get_array(velocityPool, 'uReconstructZ', uReconstructZ)
+                  normalVelocity = 0.0_RKIND
+                  uReconstructX = 0.0_RKIND
+                  uReconstructY = 0.0_RKIND
+                  uReconstructZ = 0.0_RKIND
+                  call mpas_log_write("Notice: Skipping velocity solve because there is no dynamic ice in domain.", MPAS_LOG_WARN)
+               else
+                  call mpas_log_write("Performing initial GNN-run velocity solve with external dycore.")
+                  call li_velocity_external_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, &
+                     velocityPool, err_tmp)
+               endif
+            elseif (gnnDoSIAInitSolve) then
+               ! Initial solve of a (non-restart) GNN run using the native SIA solver.
+               call mpas_log_write("Performing initial GNN-run velocity solve with SIA solver.")
+               call li_sia_solve(meshPool, geometryPool, thermalPool, velocityPool, err_tmp)
+            elseif (gnnDoSkipInitSolve) then
+               ! config_gnn_solver_init = 'none': skip the initial velocity solve
+               ! and leave the velocity field as initialized.
+               call mpas_log_write("Notice: Skipping initial GNN-run velocity solve (config_gnn_solver_init = 'none').")
+            else
+               call li_velocity_gnn_solve(domain, err_tmp)
+            endif
+
         case default
 
              call mpas_log_write(trim(config_velocity_solver) // ' is not a valid land ice velocity solver option.', MPAS_LOG_ERR)
@@ -569,6 +662,12 @@ contains
                             intArgs=(/uphillMarginEdgesFixed/))
       endif
 
+      ! The initial GNN-run velocity solve (with config_gnn_solver_init) has now
+      ! been completed; all subsequent solves use the GNN emulator.
+      if (gnnDoExternalInitSolve .or. gnnDoSIAInitSolve .or. gnnDoSkipInitSolve) then
+         gnnInitialSolveDone = .true.
+      endif
+
       ! ---
       ! --- update halos on velocity
       ! ---
@@ -613,7 +712,8 @@ contains
          ! but these can optionally be overwritten by reconstructed velocities for testing.
          if ( (trim(config_velocity_solver) == 'sia') .or.       &
               (trim(config_velocity_solver) == 'simple') .or.    &
-               config_do_velocity_reconstruction_for_external_dycore ) then
+               config_do_velocity_reconstruction_for_external_dycore .or. &
+               gnnDoSIAInitSolve ) then
             call mpas_reconstruct(meshPool, normalVelocity,               &
                              uReconstructX, uReconstructY, uReconstructZ, &
                              uReconstructZonal, uReconstructMeridional )
@@ -677,7 +777,7 @@ contains
          call li_basal_friction(domain, err_tmp)
          err = ior(err, err_tmp)
 
-         if (trim(config_velocity_solver) == 'sia') then
+         if ( (trim(config_velocity_solver) == 'sia') .or. gnnDoSIAInitSolve ) then
             ! For FO solver, heatDissipation is passed back from Albany
             call li_heat_dissipation_sia(domain, err_tmp)
             err = ior(err, err_tmp)
@@ -738,6 +838,7 @@ contains
       !
       !-----------------------------------------------------------------
       character (len=StrKIND), pointer :: config_velocity_solver
+      integer :: err_tmp
 
       err = 0
 
@@ -750,6 +851,17 @@ contains
           call li_sia_finalize(domain, err)
       case ('simple')
           call li_velocity_simple_finalize(err)
+      case ('gnn')
+          call li_velocity_gnn_finalize(err)
+          ! Finalize the solver that was initialized for the initial solve of
+          ! this GNN run, if any.
+          if (gnnUseExternalInitialSolve) then
+             call li_velocity_external_finalize(err_tmp)
+             err = ior(err, err_tmp)
+          elseif (gnnUseSIAInitialSolve) then
+             call li_sia_finalize(domain, err_tmp)
+             err = ior(err, err_tmp)
+          endif
       case ('L1L2', 'FO', 'Stokes')
           call li_velocity_external_finalize(err)
       case default

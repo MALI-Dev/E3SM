@@ -50,6 +50,27 @@ ifeq "$(SLM)" "true"
     override CPPFLAGS += -DUSE_SEALEVELMODEL
 endif
 
+# Optional FTorch for GNN velocity emulator
+ifeq "$(FTORCH)" "true"
+ifndef FTORCH_ROOT
+$(error FTORCH_ROOT is not set.  Please set FTORCH_ROOT to the FTorch install directory when FTORCH=true)
+endif
+ifndef LIBTORCH_ROOT
+$(error LIBTORCH_ROOT is not set.  Please set LIBTORCH_ROOT to the LibTorch install directory when FTORCH=true)
+endif
+	override CPPFLAGS += -DUSE_FTORCH
+	FCINCLUDES += -I$(FTORCH_ROOT)/include/ftorch
+	override LDFLAGS += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -Wl,-rpath,$(LIBTORCH_ROOT)/lib
+ifeq "$(FTORCH_CUDA)" "true"
+ifndef CUDA_HOME
+$(error CUDA_HOME is not set.  Please set CUDA_HOME to the CUDA toolkit directory when FTORCH_CUDA=true)
+endif
+	LIBS += -Wl,--as-needed,--allow-shlib-undefined -L$(FTORCH_ROOT)/lib64 -L$(LIBTORCH_ROOT)/lib -Wl,-rpath-link,$(CUDA_HOME)/lib64 -Wl,-rpath-link,$(LIBTORCH_ROOT)/lib -lftorch -ltorch -ltorch_cpu -ltorch_cuda -lc10 -lc10_cuda -lgomp -lstdc++ -Wl,--no-as-needed
+else
+	LIBS += -Wl,--as-needed -L$(FTORCH_ROOT)/lib64 -L$(LIBTORCH_ROOT)/lib -lftorch -ltorch -ltorch_cpu -lc10 -lgomp -lstdc++ -Wl,--no-as-needed
+endif
+endif
+
 # ===================================
 report_builds:
 	@echo "CORE=landice"
