@@ -1268,8 +1268,8 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
           int c0 = cellsOnEdge_F[2 * fEdge] - 1;
           int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
 
-          //skip if either of neighboring cells is zero
-          if((c0 >= nCells_F) || (c1 >= nCells_F))
+          // Skip boundary sentinels and out-of-range neighboring cells.
+          if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
             continue;
             
           int c = (fCellToVertex[c0] == iV) ? c1 : c0;
@@ -1318,7 +1318,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
        // but don't let be thicker than the loan cell!
        thick = std::min(thick, thickness_F[ic] / unit_length);
        // recalculate elev in case we adjusted it
-       elevationData[iv] = std::max((1.0 - rho_ice / rho_ocean) * thick, bed + thick);
+       elev = std::max((1.0 - rho_ice / rho_ocean) * thick, bed + thick);
     }
 
     if(thick < eps) { //thickness needs to be greater than eps
