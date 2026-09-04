@@ -1357,13 +1357,12 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       int c0 = cellsOnEdge_F[2 * fEdge] - 1;
       int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
       //skip if either of neighboring cells is zero
-      if((c0 >= nCells_F) || (c1 >= nCells_F))
+      if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
         continue;
       int c = (fCellToVertex[c0] == iv) ? c1 : c0; // index to neighbor
       int cVertex = fCellToVertex[c];
       if (cVertex == NotAnId)
         continue;
-
       hasGroundNeigh = hasGroundNeigh || ((thicknessData[cVertex] >= eps) && (rho_ice * thicknessData[cVertex] >= -rho_ocean * bedTopographyData[cVertex]));
       hasFloatNeigh =  hasFloatNeigh  || ((thicknessData[cVertex] >= eps) && (rho_ice * thicknessData[cVertex] <  -rho_ocean * bedTopographyData[cVertex]));
     } // loop over neighboring edges
