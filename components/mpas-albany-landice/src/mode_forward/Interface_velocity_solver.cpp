@@ -1303,7 +1303,8 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double thick = eps;
 
     // check if loan cell bed is above sea level or not
-    if (bedTopographyData[ic] > 0.0) {
+    // Note: ic is a raw MPAS cell index (not an FE vertex index), so use bedTopography_F here.
+    if (bedTopography_F[ic] / unit_length > 0.0) {
        // loan cell bed above sea level: assume the extension terminates at a thin ice shelf;
        //    this extension location would be where the glacier terminates at the ocean
        thick = eps;
