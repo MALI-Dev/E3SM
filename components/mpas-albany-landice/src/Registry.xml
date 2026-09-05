@@ -771,6 +771,8 @@
 		<package name="timeAvgRestarts" description="Variables needed to be included in restart files for time averaging to work correctly"/>
 
                 <package name="smbSatLapseRate" description="This package includes variables needed when config_apply_smb_sat_lapse_rate is true."/>
+
+                <package name="damageCalving" description="This package includes variables needed when damage-based calving is active (config_damage_calving_method is 'threshold' or 'calving_rate')."/>
 	</packages>
 
 
@@ -845,7 +847,7 @@
                         <var name="floatingVonMisesThresholdStress"/>
                         <var name="calvingStrainRateScaling"/>
 						<var name="crevasseWaterDepth"/>
-						<var name="damageCalvingThreshold"/>
+						<var name="damageCalvingThreshold" packages="damageCalving"/>
                         <var name="stiffnessFactor"/>
                         <var name="calvingMask"/>
                         <var name="upliftRate"/>
@@ -952,7 +954,7 @@
                         <var name="floatingVonMisesThresholdStress"/>
                         <var name="calvingStrainRateScaling"/>
 						<var name="crevasseWaterDepth"/>
-						<var name="damageCalvingThreshold"/>
+						<var name="damageCalvingThreshold" packages="damageCalving"/>
                         <var name="stiffnessFactor"/>
                         <var name="calvingMask"/>
                         <!-- calvingCFLdt only needed if calving CFL is being applied, but it is a scalar value so no harm in including it always -->
@@ -1483,6 +1485,7 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="damageCalvingThreshold" type="real" dimensions="nCells Time" units="unitless" time_levs="1"
                      description="spatially varying damage calving threshold used when config_damage_calving_threshold_source='data'. Same physical meaning and valid range as config_damage_calving_threshold."
+                     packages="damageCalving"
                 />
                 <var name="basalWaterThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="thickness of basal water"
