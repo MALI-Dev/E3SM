@@ -3412,6 +3412,13 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold_source', config_damage_calving_threshold_source)
 
+      if (trim(config_damage_calving_method) /= 'calving_rate' .and. &
+          trim(config_damage_calving_method) /= 'threshold') then
+         call mpas_log_write("config_damage_calving_method must be 'threshold' or 'calving_rate' when config_calving='damagecalving'.", MPAS_LOG_ERR)
+         err = 1
+         return
+      endif
+
       ! block loop
       block => domain % blocklist
       do while (associated(block))

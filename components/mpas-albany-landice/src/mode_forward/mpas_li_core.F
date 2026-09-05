@@ -898,6 +898,7 @@ module li_core
           trim(config_calving) == 'specified_calving_velocity' .or. &
           trim(config_calving) == 'specified_retreat_velocity' .or. &
           trim(config_calving) == 'von_Mises_stress' .or. &
+          trim(config_calving) == 'ismip6_retreat' .or. &
           (trim(config_calving) == 'damagecalving' .and. &
           trim(config_damage_calving_method) == 'calving_rate')) then
          calvingIsRateBased = .true.
