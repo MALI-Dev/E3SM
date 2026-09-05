@@ -3443,40 +3443,35 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'totalRatebasedUncalvedVolume', totalRatebasedUncalvedVolume)
          call mpas_pool_get_array(geometryPool, 'damageCalvingThreshold', damageCalvingThreshold)
 
+         ! Initialize damageCalvingThreshold based on source
+         if (trim(config_damage_calving_threshold_source) == "scalar") then
+            ! Populate damageCalvingThreshold with scalar value
+            damageCalvingThreshold(:) = config_damage_calving_threshold
+         elseif (trim(config_damage_calving_threshold_source) == "data") then
+            ! Use values from input file - already loaded
+         else
+            call mpas_log_write("config_damage_calving_threshold_source must be set to 'scalar' or 'data'.", MPAS_LOG_ERR)
+            err = 1
+            return
+         endif
 
          call calculate_calving_front_mask(meshPool, geometryPool, calvingFrontMask)
 
          if (trim(config_damage_calving_method) == 'calving_rate') then
-             if (trim(config_damage_calving_threshold_source) == "scalar") then
-                if (config_damage_calving_threshold >= 1.0_RKIND .or. config_damage_calving_threshold < 0.0_RKIND) then
-                   call mpas_log_write("Invalid value of config_damage_calving_threshold specified for 'calving_rate' option.  " // &
-                           "Valid values are in the range [0,1).", MPAS_LOG_ERR)
-                   err = ior(err, err_tmp)
-                endif
-                ! First calculate the front retreat rate (m/s) using scalar threshold
-                calvingVelocity(:) = config_damagecalvingParameter * &
-                   max(0.0_RKIND, (damage(:) - config_damage_calving_threshold) / (1.0_RKIND - config_damage_calving_threshold)) &
-                   * real(li_mask_is_floating_ice_int(cellMask(:)), kind=RKIND) ! calculate only for floating ice
-             elseif (trim(config_damage_calving_threshold_source) == "data") then
-                ! Validate spatial threshold values for calving_rate
-                if (minval(damageCalvingThreshold(1:nCells)) < 0.0_RKIND .or. &
-                    maxval(damageCalvingThreshold(1:nCells)) >= 1.0_RKIND) then
-                   call mpas_log_write("Invalid value of damageCalvingThreshold specified for 'calving_rate' option.  " // &
-                           "Valid values are in the range [0,1). Min value = $r, Max value = $r", MPAS_LOG_ERR, &
-                           realArgs=(/minval(damageCalvingThreshold(1:nCells)), &
-                                      maxval(damageCalvingThreshold(1:nCells))/))
-                   err = 1
-                   return
-                endif
-                ! First calculate the front retreat rate (m/s) using spatial threshold
-                calvingVelocity(:) = config_damagecalvingParameter * &
-                   max(0.0_RKIND, (damage(:) - damageCalvingThreshold(:)) / (1.0_RKIND - damageCalvingThreshold(:))) &
-                   * real(li_mask_is_floating_ice_int(cellMask(:)), kind=RKIND) ! calculate only for floating ice
-             else
-                call mpas_log_write("config_damage_calving_threshold_source must be set to 'scalar' or 'data'.", MPAS_LOG_ERR)
+             ! Validate threshold values for calving_rate
+             if (minval(damageCalvingThreshold(1:nCells)) < 0.0_RKIND .or. &
+                 maxval(damageCalvingThreshold(1:nCells)) >= 1.0_RKIND) then
+                call mpas_log_write("Invalid value of damageCalvingThreshold specified for 'calving_rate' option.  " // &
+                        "Valid values are in the range [0,1). Min value = $r, Max value = $r", MPAS_LOG_ERR, &
+                        realArgs=(/minval(damageCalvingThreshold(1:nCells)), &
+                                   maxval(damageCalvingThreshold(1:nCells))/))
                 err = 1
                 return
              endif
+             ! Calculate the front retreat rate (m/s) using damageCalvingThreshold
+             calvingVelocity(:) = config_damagecalvingParameter * &
+                max(0.0_RKIND, (damage(:) - damageCalvingThreshold(:)) / (1.0_RKIND - damageCalvingThreshold(:))) &
+                * real(li_mask_is_floating_ice_int(cellMask(:)), kind=RKIND) ! calculate only for floating ice
              call li_apply_front_ablation_velocity(meshPool, geometryPool, velocityPool, calvingThickness, calvingVelocity, &
                                               applyToGrounded=.false., applyToFloating=.true., applyToGroundingLine=.false., &
                                               domain=domain, maxDt=calvingCFLdt, CFLratio=dtCalvingCFLratio, &
@@ -4248,8 +4243,12 @@ module li_calving
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
 
-      ! Validate damage calving threshold source and values
-      if (trim(config_damage_calving_threshold_source) == "data") then
+      ! Initialize damageCalvingThreshold based on source
+      if (trim(config_damage_calving_threshold_source) == "scalar") then
+         ! Populate damageCalvingThreshold with scalar value
+         damageCalvingThreshold(:) = config_damage_calving_threshold
+      elseif (trim(config_damage_calving_threshold_source) == "data") then
+         ! Use values from input file - validate them
          if (minval(damageCalvingThreshold(1:nCells)) < 0.0_RKIND .or. &
              maxval(damageCalvingThreshold(1:nCells)) > 1.0_RKIND) then
             call mpas_log_write("damageCalvingThreshold contains invalid values. Valid range is [0,1]. " // &
@@ -4259,6 +4258,10 @@ module li_calving
             err = 1
             return
          endif
+      else
+         call mpas_log_write("config_damage_calving_threshold_source must be set to 'scalar' or 'data'.", MPAS_LOG_ERR)
+         err = 1
+         return
       endif
 
       ! Allocate scratch fields for flood-fill
@@ -4272,40 +4275,19 @@ module li_calving
       growMask => growMaskField % array
       growMask(:) = 0
 
-      ! Handle source selection for damage calving threshold
-      if (trim(config_damage_calving_threshold_source) == "scalar") then
-         ! Use scalar threshold uniformly
-         ! define seed and grow masks for flood fill.
-         where ( li_mask_is_dynamic_margin(cellMask) .and. &
-                 bedTopography < 0.0 .and. &
-                 (damage .ge. config_damage_calving_threshold) )
-                 seedMask = 1
-         end where
+      ! Define seed and grow masks for flood fill using damageCalvingThreshold
+      ! (which is populated from either scalar or data source above)
+      where ( li_mask_is_dynamic_margin(cellMask) .and. &
+              bedTopography < 0.0 .and. &
+              (damage .ge. damageCalvingThreshold) )
+              seedMask = 1
+      end where
 
-         where ( seedMask == 0 .and. &
-                 bedTopography < 0.0 .and. &
-                 (damage .ge. config_damage_calving_threshold) )
-                 growMask = 1
-         end where
-      elseif (trim(config_damage_calving_threshold_source) == "data") then
-         ! Use spatially varying threshold field
-         ! define seed and grow masks for flood fill.
-         where ( li_mask_is_dynamic_margin(cellMask) .and. &
-                 bedTopography < 0.0 .and. &
-                 (damage .ge. damageCalvingThreshold) )
-                 seedMask = 1
-         end where
-
-         where ( seedMask == 0 .and. &
-                 bedTopography < 0.0 .and. &
-                 (damage .ge. damageCalvingThreshold) )
-                 growMask = 1
-         end where
-      else
-         call mpas_log_write("config_damage_calving_threshold_source must be set to 'scalar' or 'data'.", MPAS_LOG_ERR)
-         err = 1
-         return
-      endif
+      where ( seedMask == 0 .and. &
+              bedTopography < 0.0 .and. &
+              (damage .ge. damageCalvingThreshold) )
+              growMask = 1
+      end where
 
       call li_flood_fill(domain)
 
