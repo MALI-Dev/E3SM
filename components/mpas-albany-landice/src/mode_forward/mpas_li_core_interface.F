@@ -111,7 +111,6 @@ module li_core_interface
       logical, pointer :: config_ocean_data_extrapolation
       logical, pointer :: config_enable_timeAvgRestarts
       logical, pointer :: config_apply_smb_sat_lapse_rate
-      character (len=StrKIND), pointer :: config_damage_calving_method
 
       logical, pointer :: higherOrderVelocityActive
       logical, pointer :: SIAvelocityActive
@@ -138,7 +137,6 @@ module li_core_interface
       call mpas_pool_get_config(configPool, 'config_thermal_solver', config_thermal_solver)
       call mpas_pool_get_config(configPool, 'config_enable_timeAvgRestarts', config_enable_timeAvgRestarts)
       call mpas_pool_get_config(configPool, 'config_apply_smb_sat_lapse_rate', config_apply_smb_sat_lapse_rate)
-      call mpas_pool_get_config(configPool, 'config_damage_calving_method', config_damage_calving_method)
 
       call mpas_pool_get_package(packagePool, 'SIAvelocityActive', SIAvelocityActive)
       call mpas_pool_get_package(packagePool, 'higherOrderVelocityActive', higherOrderVelocityActive)
@@ -218,10 +216,10 @@ module li_core_interface
               "'config_enable_timeAvgRestarts' is set to .false.")
       endif
 
-      if (trim(config_damage_calving_method) == 'threshold' .or. trim(config_damage_calving_method) == 'calving_rate') then
+      if ((trim(config_calving) == 'damagecalving') .or. (trim(config_calving) == 'crevasse_depth')) then
          damageCalvingActive = .true.
          call mpas_log_write("The 'damageCalving' package and associated variables have been enabled because " // &
-              "'config_damage_calving_method' is set to '" // trim(config_damage_calving_method) // "'.")
+              "'config_calving' is set to '" // trim(config_calving) // "'.")
       else
          damageCalvingActive = .false.
       endif
