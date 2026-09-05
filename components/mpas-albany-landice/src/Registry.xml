@@ -283,6 +283,10 @@
                         description="When config_damage_calving_method==threshold, this is the value of damage above which the cell would be calved away.  When config_damage_calving_method==calving_rate, this is the value above which calving becomes proportional to damage."
 	                possible_values="real value between 0 and 1"
 		/>
+                <nml_option name="config_damage_calving_threshold_source" type="character" default_value="scalar" units="unitless"
+                        description="Source of the threshold used by damage-threshold-based calving logic. 'scalar' uses config_damage_calving_threshold uniformly over the domain. 'data' uses the cell-centered damageCalvingThreshold field read from input."
+	                possible_values="'scalar', 'data'"
+		/>
                 <nml_option name="config_damage_stiffness_min" type="real" default_value="0.1" units="unitless"
                         description="The minimum value the 'stiffnessFactor' can take due to evolving damage when 'stiffnessFactor' is calculated from damage (i.e., when 'config_damage_rheology_coupling'=.true.). This is used to prevent unrealistic and/or numerically challenging stiffness values. For example, if damage = 0.9, then 'stiffnessFactor' becomes 1 - damage = 0.1 (a small value that could be challenging for the solver). But if we set 'config_damage_stiffness_min' = 0.5, then 'stiffnessFactor' can only fall as low as 0.5."
 	                possible_values="real value between 0 and 1"
@@ -841,6 +845,7 @@
                         <var name="floatingVonMisesThresholdStress"/>
                         <var name="calvingStrainRateScaling"/>
 						<var name="crevasseWaterDepth"/>
+						<var name="damageCalvingThreshold"/>
                         <var name="stiffnessFactor"/>
                         <var name="calvingMask"/>
                         <var name="upliftRate"/>
@@ -947,6 +952,7 @@
                         <var name="floatingVonMisesThresholdStress"/>
                         <var name="calvingStrainRateScaling"/>
 						<var name="crevasseWaterDepth"/>
+						<var name="damageCalvingThreshold"/>
                         <var name="stiffnessFactor"/>
                         <var name="calvingMask"/>
                         <!-- calvingCFLdt only needed if calving CFL is being applied, but it is a scalar value so no harm in including it always -->
@@ -1474,6 +1480,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="basalCrevasseDepth" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="depth of basal crevasses based on Nye zero-stress model"
+                />
+                <var name="damageCalvingThreshold" type="real" dimensions="nCells Time" units="unitless" time_levs="1"
+                     description="spatially varying damage calving threshold used when config_damage_calving_threshold_source='data'. Same physical meaning and valid range as config_damage_calving_threshold."
                 />
                 <var name="basalWaterThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="thickness of basal water"
