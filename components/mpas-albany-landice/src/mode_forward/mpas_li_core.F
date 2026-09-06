@@ -125,6 +125,10 @@ module li_core
       integer :: streamErr
       integer (kind=I8KIND) :: nIntervals
       type (MPAS_TimeInterval_type) :: remainder
+      character (len=StrKIND), pointer :: config_fem_extension_method
+      character (len=StrKIND) :: femExtensionMethodAtt
+      character (len=StrKIND) :: meshStreamID
+      integer :: femExtAttErr
 
       err = 0
       err_tmp = 0
@@ -196,6 +200,45 @@ module li_core
       call mpas_stream_mgr_reset_alarms(domain % streamManager, direction=MPAS_STREAM_OUTPUT, ierr=err_tmp)
       err = ior(err, err_tmp)
       call mpas_timer_stop('reset_io_alarms')
+
+      !
+      ! Resolve config_fem_extension_method='auto' using the global attribute
+      ! 'config_fem_extension_method_used' from whichever mesh/restart file was just
+      ! read above.  This allows a run to automatically continue using whatever
+      ! extension method was used to produce its initial condition (e.g. a restart
+      ! file written by an earlier version of the model), rather than silently
+      ! switching methods mid-run-chain.  The resolved (never 'auto') value is then
+      ! (re-)written as a global attribute to all subsequently-written restart and
+      ! output files so that this provenance is always self-documenting and 'auto' can
+      ! be resolved consistently on any future restart from those files.
+      call mpas_pool_get_config(domain % configs, 'config_fem_extension_method', config_fem_extension_method)
+      if (trim(config_fem_extension_method) == 'auto') then
+         meshStreamID = 'input'
+         if (config_do_restart) meshStreamID = 'restart'
+         call MPAS_stream_mgr_get_att(domain % streamManager, trim(meshStreamID), &
+            'config_fem_extension_method_used', femExtensionMethodAtt, ierr=femExtAttErr)
+         if ( (femExtAttErr /= MPAS_STREAM_MGR_NOERR) .or. &
+              ( (trim(femExtensionMethodAtt) /= 'ismip6-era') .and. (trim(femExtensionMethodAtt) /= 'ismip7-era') ) ) then
+            call mpas_log_write("config_fem_extension_method='auto' but a valid " // &
+               "'config_fem_extension_method_used' global attribute was not found in stream '" // &
+               trim(meshStreamID) // "'.  Defaulting to 'ismip6-era'.", MPAS_LOG_WARN)
+            femExtensionMethodAtt = 'ismip6-era'
+         end if
+         config_fem_extension_method = trim(femExtensionMethodAtt)
+         call mpas_log_write("config_fem_extension_method='auto' resolved to '" // &
+            trim(config_fem_extension_method) // "' from stream '" // trim(meshStreamID) // "'.")
+      end if
+      ! Record the (resolved) fem extension method as a global attribute on the 'restart'
+      ! and 'output' streams, so it can be recovered by a subsequent 'auto' run that
+      ! restarts from one of those files.  (These streams already exist by this point in
+      ! initialization, so an explicit streamID must be given for the attribute to take
+      ! effect; see MPAS_stream_mgr_add_att()'s documentation.)
+      call MPAS_stream_mgr_add_att(domain % streamManager, 'config_fem_extension_method_used', &
+         trim(config_fem_extension_method), streamID='restart', ierr=err_tmp)
+      err = ior(err, err_tmp)
+      call MPAS_stream_mgr_add_att(domain % streamManager, 'config_fem_extension_method_used', &
+         trim(config_fem_extension_method), streamID='output', ierr=err_tmp)
+      err = ior(err, err_tmp)
 
       !
       ! Read time-varying inputs, if present (i.e., forcing)

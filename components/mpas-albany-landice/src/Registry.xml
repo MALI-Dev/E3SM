@@ -69,8 +69,8 @@
 		            possible_values="'sia', 'L1L2', 'FO', 'Stokes', 'simple', 'none'"
 		/>
 		<nml_option name="config_fem_extension_method" type="character" default_value="ismip6-era" units="unitless"
-		            description="Selection of the method used to extend thickness and elevation fields from dynamic FE vertices onto adjacent ice-free/inactive marine and terrestrial margin vertices for FEM velocity solvers (e.g. 'FO').  'ismip6-era' is the extension scheme used prior to the ismip7-era margin-extension revisions.  'ismip7-era' is the revised scheme, which avoids smearing ice up terrestrial cliffs and ramps thickness to zero at extended marine margins that are in contact with both grounded and floating ice."
-		            possible_values="'ismip6-era', 'ismip7-era'"
+		            description="Selection of the method used to extend thickness and elevation fields from dynamic FE vertices onto adjacent ice-free/inactive marine and terrestrial margin vertices for FEM velocity solvers (e.g. 'FO').  'ismip6-era' is the extension scheme used prior to the ismip7-era margin-extension revisions.  'ismip7-era' is the revised scheme, which avoids smearing ice up terrestrial cliffs and ramps thickness to zero at extended marine margins that are in contact with both grounded and floating ice.  'auto' resolves to whichever of 'ismip6-era'/'ismip7-era' was used to produce this run's initial condition, read from the 'config_fem_extension_method_used' global attribute of the input (or restart, if this is a restart run) file; if that attribute is absent, 'auto' falls back to 'ismip6-era'.  Whichever method is actually used (resolved or explicit) is recorded in the 'config_fem_extension_method_used' global attribute of all restart and output files written by this run."
+		            possible_values="'ismip6-era', 'ismip7-era', 'auto'"
 		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.
