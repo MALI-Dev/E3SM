@@ -68,6 +68,10 @@
 		            description="Selection of the method for solving ice velocity. 'L1L2', 'FO', and 'Stokes' require compiling with external dycores. 'none' skips the calculation of velocity so the velocity field will be 0 or set to a field read from an input file.  'simple' gives a simple prescribed velocity field computed at initialization."
 		            possible_values="'sia', 'L1L2', 'FO', 'Stokes', 'simple', 'none'"
 		/>
+		<nml_option name="config_fem_extension_method" type="character" default_value="ismip6-era" units="unitless"
+		            description="Selection of the method used to extend thickness and elevation fields from dynamic FE vertices onto adjacent ice-free/inactive marine and terrestrial margin vertices for FEM velocity solvers (e.g. 'FO').  'ismip6-era' is the extension scheme used prior to the ismip7-era margin-extension revisions.  'ismip7-era' is the revised scheme, which avoids smearing ice up terrestrial cliffs and ramps thickness to zero at extended marine margins that are in contact with both grounded and floating ice."
+		            possible_values="'ismip6-era', 'ismip7-era'"
+		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.
 'from_vertex_barycentric' interpolates upperSurface values from cell centers to vertices using the barycentric interpolation routine in operators (mpas_cells_to_points_using_baryweights) and then calculates the slope between vertices.  It works for obtuse triangles, but will not work correctly across the edges of periodic meshes.
