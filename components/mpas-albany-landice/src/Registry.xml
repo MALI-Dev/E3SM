@@ -821,7 +821,39 @@
 			<var name="kiteAreasOnVertex"/>
 			<var name="layerThicknessFractions"/>
 			<var name="meshDensity"/>
-		</stream>
+                </stream>
+
+		<!-- minmesh contains the minimal set of fields needed for Paraview and plot_maps.py to work - attach this to other streams as needed -->
+		<stream name="minmesh"
+				type="none"
+				immutable="true"
+				filename_template="not-to-be-used.nc">
+			<var name="xCell"/>
+			<var name="yCell"/>
+			<var name="zCell"/>
+			<var name="cellsOnVertex"/>
+			<var name="dcEdge"/>
+                </stream>
+
+		<!-- mosaicmesh contains the minimal set of fields needed for the mosaic package to work - attach this to other streams as needed -->
+		<stream name="mosaicmesh"
+				type="none"
+				immutable="true"
+				filename_template="not-to-be-used.nc">
+			<var name="xCell"/>
+			<var name="yCell"/>
+			<var name="xEdge"/>
+			<var name="yEdge"/>
+			<var name="xVertex"/>
+			<var name="yVertex"/>
+			<var name="cellsOnEdge"/>
+			<var name="cellsOnVertex"/>
+			<var name="verticesOnCell"/>
+			<var name="verticesOnEdge"/>
+			<var name="edgesOnVertex"/>
+                        <var name="dcEdge"/> <!-- only used by plots_maps.py, not mosaic -->
+                        <var name="zCell"/> <!-- only used by paraview, not mosaic -->
+                </stream>
 
 <!-- WHL: When using the enthalpy heat-balance solver, will need to add waterFrac to the streams with temperature. -->
 		<stream name="input"
@@ -1017,7 +1049,7 @@
 				clobber_mode="replace_files">
 				<!-- Note: I had set the default precision to 'single', but MpasDraw currently only supports double precision files -->
 
-	        <stream name="basicmesh"/>
+	        <stream name="mosaicmesh"/>
 			<var name="layerCenterSigma"/>
 			<var name="layerInterfaceSigma"/>
                         <var name="xtime"/>
