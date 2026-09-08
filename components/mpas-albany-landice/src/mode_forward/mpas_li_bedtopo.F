@@ -31,6 +31,11 @@ module li_bedtopo
 #ifdef _MPI
    use mpi
 #endif
+#ifdef USE_FASTISOSTASY
+   use fastisostasy, only: isos_class, bsl_class, isos_init, isos_init_ref, isos_init_state, &
+                           isos_update, isos_end, bsl_init, bsl_update
+   use isostasy_defs, only: wp
+#endif
 
    implicit none
    private
@@ -55,6 +60,13 @@ module li_bedtopo
    ! sea-level model timestep
    integer, save :: slmTimeStep, nglv_slm, norder_slm
 
+   ! FastIsostasy timestep and solver dimensions
+   integer, save :: fastisostasyTimeStep, nFastIsostasyX, nFastIsostasyY
+#ifdef USE_FASTISOSTASY
+   type (isos_class), save :: isosFastIsostasy
+   type (bsl_class), save :: bslFastIsostasy
+#endif
+
    ! Interpolation weights variables
    integer, dimension(:), allocatable :: toRowValues, toColValues
    integer, dimension(:), allocatable :: fromRowValues, fromColValues
@@ -75,6 +87,8 @@ module li_bedtopo
    real (kind=RKIND), dimension(:), allocatable :: gatheredArrayBedTopography
    real (kind=RKIND), dimension(:), allocatable :: globalArrayTopoChange
    real (kind=RKIND), dimension(:), allocatable :: gatheredArrayTopoChange
+   real (kind=RKIND), dimension(:), allocatable :: globalArrayGeoidChange
+   real (kind=RKIND), dimension(:), allocatable :: gatheredArrayGeoidChange
 
 !***********************************************************************
 
@@ -129,6 +143,19 @@ contains
          if (err /= 0) then
             call mpas_log_write('Error in li_bedtopo_init', MPAS_LOG_ERR)
          endif
+      elseif (trim(config_uplift_method)=='fastisostasy') then
+#ifdef USE_FASTISOSTASY
+         call fastisostasy_init(domain, err_tmp)
+         err = ior(err, err_tmp)
+
+         if (err /= 0) then
+            call mpas_log_write('Error in li_bedtopo_init for FastIsostasy', MPAS_LOG_ERR)
+         endif
+#else
+         call mpas_log_write("FastIsostasy needs to be included in the compilation with 'FASTISOSTASY=true'", &
+              MPAS_LOG_ERR)
+         err = ior(err,1)
+#endif
       endif
 
    !--------------------------------------------------------------------
@@ -276,6 +303,27 @@ contains
               MPAS_LOG_ERR)
          err = ior(err,1)
 #endif
+      elseif (trim(config_uplift_method)=='fastisostasy') then
+#ifdef USE_FASTISOSTASY
+         if (mpas_is_alarm_ringing(domain % clock, 'fastisostasyCouplingInterval', ierr=err_tmp)) then
+            err = ior(err, err_tmp)
+
+            fastisostasyTimeStep = fastisostasyTimeStep + 1
+
+            call mpas_log_write("Calling FastIsostasy. FastIsostasy timestep $i", &
+                                intArgs=(/fastisostasyTimeStep/))
+            call fastisostasy_solve(fastisostasyTimeStep, domain)
+
+            call mpas_reset_clock_alarm(domain % clock, 'fastisostasyCouplingInterval', ierr=err_tmp)
+            err = ior(err, err_tmp)
+         else
+            ! do nothing for now, but could calculate uplift rate here later instead.
+         endif
+#else
+         call mpas_log_write("FastIsostasy needs to be included in the compilation with 'FASTISOSTASY=true'", &
+              MPAS_LOG_ERR)
+         err = ior(err,1)
+#endif
       else
          call mpas_log_write("Unknown option selected for 'config_uplift_method'", MPAS_LOG_ERR)
       endif
@@ -339,6 +387,19 @@ contains
          if (curProc.eq.0) then
             deallocate(toRowValues, toColValues, toSValues)
             deallocate(fromRowValues, fromColValues, fromSValues)
+         endif
+         deallocate(nCellsPerProc)
+         deallocate(nCellsDisplacement)
+         deallocate(indexToCellIDGathered)
+      endif
+#endif
+#ifdef USE_FASTISOSTASY
+      call mpas_pool_get_config(liConfigs, 'config_uplift_method', config_uplift_method)
+      if (trim(config_uplift_method)=='fastisostasy') then
+         if (curProc.eq.0) then
+            deallocate(toRowValues, toColValues, toSValues)
+            deallocate(fromRowValues, fromColValues, fromSValues)
+            call isos_end(isosFastIsostasy)
          endif
          deallocate(nCellsPerProc)
          deallocate(nCellsDisplacement)
@@ -652,10 +713,13 @@ contains
 
       real (kind=RKIND), dimension(:), pointer :: bedTopography, thickness
       real (kind=RKIND), dimension(:), pointer :: bedTopographyChange
+      real (kind=RKIND), dimension(:), pointer :: geoidChange
       real (kind=RKIND), dimension(:), allocatable :: meshMask
       real (kind=RKIND), dimension(:,:), allocatable :: ismIceload, ismMask
       real (kind=RKIND), dimension(:,:), allocatable :: slmSLchange
+      real (kind=RKIND), dimension(:,:), allocatable :: geoidSLchange
       real (kind=RKIND), dimension(:), allocatable :: slChangeSLgrid1D
+      real (kind=RKIND), dimension(:), allocatable :: geoidChangeSLgrid1D
       real (kind=RKIND), dimension(:), allocatable :: thicknessSLgrid1D
       real (kind=RKIND), dimension(:), allocatable :: maskSLgrid1D
       integer, dimension(:), pointer :: cellMask
@@ -673,6 +737,7 @@ contains
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'bedTopographyChange', bedTopographyChange)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+      call mpas_pool_get_array(geometryPool, 'geoidChange', geoidChange)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
 
@@ -686,19 +751,25 @@ contains
          ! allocate and initialize the SLM-related variables used in this module
          allocate(globalArrayThickness(nCellsGlobal), gatheredArrayThickness(nCellsGlobal))
          allocate(globalArrayTopoChange(nCellsGlobal), gatheredArrayTopoChange(nCellsGlobal))
+         allocate(globalArrayGeoidChange(nCellsGlobal), gatheredArrayGeoidChange(nCellsGlobal))
          allocate(meshMask(nCellsGlobal))
-         allocate(ismIceload(nglv_slm,2*nglv_slm), ismMask(nglv_slm,2*nglv_slm), slmSLchange(nglv_slm,2*nglv_slm))
+         allocate(ismIceload(nglv_slm,2*nglv_slm), ismMask(nglv_slm,2*nglv_slm))
+         allocate(slmSLchange(nglv_slm,2*nglv_slm), slmGeoidChange(nglv_slm,2*nglv_slm))
          allocate(slChangeSLgrid1D(nglv_slm*2*nglv_slm), thicknessSLgrid1D(nglv_slm*2*nglv_slm), maskSLgrid1D(nglv_slm*2*nglv_slm))
-         ismIceload(:,:) = 0.0
-         ismMask(:,:) = 0.0
-         slmSLchange(:,:) = 0.0
-         slChangeSLgrid1D(:) = 0.0
-         thicknessSLgrid1D(:) = 0.0
-         maskSLgrid1D(:) = 0.0
+         allocate(geoidChangeSLgrid1D(nglv_slm*2*nglv_slm))
+         ismIceload(:,:) = 0.0_RKIND
+         ismMask(:,:) = 0.0_RKIND
+         slmSLchange(:,:) = 0.0_RKIND
+         slmGeoidChange(:,:) = 0.0_RKIND
+         slChangeSLgrid1D(:) = 0.0_RKIND
+         geoidChangeSLgrid1D(:) = 0.0_RKIND
+         thicknessSLgrid1D(:) = 0.0_RKIND
+         maskSLgrid1D(:) = 0.0_RKIND
       else
          ! Intel requires these be allocated even though they are not meaningful on the non-destination procs
          allocate(globalArrayThickness(1), gatheredArrayThickness(1))
          allocate(globalArrayTopoChange(1), gatheredArrayTopoChange(1))
+         allocate(globalArrayGeoidChange(1), gatheredArrayGeoidChange(1))
          allocate(meshMask(1))
       endif
 
@@ -729,36 +800,44 @@ contains
          call sl_timewindow(slmTimeStep)
          call sl_allocate_and_initialize_array
          call sl_solver_checkpoint(itersl, dtime)
-         call sl_solver(itersl, slmTimeStep, dtime, starttime, ismIceload, ismMask, slmSLchange)
+         call sl_solver(itersl, slmTimeStep, dtime, starttime, ismIceload, ismMask, slmSLchange, slmGeoidChange)
          call sl_deallocate_array
 
          ! reshape 2D array SLM output into 1D array
          slChangeSLgrid1D = reshape(slmSLchange, [nglv_slm*2*nglv_slm])
+         geoidChangeSLgrid1D = reshape(slmGeoidchange, [nglv_slm*2*nglv_slm])
 
          ! interpolate sea-level change from GL grid to MALI mesh.
          ! note: in the static sea-level theory, sea level and topography are globally defined !>
          ! and negative of each other. That is, topography change is negative of sea-level change
          call interpolate(fromColValues, fromRowValues, fromSValues, -1.0_RKIND*(slChangeSLgrid1D), &
                           globalArrayTopoChange)
+         call interpolate(fromColValues, fromRowValues, fromSValues, geoidChangeSLgrid1D, &
+                          globalArrayGeoidChange)
 
          ! Rearrange back to index order
          do iCell = 1,nCellsGlobal
             gatheredArrayTopoChange(iCell) = globalArrayTopoChange(indexToCellIDGathered(iCell))
+            gatheredArrayGeoidChange(iCell) = globalArrayGeoidChange(indexToCellIDGathered(iCell))
          enddo
 
-         deallocate(ismIceload, ismMask, slmSLchange)
-         deallocate(slChangeSLgrid1D, thicknessSLgrid1D, maskSLgrid1D)
+         deallocate(ismIceload, ismMask, slmSLchange, slmGeoidChange)
+         deallocate(slChangeSLgrid1D, geoidChangeSLgrid1D, thicknessSLgrid1D, maskSLgrid1D)
       endif
 
       ! scatter output sea-level changes to processors
       call MPI_SCATTERV(gatheredArrayTopoChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
                         bedTopographyChange, nCellsAll, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
       err = ior(err, err_tmp)
+      call MPI_SCATTERV(gatheredArrayGeoidChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
+                        geoidChange, nCellsAll, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
 
       ! update bedTopography
       bedTopography(:) = bedTopography(:) + bedTopographyChange(:)
 
       ! Perform Halo exchange update
+      ! Don't bother with geoidChange because it is only a diagnostic output
       call mpas_dmpar_field_halo_exch(domain,'bedTopography')
       call li_update_geometry(geometryPool)
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
@@ -769,11 +848,362 @@ contains
       deallocate(gatheredArrayThickness)
       deallocate(globalArrayTopoChange)
       deallocate(gatheredArrayTopoChange)
+      deallocate(globalArrayGeoidChange)
+      deallocate(gatheredArrayGeoidChange)
       deallocate(meshMask)
 #endif
 
    !--------------------------------------------------------------------
    end subroutine slmodel_solve
+
+
+!***********************************************************************
+!
+!  routine fastisostasy_init
+!
+!> \brief   Initializes FastIsostasy coupling
+!> \author  MALI developers
+!> \date    June 2026
+!> \details
+!>  This wrapper routine initializes FastIsostasy and the coupling
+!>  infrastructure (alarm, interpolation weights, MPI gather/scatter maps).
+!
+!-----------------------------------------------------------------------
+
+   subroutine fastisostasy_init(domain, err)
+
+#ifdef USE_FASTISOSTASY
+      use mpas_timekeeping
+#endif
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+
+      integer, intent(out) :: err
+      type (domain_type), intent(inout) :: domain
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+
+#ifdef USE_FASTISOSTASY
+      logical, pointer :: config_do_restart
+      type (mpas_pool_type), pointer :: meshPool
+      type (mpas_pool_type), pointer :: geometryPool
+      real (kind=RKIND), dimension(:), pointer :: thickness, bedTopography
+      real (kind=RKIND), dimension(:), allocatable :: meshMask
+      real (kind=RKIND), dimension(:), allocatable :: thicknessFastIsostasy1D
+      real (kind=RKIND), dimension(:), allocatable :: bedtopoFastIsostasy1D
+      real (kind=wp), dimension(:,:), allocatable :: thicknessFastIsostasy2D
+      real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasy2D
+      integer, dimension(:), pointer :: cellMask
+      integer :: err_tmp
+      integer, pointer :: config_fastisostasy_coupling_interval
+      type (MPAS_TimeInterval_type) :: fastisostasy_coupling_interval
+      character (len=StrKIND), pointer :: simulationStartTime
+      type (MPAS_Time_type) :: simulationStartTime_timeType
+      character (len=StrKIND), pointer :: config_fastisostasy_parameter_file
+      character (len=StrKIND), pointer :: config_MALI_to_FASTISOSTASY_weights_file
+      character (len=StrKIND), pointer :: config_FASTISOSTASY_to_MALI_weights_file
+
+      ! MPI variables
+      integer, dimension(:), pointer :: indexToCellID
+      integer :: iProc, nProcs
+      real (kind=wp) :: fastisostasyDx, fastisostasyDy
+
+      err = 0
+      err_tmp = 0
+
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+
+      ! Set up the alarm for the coupling time interval
+      call mpas_pool_get_config(liConfigs, 'config_fastisostasy_coupling_interval', config_fastisostasy_coupling_interval)
+      call mpas_set_timeInterval(fastisostasy_coupling_interval, YY=config_fastisostasy_coupling_interval, ierr=err_tmp)
+      err = ior(err,err_tmp)
+      call mpas_pool_get_array(meshPool, 'simulationStartTime', simulationStartTime)
+      call mpas_set_time(simulationStartTime_timeType, dateTimeString=simulationStartTime, ierr=err_tmp)
+      err = ior(err,err_tmp)
+      call mpas_add_clock_alarm(domain%clock, 'fastisostasyCouplingInterval', alarmTime=simulationStartTime_timeType, &
+           alarmTimeInterval=fastisostasy_coupling_interval, ierr=err_tmp)
+      err = ior(err,err_tmp)
+      if (mpas_is_alarm_ringing(domain%clock, 'fastisostasyCouplingInterval', ierr=err_tmp)) then
+         err = ior(err, err_tmp)
+         call mpas_reset_clock_alarm(domain%clock, 'fastisostasyCouplingInterval', ierr=err_tmp)
+         err = ior(err, err_tmp)
+      endif
+
+      call mpas_pool_get_config(liConfigs, 'config_MALI_to_FASTISOSTASY_weights_file', config_MALI_to_FASTISOSTASY_weights_file)
+      call mpas_pool_get_config(liConfigs, 'config_FASTISOSTASY_to_MALI_weights_file', config_FASTISOSTASY_to_MALI_weights_file)
+      call mpas_pool_get_config(liConfigs, 'config_fastisostasy_parameter_file', config_fastisostasy_parameter_file)
+
+      ! initialize interpolation
+      call interpolate_init(domain, err_tmp, trim(config_MALI_to_FASTISOSTASY_weights_file), &
+                            trim(config_FASTISOSTASY_to_MALI_weights_file))
+      err = ior(err, err_tmp)
+
+      ! Set needed variables for using MPI
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCellsAll)
+      call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsOwned)
+      call mpas_pool_get_array(meshPool, 'indexToCellID', indexToCellID)
+
+      call MPI_COMM_RANK( domain % dminfo % comm, curProc, err_tmp)
+      err = ior(err, err_tmp)
+      call MPI_COMM_SIZE( domain % dminfo % comm, nProcs, err_tmp)
+      err = ior(err, err_tmp)
+
+      allocate(nCellsPerProc(nProcs))
+      allocate(nCellsDisplacement(nProcs))
+
+      call MPI_GATHER( nCellsOwned, 1, MPI_INTEGER, nCellsPerProc, 1, MPI_INTEGER, &
+      0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
+
+      if (curProc.eq.0) then
+         nCellsGlobal = sum(nCellsPerProc)
+         allocate(indexToCellIDGathered(nCellsGlobal))
+         nCellsDisplacement(1) = 0
+         if (nProcs > 1) then
+            do iProc=2,nProcs
+               nCellsDisplacement(iProc) = nCellsDisplacement(iProc-1) + nCellsPerProc(iProc-1)
+            enddo
+         endif
+      else
+         ! Intel requires this be allocated even though it is not meaningful on the non-destination procs
+         allocate(indexToCellIDGathered(1))
+      endif
+
+      call MPI_GATHERV( indexToCellID, nCellsOwned, MPI_INTEGER, indexToCellIDGathered, &
+      nCellsPerProc, nCellsDisplacement, MPI_INTEGER, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
+
+      call mpas_pool_get_config(liConfigs, 'config_do_restart', config_do_restart)
+      if (config_do_restart) then
+         call mpas_log_write('FastIsostasy restart coupling is not implemented yet in MALI.', MPAS_LOG_ERR)
+         err = ior(err, 1)
+      else
+         call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+         call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+         call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+
+         if (curProc.eq.0) then
+            allocate(globalArrayThickness(nCellsGlobal), gatheredArrayThickness(nCellsGlobal))
+            allocate(globalArrayBedTopography(nCellsGlobal), gatheredArrayBedTopography(nCellsGlobal))
+            allocate(meshMask(nCellsGlobal))
+            allocate(thicknessFastIsostasy1D(nGrid), bedtopoFastIsostasy1D(nGrid))
+            meshMask(:) = 0.0_RKIND
+            thicknessFastIsostasy1D(:) = 0.0_RKIND
+            bedtopoFastIsostasy1D(:) = 0.0_RKIND
+         else
+            allocate(globalArrayThickness(1), gatheredArrayThickness(1))
+            allocate(globalArrayBedTopography(1), gatheredArrayBedTopography(1))
+            allocate(meshMask(1))
+         endif
+
+         call MPI_GATHERV((thickness*real(li_mask_is_grounded_ice_int(cellMask),RKIND)), &
+                nCellsOwned, MPI_DOUBLE, gatheredArrayThickness, nCellsPerProc, &
+                nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+         err = ior(err, err_tmp)
+         call MPI_GATHERV(bedTopography, nCellsOwned, MPI_DOUBLE, gatheredArrayBedTopography, nCellsPerProc, &
+                          nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+         err = ior(err, err_tmp)
+
+         if (curProc.eq.0) then
+            do iCell = 1,nCellsGlobal
+               globalArrayThickness(indexToCellIDGathered(iCell)) = gatheredArrayThickness(iCell)
+               globalArrayBedTopography(indexToCellIDGathered(iCell)) = gatheredArrayBedTopography(iCell)
+               meshMask(indexToCellIDGathered(iCell)) = 1.0_RKIND
+            enddo
+
+            call interpolate(toColValues, toRowValues, toSvalues, globalArrayThickness, thicknessFastIsostasy1D)
+            call interpolate(toColValues, toRowValues, toSvalues, globalArrayBedTopography, bedtopoFastIsostasy1D)
+
+            nFastIsostasyX = int(nint(sqrt(real(nGrid, RKIND))))
+            nFastIsostasyY = nFastIsostasyX
+            if (nFastIsostasyX*nFastIsostasyY /= nGrid) then
+               call mpas_log_write('FastIsostasy coupling currently expects a square target grid in the mapping file.', &
+                                   MPAS_LOG_ERR)
+               err = ior(err, 1)
+            endif
+
+            allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
+            allocate(bedtopoFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
+            thicknessFastIsostasy2D = real(reshape(thicknessFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
+            bedtopoFastIsostasy2D = real(reshape(bedtopoFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
+
+            ! Use unit grid spacing unless configured otherwise in a follow-up change.
+            fastisostasyDx = 1.0_wp
+            fastisostasyDy = 1.0_wp
+
+            if (err == 0) then
+               call bsl_init(bslFastIsostasy, trim(config_fastisostasy_parameter_file), 0.0_wp)
+               call isos_init(isosFastIsostasy, trim(config_fastisostasy_parameter_file), 'isostasy', &
+                              nFastIsostasyX, nFastIsostasyY, fastisostasyDx, fastisostasyDy)
+               call isos_init_ref(isosFastIsostasy, bedtopoFastIsostasy2D, thicknessFastIsostasy2D)
+               call isos_init_state(isosFastIsostasy, bedtopoFastIsostasy2D, thicknessFastIsostasy2D, 0.0_wp, bslFastIsostasy)
+            endif
+
+            fastisostasyTimeStep = 0
+
+            deallocate(thicknessFastIsostasy2D, bedtopoFastIsostasy2D)
+            deallocate(thicknessFastIsostasy1D, bedtopoFastIsostasy1D)
+         endif
+
+         deallocate(globalArrayThickness)
+         deallocate(gatheredArrayThickness)
+         deallocate(globalArrayBedTopography)
+         deallocate(gatheredArrayBedTopography)
+         deallocate(meshMask)
+      endif
+
+#else
+      call mpas_log_write("FastIsostasy needs to be included in the compilation with 'FASTISOSTASY=true'", &
+           MPAS_LOG_ERR)
+      err = ior(err,1)
+#endif
+
+   end subroutine fastisostasy_init
+
+
+!***********************************************************************
+!
+!  routine fastisostasy_solve
+!
+!> \brief   Solves FastIsostasy bedrock deformation coupling
+!> \author  MALI developers
+!> \date    June 2026
+!> \details
+!>  This wrapper routine gathers grounded ice thickness, calls FastIsostasy
+!>  on rank 0, and scatters bed topography change back to MPAS ranks.
+!
+!-----------------------------------------------------------------------
+
+   subroutine fastisostasy_solve(fastisostasyTimeStep, domain)
+
+      use li_advection, only: li_update_geometry
+
+      integer, intent(in) :: fastisostasyTimeStep
+      type (domain_type), intent(inout) :: domain
+
+#ifdef USE_FASTISOSTASY
+      type (mpas_pool_type), pointer :: meshPool
+      type (mpas_pool_type), pointer :: geometryPool
+      type (mpas_pool_type), pointer :: velocityPool
+      integer, pointer :: config_fastisostasy_coupling_interval
+
+      real (kind=RKIND), dimension(:), pointer :: bedTopography, thickness
+      real (kind=RKIND), dimension(:), pointer :: bedTopographyChange
+      real (kind=RKIND), dimension(:), allocatable :: thicknessFastIsostasy1D
+      real (kind=RKIND), dimension(:), allocatable :: bedtopoFastIsostasy1D
+      real (kind=RKIND), dimension(:), allocatable :: topoChangeFastIsostasy1D_rkind
+      real (kind=RKIND), dimension(:), allocatable :: meshMask
+      real (kind=wp), dimension(:,:), allocatable :: thicknessFastIsostasy2D
+      real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasy2D
+      real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasyUpdated2D
+      real (kind=wp), dimension(:), allocatable :: topoChangeFastIsostasy1D
+      real (kind=wp) :: fastisostasyTime
+      integer, dimension(:), pointer :: cellMask
+      integer :: err, err_tmp
+
+      err = 0
+      err_tmp = 0
+
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+      call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(geometryPool, 'bedTopographyChange', bedTopographyChange)
+      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
+      call mpas_pool_get_config(liConfigs, 'config_fastisostasy_coupling_interval', config_fastisostasy_coupling_interval)
+
+      call MPI_COMM_RANK(domain % dminfo % comm, curProc, err_tmp)
+      err = ior(err, err_tmp)
+
+      if (curProc.eq.0) then
+         allocate(globalArrayThickness(nCellsGlobal), gatheredArrayThickness(nCellsGlobal))
+         allocate(globalArrayBedTopography(nCellsGlobal), gatheredArrayBedTopography(nCellsGlobal))
+         allocate(globalArrayTopoChange(nCellsGlobal), gatheredArrayTopoChange(nCellsGlobal))
+         allocate(meshMask(nCellsGlobal))
+         allocate(thicknessFastIsostasy1D(nGrid), bedtopoFastIsostasy1D(nGrid))
+         allocate(topoChangeFastIsostasy1D(nGrid), topoChangeFastIsostasy1D_rkind(nGrid))
+         allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
+         allocate(bedtopoFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
+         allocate(bedtopoFastIsostasyUpdated2D(nFastIsostasyX,nFastIsostasyY))
+         meshMask(:) = 0.0_RKIND
+         thicknessFastIsostasy1D(:) = 0.0_RKIND
+         bedtopoFastIsostasy1D(:) = 0.0_RKIND
+         topoChangeFastIsostasy1D(:) = 0.0_wp
+         topoChangeFastIsostasy1D_rkind(:) = 0.0_RKIND
+      else
+         allocate(globalArrayThickness(1), gatheredArrayThickness(1))
+         allocate(globalArrayBedTopography(1), gatheredArrayBedTopography(1))
+         allocate(globalArrayTopoChange(1), gatheredArrayTopoChange(1))
+         allocate(meshMask(1))
+      endif
+
+      call MPI_GATHERV((thickness*real(li_mask_is_grounded_ice_int(cellMask),RKIND)), &
+                       nCellsOwned, MPI_DOUBLE, gatheredArrayThickness, nCellsPerProc, &
+                       nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
+
+      call MPI_GATHERV(bedTopography, nCellsOwned, MPI_DOUBLE, gatheredArrayBedTopography, nCellsPerProc, &
+                       nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
+
+      if (curProc.eq.0) then
+         do iCell = 1,nCellsGlobal
+            globalArrayThickness(indexToCellIDGathered(iCell)) = gatheredArrayThickness(iCell)
+            globalArrayBedTopography(indexToCellIDGathered(iCell)) = gatheredArrayBedTopography(iCell)
+            meshMask(indexToCellIDGathered(iCell)) = 1.0_RKIND
+         enddo
+
+         call interpolate(toColValues, toRowValues, toSvalues, globalArrayThickness, thicknessFastIsostasy1D)
+         call interpolate(toColValues, toRowValues, toSvalues, globalArrayBedTopography, bedtopoFastIsostasy1D)
+
+         thicknessFastIsostasy2D = real(reshape(thicknessFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
+         bedtopoFastIsostasy2D = real(reshape(bedtopoFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
+
+         fastisostasyTime = real(fastisostasyTimeStep * config_fastisostasy_coupling_interval, wp)
+         call bsl_update(bslFastIsostasy, fastisostasyTime)
+         call isos_update(isosFastIsostasy, thicknessFastIsostasy2D, fastisostasyTime, bslFastIsostasy)
+         bedtopoFastIsostasyUpdated2D = isosFastIsostasy%out%z_bed
+
+         topoChangeFastIsostasy1D = reshape(bedtopoFastIsostasyUpdated2D - bedtopoFastIsostasy2D, [nGrid])
+         topoChangeFastIsostasy1D_rkind = real(topoChangeFastIsostasy1D, RKIND)
+
+         call interpolate(fromColValues, fromRowValues, fromSValues, topoChangeFastIsostasy1D_rkind, globalArrayTopoChange)
+
+         do iCell = 1,nCellsGlobal
+            gatheredArrayTopoChange(iCell) = globalArrayTopoChange(indexToCellIDGathered(iCell))
+         enddo
+
+         deallocate(thicknessFastIsostasy1D, bedtopoFastIsostasy1D)
+         deallocate(topoChangeFastIsostasy1D, topoChangeFastIsostasy1D_rkind)
+         deallocate(thicknessFastIsostasy2D, bedtopoFastIsostasy2D, bedtopoFastIsostasyUpdated2D)
+      endif
+
+      call MPI_SCATTERV(gatheredArrayTopoChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
+                        bedTopographyChange, nCellsAll, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
+
+      bedTopography(:) = bedTopography(:) + bedTopographyChange(:)
+
+      call mpas_dmpar_field_halo_exch(domain,'bedTopography')
+      call li_update_geometry(geometryPool)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      err = ior(err, err_tmp)
+
+      deallocate(globalArrayThickness)
+      deallocate(gatheredArrayThickness)
+      deallocate(globalArrayBedTopography)
+      deallocate(gatheredArrayBedTopography)
+      deallocate(globalArrayTopoChange)
+      deallocate(gatheredArrayTopoChange)
+      deallocate(meshMask)
+#endif
+
+   end subroutine fastisostasy_solve
 
 
 
@@ -863,7 +1293,7 @@ contains
 !
 !-----------------------------------------------------------------------
 
-   subroutine interpolate_init(domain, err)
+   subroutine interpolate_init(domain, err, mapToFileIn, mapFromFileIn)
 
       !-----------------------------------------------------------------
       ! input variables
@@ -875,6 +1305,9 @@ contains
       !-----------------------------------------------------------------
 
       type (domain_type), intent(inout) :: domain    !< Input/output: Domain
+
+      character (len=*), intent(in), optional :: mapToFileIn
+      character (len=*), intent(in), optional :: mapFromFileIn
 
       !-----------------------------------------------------------------
       ! output variables
@@ -904,8 +1337,15 @@ contains
       err = 0
       err_tmp = 0
 
-      call mpas_pool_get_config(liConfigs, 'config_MALI_to_SLM_weights_file', config_MALI_to_SLM_weights_file)
-      call mpas_pool_get_config(liConfigs, 'config_SLM_to_MALI_weights_file', config_SLM_to_MALI_weights_file)
+      if (present(mapToFileIn) .and. present(mapFromFileIn)) then
+         mpasToGridFile = trim(mapToFileIn)
+         gridToMpasFile = trim(mapFromFileIn)
+      else
+         call mpas_pool_get_config(liConfigs, 'config_MALI_to_SLM_weights_file', config_MALI_to_SLM_weights_file)
+         call mpas_pool_get_config(liConfigs, 'config_SLM_to_MALI_weights_file', config_SLM_to_MALI_weights_file)
+         mpasToGridFile = trim(config_MALI_to_SLM_weights_file)
+         gridToMpasFile = trim(config_SLM_to_MALI_weights_file)
+      endif
 
       ! Begin MPI portion
       call MPI_COMM_RANK( domain % dminfo % comm, curProc, err_tmp)
@@ -913,9 +1353,6 @@ contains
 
       !initialize interpolation
       if (curProc.eq.0) then
-
-         mpasToGridFile = trim(config_MALI_to_SLM_weights_file)
-         gridToMpasFile = trim(config_SLM_to_MALI_weights_file)
 
          ! Open netcdf weights files
          call check( nf90_open(path = mpasToGridFile, mode = nf90_nowrite, ncid = toNcId), err_tmp)
