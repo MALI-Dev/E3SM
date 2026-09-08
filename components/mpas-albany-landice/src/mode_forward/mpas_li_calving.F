@@ -4233,7 +4233,7 @@ module li_calving
                endif
                ! check if neighbor is nondynamic floating adjacent to open ocean
                if (li_mask_is_floating_ice(cellMask(jCell)) .and. (.not. li_mask_is_dynamic_ice(cellMask(jCell)))) then
-                  do iNeighbor2 = 1, nEdgesOnCell(iCell)
+                  do iNeighbor2 = 1, nEdgesOnCell(jCell)
                      kCell = cellsOnCell(iNeighbor2, jCell)
                      if (openOceanMask(kCell) == 1) then
                         marineDynMarginMask(iCell) = .true.
