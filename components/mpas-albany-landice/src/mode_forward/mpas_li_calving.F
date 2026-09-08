@@ -4191,6 +4191,7 @@ module li_calving
       integer, pointer :: nCells
       integer :: iCell, iNeighbor, jCell, iNeighbor2, kCell
       logical, dimension(:), allocatable :: marineDynMarginMask
+      integer :: err_tmp
 
       err = 0
 
@@ -4207,6 +4208,14 @@ module li_calving
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(geometryPool, 'openOceanMask', openOceanMask)
+
+
+      ! First calculate open ocean mask for current geometry
+      ! note this should happen before allocating the scratch mask fields, because
+      ! they are also used in find_open_ocean
+      call find_open_ocean(domain, openOceanMask, err_tmp)
+      err = ior(err, err_tmp)
+
       ! Allocate scratch fields for flood-fill
       call mpas_pool_get_field(scratchPool, 'seedMask', seedMaskField)
       call mpas_allocate_scratch_field(seedMaskField, single_block_in = .true.)
