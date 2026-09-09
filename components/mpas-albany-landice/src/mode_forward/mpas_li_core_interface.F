@@ -117,6 +117,7 @@ module li_core_interface
       logical, pointer :: hydroActive
       logical, pointer :: observationsActive
       logical, pointer :: ismip6ShelfMeltActive
+      logical, pointer :: ismip7ShelfMeltActive
       logical, pointer :: ismip6GroundedFaceMeltActive
       logical, pointer :: thermalActive
       logical, pointer :: extrapOceanDataActive
@@ -142,6 +143,7 @@ module li_core_interface
       call mpas_pool_get_package(packagePool, 'hydroActive', hydroActive)
       call mpas_pool_get_package(packagePool, 'observationsActive', observationsActive)
       call mpas_pool_get_package(packagePool, 'ismip6ShelfMeltActive', ismip6ShelfMeltActive)
+      call mpas_pool_get_package(packagePool, 'ismip7ShelfMeltActive', ismip7ShelfMeltActive)
       call mpas_pool_get_package(packagePool, 'ismip6GroundedFaceMeltActive', ismip6GroundedFaceMeltActive)
       call mpas_pool_get_package(packagePool, 'thermalActive', thermalActive)
       call mpas_pool_get_package(packagePool, 'extrapOceanDataActive', extrapOceanDataActive)
@@ -182,6 +184,7 @@ module li_core_interface
       endif
 
       if ( (trim(config_basal_mass_bal_float) == 'ismip6') .or. &
+           (trim(config_basal_mass_bal_float) == 'ismip7') .or. &
            ((trim(config_front_mass_bal_grounded) == 'ismip6') .and. &
             (config_use_3d_thermal_forcing_for_face_melt)) .or. &
             (config_ocean_data_extrapolation) ) then
@@ -190,6 +193,13 @@ module li_core_interface
               "'config_basal_mass_bal_float' is set to 'ismip6' or 'config_front_mass_bal_grounded' is set to 'ismip6' // &
               and 'config_use_3d_thermal_forcing_for_face_melt' is set to .true. " // &
               "or 'config_ocean_data_extrapolation' is set to .true.")
+      endif
+
+      if (trim(config_basal_mass_bal_float) == 'ismip7') then
+         ismip7ShelfMeltActive = .true.
+         call mpas_log_write("The 'ismip7ShelfMelt' package and associated variables have been enabled because " // &
+              "'config_basal_mass_bal_float' is set to 'ismip7'.  The ISMIP7 local quadratic melt " // &
+              "parameterization needs ocean salinity in addition to the thermal forcing used by 'ismip6'.")
       endif
 
       if ((trim(config_front_mass_bal_grounded) == 'ismip6') .or. (trim(config_calving) == 'ismip6_retreat')) then

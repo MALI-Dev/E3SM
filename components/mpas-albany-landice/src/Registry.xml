@@ -379,8 +379,28 @@
 
         <nml_record name="iceshelf_melt" in_defaults="true">
                 <nml_option name="config_basal_mass_bal_float" type="character" default_value="none" units="unitless"
-                            description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'seroussi' use hardcoded fields defined in the code applicable to Thwaites Glacier. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. ISMIP6 is the method prescribed by ISMIP6."
-                            possible_values="'none', 'file', 'constant', 'mismip', 'seroussi', 'temperature_profile', 'ismip6'"
+                            description="Selection of the method for computing the basal mass balance of floating ice.  'none' sets the basalMassBal field to 0 everywhere.  'file' uses without modification whatever value was read in through an input or forcing file or the value set by an ESM coupler.  'constant', 'mismip', 'seroussi' use hardcoded fields defined in the code applicable to Thwaites Glacier. 'temperature_profile' generates a depth-melt relation based on an ocean temperature profile and sill depth. 'ismip6' is the non-local quadratic method prescribed by ISMIP6 (Jourdain et al. 2020). 'ismip7' is the local quadratic method recommended for ISMIP7, revised by Burgard et al. (2022) following Jenkins et al. (2018).  It applies the basin-wide temperature correction ismip6shelfMelt_deltaT, as 'ismip6' does."
+                            possible_values="'none', 'file', 'constant', 'mismip', 'seroussi', 'temperature_profile', 'ismip6', 'ismip7'"
+                />
+                <nml_option name="config_ismip7_melt_K" type="real" default_value="8.5e-5" units="unitless"
+                            description="Calibration parameter K for the ISMIP7 local quadratic melt parameterization (config_basal_mass_bal_float='ismip7').  PROVISIONAL DEFAULT: the median of the distribution published with the ISMIP7 ice-ocean protocol, which was obtained on the 8 km structured grid with that protocol's own reference implementation and its constants.  It is a starting point only.  K absorbs the slope, the Coriolis parameter and the values of the physical constants, so a value calibrated with MALI on the mesh being run should be used in production."
+                            possible_values="Any positive real value"
+                />
+                <nml_option name="config_ismip7_melt_sin_slope" type="real" default_value="0.0051117" units="unitless"
+                            description="The sin(theta) factor of the ISMIP7 quadratic melt parameterization, where theta is the ice-draft slope angle.  Held constant here, so despite the name it is simply a dimensionless coefficient: it multiplies K, and only the product K*sin(theta) affects the melt.  It is kept as a separate option purely so that K remains comparable with published values, which were calibrated against a stated slope.  PROVISIONAL DEFAULT: the Antarctic-mean value from Bedmap3 on the ISMIP 8 km grid, matching the published calibration.  The mean slope is resolution dependent, so a value computed on the mesh being run should be preferred, and K recalibrated with it.  (Protocol Eq. 1 also permits a locally varying slope; that variant is deliberately not implemented here -- see MALI-Dev/E3SM PR #48, which found a slope-melt feedback that melted holes in ice shelves.)"
+                            possible_values="Any positive real value"
+                />
+                <nml_option name="config_ismip7_melt_salinity_source" type="character" default_value="constant" units="unitless"
+                            description="Where the ISMIP7 local quadratic melt parameterization gets the ocean salinity at the ice draft.  'constant' uses config_ismip7_melt_salinity everywhere and does not read the 3-D salinity field; 'data' interpolates ismip7shelfMelt_3dSalinity to the draft, exactly as the thermal forcing is interpolated.  The default is 'constant' because the ISMIP7 ocean forcing distributed for the MALI projections carries thermal forcing only, so a projection has no salinity field to read; calibrating with a spatially varying salinity would tune K for physics the projections cannot run.  Use 'data' when a 3-D salinity field is genuinely available and the calibration was done with one."
+                            possible_values="'constant', 'data'"
+                />
+                <nml_option name="config_ismip7_melt_salinity" type="real" default_value="34.5" units="PSU"
+                            description="Practical salinity at the ice draft used by the ISMIP7 local quadratic melt parameterization when config_ismip7_melt_salinity_source='constant'.  Melt is linear in salinity, so like config_ismip7_melt_sin_slope this is a coefficient multiplying K and only the product affects the melt; it is a separate option so that K stays comparable with published values.  The default is close to the Antarctic ice-shelf mean, whose per-basin spread is about 0.8 percent.  Note that the published K was calibrated against a locally varying salinity, so with a constant value the comparison is approximate at about the 1 percent level."
+                            possible_values="Any positive real value"
+                />
+                <nml_option name="config_ismip7_melt_coriolis" type="real" default_value="1.4e-4" units="s^-1"
+                            description="Magnitude of the Coriolis parameter used by the ISMIP7 local quadratic melt parameterization.  The protocol writes g/(2|f|) but its reference implementation uses a single constant, whose default here corresponds to about 74 degrees S, near the middle of the range spanned by Antarctic ice shelves.  |f| varies by only about 12 percent across those latitudes."
+                            possible_values="Any positive real value"
                 />
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^-2"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."
@@ -757,6 +777,7 @@
                 <package name="observations" description="This package includes variables required for observations in Albany."/>
 
                 <package name="ismip6ShelfMelt" description="This package includes variables required for the ISMIP6 ice-shelf melt parameterization developed for Antarctica."/>
+                <package name="ismip7ShelfMelt" description="This package includes the additional variables required for the ISMIP7 local quadratic ice-shelf melt parameterization, which needs ocean salinity as well as thermal forcing."/>
 
 		<package name="ismip6GroundedFaceMelt" description="This package includes variables required for the ISMIP6 grounded glacier front melt parameterization developed for Greenland." />
 
@@ -882,6 +903,8 @@
                         <var name="ismip6shelfMelt_zOcean" packages="ismip6ShelfMelt"/>
                         <var name="ismip6shelfMelt_zBndsOcean" packages="ismip6ShelfMelt;extrapOceanData"/>
                         <var name="ismip6shelfMelt_offset" packages="ismip6ShelfMelt"/>
+                        <!-- this variable just for ISMIP7 ice shelf forcing -->
+                        <var name="ismip7shelfMelt_3dSalinity" packages="ismip7ShelfMelt"/>
 			<!-- these variables just for ISMIP6 grounded glacier forcing -->
 			<var name="ismip6Runoff" packages="ismip6GroundedFaceMelt" />
 			<var name="ismip6_2dThermalForcing" packages="ismip6GroundedFaceMelt" />
@@ -987,6 +1010,8 @@
                         <var name="ismip6shelfMelt_zOcean" packages="ismip6ShelfMelt"/>
                         <var name="ismip6shelfMelt_offset" packages="ismip6ShelfMelt"/>
                         <var name="ismip6shelfMelt_zBndsOcean" packages="ismip6ShelfMelt"/>
+                        <!-- this variable just for ISMIP7 ice shelf forcing -->
+                        <var name="ismip7shelfMelt_3dSalinity" packages="ismip7ShelfMelt"/>
                         <!-- these variables just for ISMIP6 grounded glacier forcing -->
                         <var name="ismip6Runoff" packages="ismip6GroundedFaceMelt" />
 			<var name="ismip6_2dThermalForcing" packages="ismip6GroundedFaceMelt" />
@@ -1528,6 +1553,14 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="ismip6shelfMelt_offset" type="real" dimensions="nCells" units="kg m^-2 s^-1" packages="ismip6ShelfMelt" default_value="0.0"
                      description="Optional field of offset that should be applied to the melt field calculated by the ISMIP6 melt method.  Can be used to run in anomaly mode, but this is not the anomaly.  See Registry.xml for details."
+                />
+                <!-- Variables only needed by the ISMIP7 local quadratic ice-shelf melt method -->
+                <var name="ismip7shelfMelt_3dSalinity" type="real" dimensions="nISMIP6OceanLayers nCells Time" units="PSU"
+                     default_value="34.5" packages="ismip7ShelfMelt"
+                     description="practical salinity for the ISMIP7 local quadratic ice-shelf melting method, input to model.  Shares the vertical coordinate ismip6shelfMelt_zOcean with the thermal forcing."
+                />
+                <var name="ismip7shelfMelt_Sdraft" type="real" dimensions="nCells Time" units="PSU" packages="ismip7ShelfMelt"
+                     description="practical salinity at the ice shelf draft used for the ISMIP7 local quadratic ice-shelf melting method, calculated by param."
                 />
                 <!-- Variables needed for ISMIP6 grounded face melt parameterization -->
                 <var name="frontAblationMask" type="integer" dimensions="nCells Time" time_levs="1"
