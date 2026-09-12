@@ -658,7 +658,7 @@ contains
       real (kind=RKIND), dimension(:), allocatable :: meshMask
       real (kind=RKIND), dimension(:,:), allocatable :: ismIceload, ismMask
       real (kind=RKIND), dimension(:,:), allocatable :: slmSLchange
-      real (kind=RKIND), dimension(:,:), allocatable :: geoidSLchange
+      real (kind=RKIND), dimension(:,:), allocatable :: slmGeoidChange
       real (kind=RKIND), dimension(:), allocatable :: slChangeSLgrid1D
       real (kind=RKIND), dimension(:), allocatable :: geoidChangeSLgrid1D
       real (kind=RKIND), dimension(:), allocatable :: thicknessSLgrid1D
