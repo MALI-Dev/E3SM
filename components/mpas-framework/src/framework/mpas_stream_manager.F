@@ -2799,6 +2799,7 @@ module mpas_stream_manager
         integer, intent(out), optional :: ierr
 
         type (MPAS_stream_list_type), pointer :: stream_cursor
+        integer, dimension(:), pointer :: attValue_ptr
         integer :: err_local
 
         STREAM_DEBUG_WRITE('-- Called MPAS_stream_mgr_get_att()')
@@ -2818,9 +2819,13 @@ module mpas_stream_manager
             return
         end if
 
-        call MPAS_readStreamAtt(stream_cursor % stream, attName, attValue, ierr=err_local)
+        nullify(attValue_ptr)
+        call MPAS_readStreamAtt(stream_cursor % stream, attName, attValue_ptr, ierr=err_local)
         if (err_local /= MPAS_STREAM_NOERR) then
             if (present(ierr)) ierr = MPAS_STREAM_MGR_ERROR
+        else if (associated(attValue_ptr)) then
+            attValue(1:min(size(attValue), size(attValue_ptr))) = attValue_ptr(1:min(size(attValue), size(attValue_ptr)))
+            deallocate(attValue_ptr)
         end if
 
     end subroutine MPAS_stream_mgr_get_att_int1d!}}}
@@ -2895,6 +2900,7 @@ module mpas_stream_manager
         integer, intent(out), optional :: ierr
 
         type (MPAS_stream_list_type), pointer :: stream_cursor
+        real (kind=RKIND), dimension(:), pointer :: attValue_ptr
         integer :: err_local
 
         STREAM_DEBUG_WRITE('-- Called MPAS_stream_mgr_get_att()')
@@ -2914,9 +2920,13 @@ module mpas_stream_manager
             return
         end if
 
-        call MPAS_readStreamAtt(stream_cursor % stream, attName, attValue, ierr=err_local)
+        nullify(attValue_ptr)
+        call MPAS_readStreamAtt(stream_cursor % stream, attName, attValue_ptr, ierr=err_local)
         if (err_local /= MPAS_STREAM_NOERR) then
             if (present(ierr)) ierr = MPAS_STREAM_MGR_ERROR
+        else if (associated(attValue_ptr)) then
+            attValue(1:min(size(attValue), size(attValue_ptr))) = attValue_ptr(1:min(size(attValue), size(attValue_ptr)))
+            deallocate(attValue_ptr)
         end if
 
     end subroutine MPAS_stream_mgr_get_att_real1d!}}}
