@@ -811,11 +811,14 @@ module li_core
       type (mpas_pool_type), pointer :: geometryPool, meshPool, velocityPool
       logical, pointer :: config_do_restart, config_write_output_on_startup, config_write_stats_on_startup
       character(len=StrKIND), pointer :: config_velocity_solver
+      character(len=StrKIND), pointer :: config_calving
+      character(len=StrKIND), pointer :: config_damage_calving_method
       ! Variables needed for printing timestamps
       type (MPAS_Time_Type) :: currTime
       character(len=StrKIND) :: timeStamp
       real(kind=RKIND), pointer :: deltat
       real(kind=RKIND) :: deltatTemp
+      logical :: calvingIsRateBased
 
       integer :: err, err_tmp, globalErr
       integer, pointer :: albanyVelocityError
@@ -833,6 +836,8 @@ module li_core
       call mpas_pool_get_config(liConfigs, 'config_write_output_on_startup', config_write_output_on_startup)
       call mpas_pool_get_config(liConfigs, 'config_write_stats_on_startup', config_write_stats_on_startup)
       call mpas_pool_get_config(liConfigs, 'config_velocity_solver', config_velocity_solver)
+      call mpas_pool_get_config(liConfigs, 'config_calving', config_calving)
+      call mpas_pool_get_config(liConfigs, 'config_damage_calving_method', config_damage_calving_method)
 
       currTime = mpas_get_clock_time(domain % clock, MPAS_NOW, err_tmp)
       err = ior(err, err_tmp)
@@ -880,13 +885,26 @@ module li_core
       err = ior(err, err_tmp)
 
       ! Initial calving solution
-      ! This is required for the calving CFL to work correctly
+      ! This is required for the calving CFL to work correctly for rate-based calving laws.
       ! For rate-based calving laws, no calving actually occurs because dt=0.
-      ! For threshold calving laws (e.g. thickness-based) calving *will* occur
+      ! For threshold calving laws, this call is unnecessary and should be skipped.
       ! Note that during a timestep, calving occurs before velocity, but because
       ! many calving laws require velocity-related fields, it needs to be called
       ! after velocity here.
-      if (.not. config_do_restart) then
+
+      ! Determine if a rate-based calving law is active
+      calvingIsRateBased = .false.
+      if (trim(config_calving) == 'eigencalving' .or. &
+          trim(config_calving) == 'specified_calving_velocity' .or. &
+          trim(config_calving) == 'specified_retreat_velocity' .or. &
+          trim(config_calving) == 'von_Mises_stress' .or. &
+          trim(config_calving) == 'ismip6_retreat' .or. &
+          (trim(config_calving) == 'damagecalving' .and. &
+          trim(config_damage_calving_method) == 'calving_rate')) then
+         calvingIsRateBased = .true.
+      endif
+
+      if (.not. config_do_restart .and. calvingIsRateBased) then
          ! Temporarily set dt to 0 to avoid actually calving anything for rate-based calving laws
          call mpas_pool_get_array(meshPool, 'deltat', deltat)
          deltatTemp = deltat
