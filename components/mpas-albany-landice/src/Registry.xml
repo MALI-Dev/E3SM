@@ -68,6 +68,10 @@
 		            description="Selection of the method for solving ice velocity. 'L1L2', 'FO', and 'Stokes' require compiling with external dycores. 'none' skips the calculation of velocity so the velocity field will be 0 or set to a field read from an input file.  'simple' gives a simple prescribed velocity field computed at initialization."
 		            possible_values="'sia', 'L1L2', 'FO', 'Stokes', 'simple', 'none'"
 		/>
+		<nml_option name="config_fem_extension_method" type="character" default_value="ismip6-era" units="unitless"
+		            description="Selection of the method used to extend thickness and elevation fields from dynamic FE vertices onto adjacent ice-free/inactive marine and terrestrial margin vertices for FEM velocity solvers (e.g. 'FO').  'ismip6-era' is the extension scheme used prior to the ismip7-era margin-extension revisions.  'ismip7-era' is the revised scheme, which avoids smearing ice up terrestrial cliffs and ramps thickness to zero at extended marine margins that are in contact with both grounded and floating ice.  'auto' resolves to whichever of 'ismip6-era'/'ismip7-era' was used to produce this run's initial condition, read from the 'fem_extension_method' global attribute of the input (or restart, if this is a restart run) file; if that attribute is absent, 'auto' falls back to 'ismip6-era'.  The method name is stored in the femExtensionMethod registry variable and is recorded in the 'fem_extension_method' global attribute of all restart and output files written by this run."
+		            possible_values="'ismip6-era', 'ismip7-era', 'auto'"
+		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.
 'from_vertex_barycentric' interpolates upperSurface values from cell centers to vertices using the barycentric interpolation routine in operators (mpas_cells_to_points_using_baryweights) and then calculates the slope between vertices.  It works for obtuse triangles, but will not work correctly across the edges of periodic meshes.
@@ -817,7 +821,39 @@
 			<var name="kiteAreasOnVertex"/>
 			<var name="layerThicknessFractions"/>
 			<var name="meshDensity"/>
-		</stream>
+                </stream>
+
+		<!-- minmesh contains the minimal set of fields needed for Paraview and plot_maps.py to work - attach this to other streams as needed -->
+		<stream name="minmesh"
+				type="none"
+				immutable="true"
+				filename_template="not-to-be-used.nc">
+			<var name="xCell"/>
+			<var name="yCell"/>
+			<var name="zCell"/>
+			<var name="cellsOnVertex"/>
+			<var name="dcEdge"/>
+                </stream>
+
+		<!-- mosaicmesh contains the minimal set of fields needed for the mosaic package to work - attach this to other streams as needed -->
+		<stream name="mosaicmesh"
+				type="none"
+				immutable="true"
+				filename_template="not-to-be-used.nc">
+			<var name="xCell"/>
+			<var name="yCell"/>
+			<var name="xEdge"/>
+			<var name="yEdge"/>
+			<var name="xVertex"/>
+			<var name="yVertex"/>
+			<var name="cellsOnEdge"/>
+			<var name="cellsOnVertex"/>
+			<var name="verticesOnCell"/>
+			<var name="verticesOnEdge"/>
+			<var name="edgesOnVertex"/>
+                        <var name="dcEdge"/> <!-- only used by plots_maps.py, not mosaic -->
+                        <var name="zCell"/> <!-- only used by paraview, not mosaic -->
+                </stream>
 
 <!-- WHL: When using the enthalpy heat-balance solver, will need to add waterFrac to the streams with temperature. -->
 		<stream name="input"
@@ -1016,7 +1052,7 @@
 				clobber_mode="replace_files">
 				<!-- Note: I had set the default precision to 'single', but MpasDraw currently only supports double precision files -->
 
-	        <stream name="basicmesh"/>
+	        <stream name="mosaicmesh"/>
 			<var name="layerCenterSigma"/>
 			<var name="layerInterfaceSigma"/>
                         <var name="xtime"/>
@@ -1270,6 +1306,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="simulationStartTime" type="text" dimensions="" default_value="'no_date_available'"
                      description="start time of first simulation, with format 'YYYY-MM-DD_HH:MM:SS'"
+                />
+                <var name="femExtensionMethod" type="text" dimensions="" default_value="'ismip6-era'"
+                     description="The fem extension method actually in use for this run ('ismip6-era' or 'ismip7-era').  Set from config_fem_extension_method at init, resolving 'auto' using the 'fem_extension_method' global attribute of the input/restart file if needed.  Written back out as the 'fem_extension_method' global attribute of restart and output files."
                 />
                 <var name="daysSinceStart" type="real" dimensions="Time" units="days"
                      description="Time since simulationStartTime in days, for plotting"
