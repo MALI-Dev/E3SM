@@ -4183,12 +4183,15 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: calvingThickness !< Output: the applied calving rate as a thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold !< Output: the applied calving thickness from threshold processes
       real (kind=RKIND), dimension(:), pointer :: thickness, damage, bedTopography
+      integer, dimension(:), pointer :: openOceanMask
       real(kind=RKIND), pointer :: config_damage_calving_threshold
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: cellMask
       integer, pointer :: nCells
-      integer :: iCell, iNeighbor, jCell
+      integer :: iCell, iNeighbor, jCell, iNeighbor2, kCell
+      logical, dimension(:), allocatable :: marineDynMarginMask
+      integer :: err_tmp
 
       err = 0
 
@@ -4204,6 +4207,15 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'damage', damage)
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
+      call mpas_pool_get_array(geometryPool, 'openOceanMask', openOceanMask)
+
+
+      ! First calculate open ocean mask for current geometry
+      ! note this should happen before allocating the scratch mask fields, because
+      ! they are also used in find_open_ocean
+      call find_open_ocean(domain, openOceanMask, err_tmp)
+      err = ior(err, err_tmp)
+
       ! Allocate scratch fields for flood-fill
       call mpas_pool_get_field(scratchPool, 'seedMask', seedMaskField)
       call mpas_allocate_scratch_field(seedMaskField, single_block_in = .true.)
@@ -4215,12 +4227,40 @@ module li_calving
       growMask => growMaskField % array
       growMask(:) = 0
 
+      ! create mask of cells that are on the dynamic **marine** margin
+      ! (can't use just li_mask_is_dynamic_margin because it can pick up nunataks)
+      allocate(marineDynMarginMask(nCells + 1))
+      marineDynMarginMask(:) = .false.
+      do iCell = 1, nCells
+         if (li_mask_is_dynamic_margin(cellMask(iCell))) then
+            do iNeighbor = 1, nEdgesOnCell(iCell)
+               jCell = cellsOnCell(iNeighbor, iCell)
+               ! check if neighbor is open ocean
+               if (openOceanMask(jCell) == 1) then
+                  marineDynMarginMask(iCell) = .true.
+                  exit ! no need to check more neighbors
+               endif
+               ! check if neighbor is nondynamic floating adjacent to open ocean
+               if (li_mask_is_floating_ice(cellMask(jCell)) .and. (.not. li_mask_is_dynamic_ice(cellMask(jCell)))) then
+                  do iNeighbor2 = 1, nEdgesOnCell(jCell)
+                     kCell = cellsOnCell(iNeighbor2, jCell)
+                     if (openOceanMask(kCell) == 1) then
+                        marineDynMarginMask(iCell) = .true.
+                        exit ! no need to check more neighbors
+                     endif
+                  enddo
+               endif
+            enddo ! neighbor loop
+         endif ! if dynamic margin here
+      enddo ! cell loop
+
       ! define seed and grow masks for flood fill.
-      where ( li_mask_is_dynamic_margin(cellMask) .and. &
+      where ( marineDynMarginMask .and. &
               bedTopography < 0.0 .and. &
               (damage .ge. config_damage_calving_threshold) )
               seedMask = 1
       end where
+      deallocate(marineDynMarginMask)
 
       where ( seedMask == 0 .and. &
               bedTopography < 0.0 .and. &
