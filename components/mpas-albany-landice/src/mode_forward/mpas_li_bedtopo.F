@@ -75,6 +75,8 @@ module li_bedtopo
    real (kind=RKIND), dimension(:), allocatable :: gatheredArrayBedTopography
    real (kind=RKIND), dimension(:), allocatable :: globalArrayTopoChange
    real (kind=RKIND), dimension(:), allocatable :: gatheredArrayTopoChange
+   real (kind=RKIND), dimension(:), allocatable :: globalArrayGeoidChange
+   real (kind=RKIND), dimension(:), allocatable :: gatheredArrayGeoidChange
 
 !***********************************************************************
 
@@ -652,10 +654,13 @@ contains
 
       real (kind=RKIND), dimension(:), pointer :: bedTopography, thickness
       real (kind=RKIND), dimension(:), pointer :: bedTopographyChange
+      real (kind=RKIND), dimension(:), pointer :: geoidChange
       real (kind=RKIND), dimension(:), allocatable :: meshMask
       real (kind=RKIND), dimension(:,:), allocatable :: ismIceload, ismMask
       real (kind=RKIND), dimension(:,:), allocatable :: slmSLchange
+      real (kind=RKIND), dimension(:,:), allocatable :: slmGeoidChange
       real (kind=RKIND), dimension(:), allocatable :: slChangeSLgrid1D
+      real (kind=RKIND), dimension(:), allocatable :: geoidChangeSLgrid1D
       real (kind=RKIND), dimension(:), allocatable :: thicknessSLgrid1D
       real (kind=RKIND), dimension(:), allocatable :: maskSLgrid1D
       integer, dimension(:), pointer :: cellMask
@@ -673,6 +678,7 @@ contains
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'bedTopographyChange', bedTopographyChange)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+      call mpas_pool_get_array(geometryPool, 'geoidChange', geoidChange)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
 
@@ -686,19 +692,25 @@ contains
          ! allocate and initialize the SLM-related variables used in this module
          allocate(globalArrayThickness(nCellsGlobal), gatheredArrayThickness(nCellsGlobal))
          allocate(globalArrayTopoChange(nCellsGlobal), gatheredArrayTopoChange(nCellsGlobal))
+         allocate(globalArrayGeoidChange(nCellsGlobal), gatheredArrayGeoidChange(nCellsGlobal))
          allocate(meshMask(nCellsGlobal))
-         allocate(ismIceload(nglv_slm,2*nglv_slm), ismMask(nglv_slm,2*nglv_slm), slmSLchange(nglv_slm,2*nglv_slm))
+         allocate(ismIceload(nglv_slm,2*nglv_slm), ismMask(nglv_slm,2*nglv_slm))
+         allocate(slmSLchange(nglv_slm,2*nglv_slm), slmGeoidChange(nglv_slm,2*nglv_slm))
          allocate(slChangeSLgrid1D(nglv_slm*2*nglv_slm), thicknessSLgrid1D(nglv_slm*2*nglv_slm), maskSLgrid1D(nglv_slm*2*nglv_slm))
-         ismIceload(:,:) = 0.0
-         ismMask(:,:) = 0.0
-         slmSLchange(:,:) = 0.0
-         slChangeSLgrid1D(:) = 0.0
-         thicknessSLgrid1D(:) = 0.0
-         maskSLgrid1D(:) = 0.0
+         allocate(geoidChangeSLgrid1D(nglv_slm*2*nglv_slm))
+         ismIceload(:,:) = 0.0_RKIND
+         ismMask(:,:) = 0.0_RKIND
+         slmSLchange(:,:) = 0.0_RKIND
+         slmGeoidChange(:,:) = 0.0_RKIND
+         slChangeSLgrid1D(:) = 0.0_RKIND
+         geoidChangeSLgrid1D(:) = 0.0_RKIND
+         thicknessSLgrid1D(:) = 0.0_RKIND
+         maskSLgrid1D(:) = 0.0_RKIND
       else
          ! Intel requires these be allocated even though they are not meaningful on the non-destination procs
          allocate(globalArrayThickness(1), gatheredArrayThickness(1))
          allocate(globalArrayTopoChange(1), gatheredArrayTopoChange(1))
+         allocate(globalArrayGeoidChange(1), gatheredArrayGeoidChange(1))
          allocate(meshMask(1))
       endif
 
@@ -729,36 +741,44 @@ contains
          call sl_timewindow(slmTimeStep)
          call sl_allocate_and_initialize_array
          call sl_solver_checkpoint(itersl, dtime)
-         call sl_solver(itersl, slmTimeStep, dtime, starttime, ismIceload, ismMask, slmSLchange)
+         call sl_solver(itersl, slmTimeStep, dtime, starttime, ismIceload, ismMask, slmSLchange, slmGeoidChange)
          call sl_deallocate_array
 
          ! reshape 2D array SLM output into 1D array
          slChangeSLgrid1D = reshape(slmSLchange, [nglv_slm*2*nglv_slm])
+         geoidChangeSLgrid1D = reshape(slmGeoidchange, [nglv_slm*2*nglv_slm])
 
          ! interpolate sea-level change from GL grid to MALI mesh.
          ! note: in the static sea-level theory, sea level and topography are globally defined !>
          ! and negative of each other. That is, topography change is negative of sea-level change
          call interpolate(fromColValues, fromRowValues, fromSValues, -1.0_RKIND*(slChangeSLgrid1D), &
                           globalArrayTopoChange)
+         call interpolate(fromColValues, fromRowValues, fromSValues, geoidChangeSLgrid1D, &
+                          globalArrayGeoidChange)
 
          ! Rearrange back to index order
          do iCell = 1,nCellsGlobal
             gatheredArrayTopoChange(iCell) = globalArrayTopoChange(indexToCellIDGathered(iCell))
+            gatheredArrayGeoidChange(iCell) = globalArrayGeoidChange(indexToCellIDGathered(iCell))
          enddo
 
-         deallocate(ismIceload, ismMask, slmSLchange)
-         deallocate(slChangeSLgrid1D, thicknessSLgrid1D, maskSLgrid1D)
+         deallocate(ismIceload, ismMask, slmSLchange, slmGeoidChange)
+         deallocate(slChangeSLgrid1D, geoidChangeSLgrid1D, thicknessSLgrid1D, maskSLgrid1D)
       endif
 
       ! scatter output sea-level changes to processors
       call MPI_SCATTERV(gatheredArrayTopoChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
                         bedTopographyChange, nCellsAll, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
       err = ior(err, err_tmp)
+      call MPI_SCATTERV(gatheredArrayGeoidChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
+                        geoidChange, nCellsAll, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
 
       ! update bedTopography
       bedTopography(:) = bedTopography(:) + bedTopographyChange(:)
 
       ! Perform Halo exchange update
+      ! Don't bother with geoidChange because it is only a diagnostic output
       call mpas_dmpar_field_halo_exch(domain,'bedTopography')
       call li_update_geometry(geometryPool)
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
@@ -769,6 +789,8 @@ contains
       deallocate(gatheredArrayThickness)
       deallocate(globalArrayTopoChange)
       deallocate(gatheredArrayTopoChange)
+      deallocate(globalArrayGeoidChange)
+      deallocate(gatheredArrayGeoidChange)
       deallocate(meshMask)
 #endif
 
