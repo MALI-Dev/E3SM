@@ -34,6 +34,8 @@
 <!-- calving -->
 <config_calving>'none'</config_calving>
 <config_apply_calving_mask>.false.</config_apply_calving_mask>
+<config_require_extensional_stresses_for_mask_calving>.false.</config_require_extensional_stresses_for_mask_calving>
+<config_calving_fracture_toughness>2.0e5</config_calving_fracture_toughness>
 <config_use_Albany_flowA_eqn_for_vM>.false.</config_use_Albany_flowA_eqn_for_vM>
 <config_calving_topography>-500.0</config_calving_topography>
 <config_calving_thickness>300.0</config_calving_thickness>

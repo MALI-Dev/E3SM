@@ -245,6 +245,22 @@ Valid values: .true. or .false.
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_require_extensional_stresses_for_mask_calving" type="logical"
+	category="calving" group="calving">
+If true, then mask calving (config_apply_calving_mask) only removes floating ice at cells that are also vulnerable to hydrofracture based on the fracture-toughness stress criterion of Lai et al. (2020) and Reynolds and Nowicki (2026).  A cell is vulnerable where the resistive stress R_xx = 2*tauMax + tauMin exceeds a threshold that depends on config_calving_fracture_toughness.  If false, all masked floating cells calve regardless of stress state.
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_calving_fracture_toughness" type="real"
+	category="calving" group="calving">
+Ice fracture toughness (K_IC) used as the free parameter in the hydrofracture vulnerability criterion applied when config_require_extensional_stresses_for_mask_calving is true.  Plausible range is 1.0e5 to 4.0e5 Pa m^0.5 (van der Veen, 1998).
+
+Valid values: Any positive real value
+Default: Defined in namelist_defaults.xml
+</entry>
+
 <entry id="config_use_Albany_flowA_eqn_for_vM" type="logical"
 	category="calving" group="calving">
 Not yet supported. Determine whether to use MPAS or Albany calculation for flowParamA used in von Mises stress calving

@@ -500,6 +500,8 @@ if ($MALI_PROGNOSTIC_MODE eq 'PROGNOSTIC') {
     add_default($nl, 'config_calving', 'val'=>"none");
 }
 add_default($nl, 'config_apply_calving_mask');
+add_default($nl, 'config_require_extensional_stresses_for_mask_calving');
+add_default($nl, 'config_calving_fracture_toughness');
 add_default($nl, 'config_use_Albany_flowA_eqn_for_vM');
 add_default($nl, 'config_calving_topography');
 add_default($nl, 'config_calving_thickness');

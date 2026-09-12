@@ -179,6 +179,14 @@
 			    description="Whether the field 'calvingMask' gets used to force calving.  This is independent of choice of 'config_calving'; the application of 'calvingMask' can be applied in conjunction with a physical calving law or with no calving law enabled.  The calving mask gets applied after a physical calving law, if one is selected."
 			    possible_values=".true. or .false."
 		/>
+                <nml_option name="config_require_extensional_stresses_for_mask_calving" type="logical" default_value=".false." units="unitless"
+			    description="If true, then mask calving (config_apply_calving_mask) only removes floating ice at cells that are also vulnerable to hydrofracture based on the fracture-toughness stress criterion of Lai et al. (2020) and Reynolds and Nowicki (2026).  A cell is vulnerable where the resistive stress R_xx = 2*tauMax + tauMin exceeds a threshold that depends on config_calving_fracture_toughness.  If false, all masked floating cells calve regardless of stress state."
+			    possible_values=".true. or .false."
+		/>
+                <nml_option name="config_calving_fracture_toughness" type="real" default_value="2.0e5" units="Pa m^0.5"
+			    description="Ice fracture toughness (K_IC) used as the free parameter in the hydrofracture vulnerability criterion applied when config_require_extensional_stresses_for_mask_calving is true.  Plausible range is 1.0e5 to 4.0e5 Pa m^0.5 (van der Veen, 1998)."
+			    possible_values="Any positive real value"
+		/>
                 <nml_option name="config_use_Albany_flowA_eqn_for_vM" type="logical" default_value=".false." units="unitless"
 			    description="Not yet supported. Determine whether to use MPAS or Albany calculation for flowParamA used in von Mises stress calving"
 			    possible_values=".true. or .false."
@@ -1030,6 +1038,7 @@
 			<var name="upperSurface"/>
 			<var name="temperature"/>
 			<var name="cellMask"/>
+			<var name="hydrofractureVulnerabilityMask"/>
 			<var name="edgeMask"/>
 			<var name="normalVelocity"/>
 			<var name="uReconstructX"/>
@@ -1368,6 +1377,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="calvingMask" type="integer" dimensions="nCells Time" units="" time_levs="1"
                         description="mask of grid cells that should be calved.  0=no calving, 1=should be calved"
+                />
+                <var name="hydrofractureVulnerabilityMask" type="integer" dimensions="nCells Time" time_levs="1" default_value="0"
+                        description="mask of floating cells vulnerable to hydrofracture based on the fracture-toughness stress criterion (Lai et al., 2020; Reynolds and Nowicki, 2026).  1=vulnerable (resistive stress R_xx = 2*tauMax + tauMin exceeds the threshold set by config_calving_fracture_toughness), 0=not vulnerable.  Computed in the mask calving routine when config_apply_calving_mask is true."
                 />
                 <var name="openOceanMask" type="integer" dimensions="nCells Time" time_levs="1"
                         description="mask of open ocean cells, including floating non-dynamic cells.  Used to eliminate holes in ice shelf from calving"

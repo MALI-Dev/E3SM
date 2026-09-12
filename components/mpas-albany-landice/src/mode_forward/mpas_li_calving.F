@@ -4294,14 +4294,35 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
+      real (kind=RKIND), dimension(:), pointer :: tauMax, tauMin
       integer, dimension(:), pointer :: calvingMask
+      integer, dimension(:), pointer :: hydrofractureVulnerabilityMask
       integer, dimension(:), pointer :: cellMask
       integer, pointer :: nCells, nCellsSolve
+      logical, pointer :: config_require_extensional_stresses_for_mask_calving
+      real (kind=RKIND), pointer :: config_calving_fracture_toughness
+      real (kind=RKIND), pointer :: config_ice_density
+      real (kind=RKIND) :: vulnerabilityStressThreshold, resistiveStress
       integer :: iCell
       integer :: localMaskCellCount, globalMaskCellCount
       integer :: err_tmp
 
+      ! LEFM functions for shallow crevasses (Lai et al., 2020; Reynolds and Nowicki, 2026)
+      real (kind=RKIND), parameter :: lefmFactor1 = 1.068_RKIND
+      real (kind=RKIND), parameter :: lefmFactor2 = 1.122_RKIND
+
       err = 0
+
+      call mpas_pool_get_config(liConfigs, 'config_require_extensional_stresses_for_mask_calving', &
+                                config_require_extensional_stresses_for_mask_calving)
+      call mpas_pool_get_config(liConfigs, 'config_calving_fracture_toughness', config_calving_fracture_toughness)
+      call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
+
+      ! Threshold resistive stress for hydrofracture vulnerability, eq. 8 of Reynolds and Nowicki (2026)
+      vulnerabilityStressThreshold = 3.0_RKIND / (2.0_RKIND**(1.0_RKIND/3.0_RKIND) * pii**(2.0_RKIND/3.0_RKIND)) &
+                                   * lefmFactor1**(1.0_RKIND/3.0_RKIND) / lefmFactor2 &
+                                   * (config_ice_density * gravity)**(1.0_RKIND/3.0_RKIND) &
+                                   * config_calving_fracture_toughness**(2.0_RKIND/3.0_RKIND)
 
       ! block loop
       block => domain % blocklist
@@ -4318,8 +4339,11 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_array(geometryPool, 'calvingMask', calvingMask)
+         call mpas_pool_get_array(geometryPool, 'hydrofractureVulnerabilityMask', hydrofractureVulnerabilityMask)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+         call mpas_pool_get_array(velocityPool, 'tauMax', tauMax)
+         call mpas_pool_get_array(velocityPool, 'tauMin', tauMin)
 
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
@@ -4329,12 +4353,27 @@ module li_calving
 
          ! === apply calving ===
          do iCell = 1, nCells
+            if (li_mask_is_floating_ice(cellMask(iCell))) then
+               ! resistive stress from principal deviatoric stresses (eq. 4 of Reynolds and Nowicki, 2026)
+               resistiveStress = 2.0_RKIND * tauMax(iCell) + tauMin(iCell)
+               if (resistiveStress > vulnerabilityStressThreshold) then
+                  hydrofractureVulnerabilityMask(iCell) = 1
+               else
+                  hydrofractureVulnerabilityMask(iCell) = 0
+               endif
+            else
+               hydrofractureVulnerabilityMask(iCell) = 0
+            endif
+
             if (li_mask_is_floating_ice(cellMask(iCell)) .and. (calvingMask(iCell) >= 1)) then
-               !call mpas_log_write("Found masked cell at $i", intArgs=(/iCell/))
-               calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
-               thickness(iCell) = 0.0_RKIND
-               if (iCell <= nCellsSolve) localMaskCellCount = localMaskCellCount + 1
+               if ( (.not. config_require_extensional_stresses_for_mask_calving) .or. &
+                    (hydrofractureVulnerabilityMask(iCell) == 1) ) then
+                  !call mpas_log_write("Found masked cell at $i", intArgs=(/iCell/))
+                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
+                  thickness(iCell) = 0.0_RKIND
+                  if (iCell <= nCellsSolve) localMaskCellCount = localMaskCellCount + 1
+               endif
             endif
          enddo
 
