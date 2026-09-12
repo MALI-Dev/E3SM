@@ -101,6 +101,7 @@ module li_core_interface
       ! Local variables
       character (len=StrKIND), pointer :: config_velocity_solver
       character (len=StrKIND), pointer :: config_calving
+      character (len=StrKIND), pointer :: config_damage_calving_method
       character (len=StrKIND), pointer :: config_basal_mass_bal_float
       character (len=StrKIND), pointer :: config_front_mass_bal_grounded
       character (len=StrKIND), pointer :: config_thermal_solver
@@ -129,6 +130,7 @@ module li_core_interface
       call mpas_pool_get_config(configPool, 'config_velocity_solver', config_velocity_solver)
       call mpas_pool_get_config(configPool, 'config_SGH', config_SGH)
       call mpas_pool_get_config(configPool, 'config_calving', config_calving)
+      call mpas_pool_get_config(configPool, 'config_damage_calving_method', config_damage_calving_method)
       call mpas_pool_get_config(configPool, 'config_write_albany_ascii_mesh', config_write_albany_ascii_mesh)
       call mpas_pool_get_config(configPool, 'config_basal_mass_bal_float', config_basal_mass_bal_float)
       call mpas_pool_get_config(configPool, 'config_front_mass_bal_grounded', config_front_mass_bal_grounded)
@@ -216,10 +218,12 @@ module li_core_interface
               "'config_enable_timeAvgRestarts' is set to .false.")
       endif
 
-      if ((trim(config_calving) == 'damagecalving') .or. (trim(config_calving) == 'crevasse_depth')) then
+      if ((trim(config_calving) == 'damagecalving') .or. (trim(config_calving) == 'crevasse_depth') &
+          .or. (trim(config_damage_calving_method) /= 'none')) then
          damageCalvingActive = .true.
          call mpas_log_write("The 'damageCalving' package and associated variables have been enabled because " // &
-              "'config_calving' is set to '" // trim(config_calving) // "'.")
+              "'config_calving' is set to '" // trim(config_calving) // "' or 'config_damage_calving_method' is set to '" // &
+              trim(config_damage_calving_method))
       else
          damageCalvingActive = .false.
       endif
