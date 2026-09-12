@@ -305,14 +305,14 @@
 		/>
                 <nml_option name="config_crevasse_water_depth_source" type="character" default_value="scalar" units="unitless"
                             description="Source of water depth in crevasses for use with crevasse-depth calving law."
-                            possible_values="'data' (read from input file), 'scalar' (specified by config_crevasse_water_depth), or 'scaled_smb' (a specific fraction of negative SMB)"
+                            possible_values="'data' (read from input file), 'scalar' (specified by config_crevasse_water_depth), 'scaled_smb_cumulative' (accmulates a specific fraction of negative SMB until SMB is no longer negative, at which point it resets), or 'scaled_smb_instantaneous' (proportional to instantaneous negative SMB)."
                 />
                 <nml_option name="config_crevasse_water_depth" type="real" default_value="0.0" units="m"
                             description="Water depth in crevasses for Nick et al. (2010) crevasse depth calving law."
                             possible_values="any non-negative real value"
                 />
                 <nml_option name="config_smb_fraction_to_water_depth" type="real" default_value="1.0" units="unitless"
-                            description="Fraction of surface mass balance to convert to retain as water depth in crevasses for Nick et al. (2010) crevasse depth calving law."
+                        description="Fraction of surface mass balance to convert to retain as water depth in crevasses for Nick et al. (2010) crevasse depth calving law.  When 'config_crevasse_water_depth_source'='scaled_smb_cumulative', this is a scaling of the melt volume on each time step.  When 'config_crevasse_water_depth_source' = 'scaled_smb_instantaneous', this is a direct proportionality between the negative SMB and crevasse water depth.  For example, a value of 4.7472e4 would convert a melt rate of 0.001053 kg/m2/s (10 cm/day, a representative Greenland ablation zone melt rate) to a 50 m crevasse water depth (a representative crevasse depth).  This option is meant to be used for situations like monthly mean melt rates."
                             possible_values="any non-negative real value"
                 />
                 <nml_option name="config_ismip6_retreat_k" type="real" default_value="-170.0" units="m (m^3 s^-1)^-0.4 deg. C^-1"
