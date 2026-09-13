@@ -520,6 +520,7 @@ module li_time_integration_fe_rk
          call mpas_timer_start("halo updates")
 
          call mpas_dmpar_field_halo_exch(domain, 'thickness')
+         call mpas_dmpar_field_halo_exch(domain, 'layerThickness')
          call mpas_dmpar_field_halo_exch(domain, 'temperature')
          call mpas_dmpar_field_halo_exch(domain, 'waterFrac')
          call mpas_dmpar_field_halo_exch(domain, 'damage')
@@ -1275,6 +1276,7 @@ module li_time_integration_fe_rk
       call mpas_timer_start("halo updates")
 
       call mpas_dmpar_field_halo_exch(domain, 'thickness')
+      call mpas_dmpar_field_halo_exch(domain, 'layerThickness')
       call mpas_dmpar_field_halo_exch(domain, 'temperature')
       call mpas_dmpar_field_halo_exch(domain, 'waterFrac')
       call mpas_dmpar_field_halo_exch(domain, 'enthalpy')
