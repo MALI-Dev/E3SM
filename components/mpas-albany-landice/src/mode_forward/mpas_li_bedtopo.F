@@ -33,7 +33,8 @@ module li_bedtopo
 #endif
 #ifdef USE_FASTISOSTASY
    use fastisostasy, only: isos_class, bsl_class, isos_init, isos_init_ref, isos_init_state, &
-                           isos_update, isos_end, bsl_init, bsl_update
+                           isos_update, isos_end, bsl_init, bsl_update, &
+                           isos_restart_write, bsl_restart_write, bsl_restart_read
    use isostasy_defs, only: wp
 #endif
 
@@ -51,7 +52,8 @@ module li_bedtopo
    public :: li_bedtopo_init, &
              li_bedtopo_finalize, &
              li_bedtopo_block_init, &
-             li_bedtopo_solve
+             li_bedtopo_solve, &
+             li_bedtopo_write_restart
 
    !--------------------------------------------------------------------
    ! Private module variables
@@ -905,6 +907,10 @@ contains
       character (len=StrKIND), pointer :: config_fastisostasy_parameter_file
       character (len=StrKIND), pointer :: config_MALI_to_FASTISOSTASY_weights_file
       character (len=StrKIND), pointer :: config_FASTISOSTASY_to_MALI_weights_file
+      character (len=StrKIND), pointer :: config_fastisostasy_restart_file
+      character (len=StrKIND), pointer :: config_fastisostasy_bsl_restart_file
+      logical :: fastisostasyRestartFileExists, fastisostasyBslRestartFileExists
+      real (kind=wp) :: fastisostasyInitTime
 
       ! MPI variables
       integer, dimension(:), pointer :: indexToCellID
@@ -977,84 +983,133 @@ contains
       err = ior(err, err_tmp)
 
       call mpas_pool_get_config(liConfigs, 'config_do_restart', config_do_restart)
+      call mpas_pool_get_config(liConfigs, 'config_fastisostasy_restart_file', config_fastisostasy_restart_file)
+      call mpas_pool_get_config(liConfigs, 'config_fastisostasy_bsl_restart_file', config_fastisostasy_bsl_restart_file)
+
+      ! Determine FastIsostasy's own coupling-step counter and internal clock. On a
+      ! restart these must resume where the previous run left off (recomputed from
+      ! elapsed simulation time, the same way find_slm_restart_timestep does for the
+      ! sea-level model) rather than restarting FastIsostasy's clock at year zero,
+      ! which is what isos_init_state/isos_update use to decide whether prognostic
+      ! bsl/volume bookkeeping should advance on the first post-restart call.
       if (config_do_restart) then
-         call mpas_log_write('FastIsostasy restart coupling is not implemented yet in MALI.', MPAS_LOG_ERR)
-         err = ior(err, 1)
-      else
-         call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
-         call mpas_pool_get_array(geometryPool, 'thickness', thickness)
-         call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
-         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
-
-         if (curProc.eq.0) then
-            allocate(globalArrayThickness(nCellsGlobal), gatheredArrayThickness(nCellsGlobal))
-            allocate(globalArrayBedTopography(nCellsGlobal), gatheredArrayBedTopography(nCellsGlobal))
-            allocate(meshMask(nCellsGlobal))
-            allocate(thicknessFastIsostasy1D(nGrid), bedtopoFastIsostasy1D(nGrid))
-            meshMask(:) = 0.0_RKIND
-            thicknessFastIsostasy1D(:) = 0.0_RKIND
-            bedtopoFastIsostasy1D(:) = 0.0_RKIND
-         else
-            allocate(globalArrayThickness(1), gatheredArrayThickness(1))
-            allocate(globalArrayBedTopography(1), gatheredArrayBedTopography(1))
-            allocate(meshMask(1))
-         endif
-
-         call MPI_GATHERV((thickness*real(li_mask_is_grounded_ice_int(cellMask),RKIND)), &
-                nCellsOwned, MPI_DOUBLE, gatheredArrayThickness, nCellsPerProc, &
-                nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
-         err = ior(err, err_tmp)
-         call MPI_GATHERV(bedTopography, nCellsOwned, MPI_DOUBLE, gatheredArrayBedTopography, nCellsPerProc, &
-                          nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+         call find_fastisostasy_restart_timestep(meshPool, fastisostasyTimeStep, err_tmp)
          err = ior(err, err_tmp)
 
          if (curProc.eq.0) then
-            do iCell = 1,nCellsGlobal
-               globalArrayThickness(indexToCellIDGathered(iCell)) = gatheredArrayThickness(iCell)
-               globalArrayBedTopography(indexToCellIDGathered(iCell)) = gatheredArrayBedTopography(iCell)
-               meshMask(indexToCellIDGathered(iCell)) = 1.0_RKIND
-            enddo
-
-            call interpolate(toColValues, toRowValues, toSvalues, globalArrayThickness, thicknessFastIsostasy1D)
-            call interpolate(toColValues, toRowValues, toSvalues, globalArrayBedTopography, bedtopoFastIsostasy1D)
-
-            nFastIsostasyX = int(nint(sqrt(real(nGrid, RKIND))))
-            nFastIsostasyY = nFastIsostasyX
-            if (nFastIsostasyX*nFastIsostasyY /= nGrid) then
-               call mpas_log_write('FastIsostasy coupling currently expects a square target grid in the mapping file.', &
-                                   MPAS_LOG_ERR)
+            inquire(file=trim(config_fastisostasy_restart_file), exist=fastisostasyRestartFileExists)
+            inquire(file=trim(config_fastisostasy_bsl_restart_file), exist=fastisostasyBslRestartFileExists)
+            if (.not. fastisostasyRestartFileExists) then
+               call mpas_log_write("FastIsostasy restart file '" // trim(config_fastisostasy_restart_file) // &
+                    "' was not found. A restart with config_uplift_method='fastisostasy' requires restart " // &
+                    "files written by a previous run of this MALI executable (see li_bedtopo_write_restart).", &
+                    MPAS_LOG_ERR)
                err = ior(err, 1)
             endif
-
-            allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
-            allocate(bedtopoFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
-            thicknessFastIsostasy2D = real(reshape(thicknessFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
-            bedtopoFastIsostasy2D = real(reshape(bedtopoFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
-
-            ! Use unit grid spacing unless configured otherwise in a follow-up change.
-            fastisostasyDx = 1.0_wp
-            fastisostasyDy = 1.0_wp
-
-            if (err == 0) then
-               call bsl_init(bslFastIsostasy, trim(config_fastisostasy_parameter_file), 0.0_wp)
-               call isos_init(isosFastIsostasy, trim(config_fastisostasy_parameter_file), 'isostasy', &
-                              nFastIsostasyX, nFastIsostasyY, fastisostasyDx, fastisostasyDy)
-               call isos_init_ref(isosFastIsostasy, bedtopoFastIsostasy2D, thicknessFastIsostasy2D)
-               call isos_init_state(isosFastIsostasy, bedtopoFastIsostasy2D, thicknessFastIsostasy2D, 0.0_wp, bslFastIsostasy)
+            if (.not. fastisostasyBslRestartFileExists) then
+               call mpas_log_write("FastIsostasy restart file '" // trim(config_fastisostasy_bsl_restart_file) // &
+                    "' was not found. A restart with config_uplift_method='fastisostasy' requires restart " // &
+                    "files written by a previous run of this MALI executable (see li_bedtopo_write_restart).", &
+                    MPAS_LOG_ERR)
+               err = ior(err, 1)
             endif
+         endif
+      else
+         fastisostasyTimeStep = 0
+      endif
+      fastisostasyInitTime = real(fastisostasyTimeStep, wp) * real(config_fastisostasy_coupling_interval, wp)
 
-            fastisostasyTimeStep = 0
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+      call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
-            deallocate(thicknessFastIsostasy2D, bedtopoFastIsostasy2D)
-            deallocate(thicknessFastIsostasy1D, bedtopoFastIsostasy1D)
+      if (curProc.eq.0) then
+         allocate(globalArrayThickness(nCellsGlobal), gatheredArrayThickness(nCellsGlobal))
+         allocate(globalArrayBedTopography(nCellsGlobal), gatheredArrayBedTopography(nCellsGlobal))
+         allocate(meshMask(nCellsGlobal))
+         allocate(thicknessFastIsostasy1D(nGrid), bedtopoFastIsostasy1D(nGrid))
+         meshMask(:) = 0.0_RKIND
+         thicknessFastIsostasy1D(:) = 0.0_RKIND
+         bedtopoFastIsostasy1D(:) = 0.0_RKIND
+      else
+         allocate(globalArrayThickness(1), gatheredArrayThickness(1))
+         allocate(globalArrayBedTopography(1), gatheredArrayBedTopography(1))
+         allocate(meshMask(1))
+      endif
+
+      call MPI_GATHERV((thickness*real(li_mask_is_grounded_ice_int(cellMask),RKIND)), &
+             nCellsOwned, MPI_DOUBLE, gatheredArrayThickness, nCellsPerProc, &
+             nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
+      call MPI_GATHERV(bedTopography, nCellsOwned, MPI_DOUBLE, gatheredArrayBedTopography, nCellsPerProc, &
+                       nCellsDisplacement, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
+
+      if (curProc.eq.0) then
+         do iCell = 1,nCellsGlobal
+            globalArrayThickness(indexToCellIDGathered(iCell)) = gatheredArrayThickness(iCell)
+            globalArrayBedTopography(indexToCellIDGathered(iCell)) = gatheredArrayBedTopography(iCell)
+            meshMask(indexToCellIDGathered(iCell)) = 1.0_RKIND
+         enddo
+
+         call interpolate(toColValues, toRowValues, toSvalues, globalArrayThickness, thicknessFastIsostasy1D)
+         call interpolate(toColValues, toRowValues, toSvalues, globalArrayBedTopography, bedtopoFastIsostasy1D)
+
+         nFastIsostasyX = int(nint(sqrt(real(nGrid, RKIND))))
+         nFastIsostasyY = nFastIsostasyX
+         if (nFastIsostasyX*nFastIsostasyY /= nGrid) then
+            call mpas_log_write('FastIsostasy coupling currently expects a square target grid in the mapping file.', &
+                                MPAS_LOG_ERR)
+            err = ior(err, 1)
          endif
 
-         deallocate(globalArrayThickness)
-         deallocate(gatheredArrayThickness)
-         deallocate(globalArrayBedTopography)
-         deallocate(gatheredArrayBedTopography)
-         deallocate(meshMask)
+         allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
+         allocate(bedtopoFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
+         thicknessFastIsostasy2D = real(reshape(thicknessFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
+         bedtopoFastIsostasy2D = real(reshape(bedtopoFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
+
+         ! Use unit grid spacing unless configured otherwise in a follow-up change.
+         fastisostasyDx = 1.0_wp
+         fastisostasyDy = 1.0_wp
+
+         if (err == 0) then
+            call bsl_init(bslFastIsostasy, trim(config_fastisostasy_parameter_file), fastisostasyInitTime)
+            call isos_init(isosFastIsostasy, trim(config_fastisostasy_parameter_file), 'isostasy', &
+                           nFastIsostasyX, nFastIsostasyY, fastisostasyDx, fastisostasyDy)
+
+            if (config_do_restart) then
+               ! Override whatever the static FastIsostasy parameter file says about
+               ! 'restart': config_do_restart (MALI's own restart flag) is the single
+               ! source of truth here, and the restart file is the one MALI itself
+               ! wrote in lockstep with its own restart stream (li_bedtopo_write_restart).
+               ! isos_init_state (called below) reads this file and restores the
+               ! viscous displacement, its ODE state, and the load reference state,
+               ! instead of re-deriving the reference state from the current
+               ! (restart-time) bedTopography/thickness -- which would otherwise make
+               ! FastIsostasy treat the solid Earth as already in equilibrium with
+               ! today's load, discarding all outstanding viscous relaxation.
+               isosFastIsostasy%par%restart = trim(config_fastisostasy_restart_file)
+               isosFastIsostasy%par%use_restart = .true.
+               call bsl_restart_read(bslFastIsostasy, trim(config_fastisostasy_bsl_restart_file))
+            else
+               isosFastIsostasy%par%use_restart = .false.
+               call isos_init_ref(isosFastIsostasy, bedtopoFastIsostasy2D, thicknessFastIsostasy2D)
+            endif
+
+            call isos_init_state(isosFastIsostasy, bedtopoFastIsostasy2D, thicknessFastIsostasy2D, &
+                                 fastisostasyInitTime, bslFastIsostasy)
+         endif
+
+         deallocate(thicknessFastIsostasy2D, bedtopoFastIsostasy2D)
+         deallocate(thicknessFastIsostasy1D, bedtopoFastIsostasy1D)
       endif
+
+      deallocate(globalArrayThickness)
+      deallocate(gatheredArrayThickness)
+      deallocate(globalArrayBedTopography)
+      deallocate(gatheredArrayBedTopography)
+      deallocate(meshMask)
 
 #else
       call mpas_log_write("FastIsostasy needs to be included in the compilation with 'FASTISOSTASY=true'", &
@@ -1205,6 +1260,76 @@ contains
 
    end subroutine fastisostasy_solve
 
+
+!***********************************************************************
+!
+!  routine li_bedtopo_write_restart
+!
+!> \brief   Writes FastIsostasy's internal restart state
+!> \author  MALI developers
+!> \date    June 2026
+!> \details
+!>  FastIsostasy carries prognostic, history-dependent state (viscous
+!>  bedrock displacement and its ODE integrator, the load reference
+!>  state, and the prognostic barystatic sea level) that cannot be
+!>  reconstructed from MALI's own restart fields. This routine snapshots
+!>  that state to disk every time MALI writes its own restart stream, so
+!>  a subsequent restart can resume the solid-Earth relaxation already in
+!>  progress instead of silently re-initializing it as if already in
+!>  equilibrium with the current ice/ocean load (see fastisostasy_init).
+!>  This must be called only when MALI's 'restart' stream is written, and
+!>  only by the task that owns isosFastIsostasy/bslFastIsostasy (rank 0).
+!
+!-----------------------------------------------------------------------
+
+   subroutine li_bedtopo_write_restart(domain, err)
+
+      type (domain_type), intent(in) :: domain
+      integer, intent(out) :: err
+
+#ifdef USE_FASTISOSTASY
+      character (len=StrKIND), pointer :: config_uplift_method
+      character (len=StrKIND), pointer :: config_fastisostasy_restart_file
+      character (len=StrKIND), pointer :: config_fastisostasy_bsl_restart_file
+      integer, pointer :: config_fastisostasy_coupling_interval
+      real (kind=wp) :: fastisostasyTime
+      integer :: err_tmp
+#endif
+
+      err = 0
+
+#ifdef USE_FASTISOSTASY
+      err_tmp = 0
+
+      call mpas_pool_get_config(liConfigs, 'config_uplift_method', config_uplift_method)
+      if (trim(config_uplift_method) == 'fastisostasy') then
+
+         call MPI_COMM_RANK(domain % dminfo % comm, curProc, err_tmp)
+         err = ior(err, err_tmp)
+
+         if (curProc.eq.0) then
+            call mpas_pool_get_config(liConfigs, 'config_fastisostasy_restart_file', config_fastisostasy_restart_file)
+            call mpas_pool_get_config(liConfigs, 'config_fastisostasy_bsl_restart_file', &
+                                      config_fastisostasy_bsl_restart_file)
+            call mpas_pool_get_config(liConfigs, 'config_fastisostasy_coupling_interval', &
+                                      config_fastisostasy_coupling_interval)
+
+            ! Must match how fastisostasy_solve computes the time associated with the
+            ! most recent isos_update call, so that a subsequent restart resumes at
+            ! exactly the time value stamped in this file (see fastisostasy_init and
+            ! find_fastisostasy_restart_timestep).
+            fastisostasyTime = real(fastisostasyTimeStep, wp) * real(config_fastisostasy_coupling_interval, wp)
+
+            call mpas_log_write("Writing FastIsostasy restart files at FastIsostasy time level $i", &
+                                intArgs=(/fastisostasyTimeStep/))
+            call isos_restart_write(isosFastIsostasy, trim(config_fastisostasy_restart_file), fastisostasyTime)
+            call bsl_restart_write(bslFastIsostasy, trim(config_fastisostasy_bsl_restart_file), fastisostasyTime)
+         endif
+      endif
+#endif
+
+   !--------------------------------------------------------------------
+   end subroutine li_bedtopo_write_restart
 
 
 !***********************************************************************
@@ -1610,6 +1735,72 @@ contains
 
    !--------------------------------------------------------------------
    end subroutine find_slm_restart_timestep
+
+
+!***********************************************************************
+!
+!  routine find_fastisostasy_restart_timestep
+!
+!> \brief   Determines FastIsostasy's coupling step count on restart
+!> \author  MALI developers
+!> \date    June 2026
+!> \details
+!>  Computes how many FastIsostasy coupling intervals have elapsed since
+!>  the simulation started, so that a restarted run resumes the
+!>  fastisostasyTimeStep counter (and the FastIsostasy-internal time
+!>  derived from it) at the correct point rather than restarting
+!>  FastIsostasy's clock at year zero. Mirrors find_slm_restart_timestep.
+!
+!-----------------------------------------------------------------------
+
+   subroutine find_fastisostasy_restart_timestep(meshPool, fastisostasyTimeStep, err)
+
+      use mpas_timekeeping
+
+      type (mpas_pool_type), intent(in) :: meshPool  !< mesh information
+      integer, intent(out) :: fastisostasyTimeStep
+      integer, intent(out) :: err
+
+      ! local vars
+      integer, pointer :: config_fastisostasy_coupling_interval
+      character (len=StrKIND), pointer :: xtime, simulationStartTime
+      type (MPAS_TimeInterval_Type) :: coupling_interval
+      type (MPAS_Time_Type) :: start_time, curr_time
+      integer (kind=I8KIND) :: n_intervals
+      type (MPAS_TimeInterval_type) :: remainder
+      character (len=StrKIND) :: remainder_string
+      integer :: err_tmp
+
+      err = 0
+      err_tmp = 0
+
+      call mpas_pool_get_config(liConfigs, "config_fastisostasy_coupling_interval", config_fastisostasy_coupling_interval)
+      ! define FastIsostasy coupling interval as a timeInterval type
+      call mpas_set_timeInterval(coupling_interval, YY=config_fastisostasy_coupling_interval, MM=0, DD=0, H=0, M=0, S=0, &
+           ierr=err_tmp)
+      err = ior(err, err_tmp)
+
+      call mpas_pool_get_array(meshPool, 'simulationStartTime', simulationStartTime)
+      call mpas_pool_get_array(meshPool, 'xtime', xtime)
+      call mpas_set_time(start_time, dateTimeString=simulationStartTime, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_set_time(curr_time, dateTimeString=xtime, ierr=err_tmp)
+      err = ior(err, err_tmp)
+
+      call mpas_interval_division(start_time, curr_time - start_time, coupling_interval, n_intervals, remainder)
+      fastisostasyTimeStep = int(n_intervals)
+      call mpas_get_timeInterval(remainder, start_time, timeString=remainder_string, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_log_write("FastIsostasy Restart: Using FastIsostasy time level $i because " // &
+              "config_fastisostasy_coupling_interval divides into elapsed time that many times ", &
+              intArgs=(/int(fastisostasyTimeStep)/))
+      call mpas_log_write("  That calculation implies it has been " // trim(remainder_string) // &
+              " since last FastIsostasy coupling. If that interval seems wrong, there may be an error " // &
+              "in your configuration.")
+      call mpas_log_write("")
+
+   !--------------------------------------------------------------------
+   end subroutine find_fastisostasy_restart_timestep
 
 !***********************************************************************
 

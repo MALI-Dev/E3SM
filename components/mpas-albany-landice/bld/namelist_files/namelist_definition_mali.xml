@@ -258,6 +258,28 @@ Valid values: Any file name string
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_fastisostasy_restart_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File used to save and restore FastIsostasy's internal isostasy state (viscous bedrock displacement,
+its ODE integrator state, and the load reference state) across a MALI restart. MALI writes this file
+every time it writes its own 'restart' stream and reads it back on the next restart when
+config_uplift_method='fastisostasy'. Only the most recently written snapshot is kept; branching from
+an older MALI restart file requires a matching older copy of this file.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_bsl_restart_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File used to save and restore FastIsostasy's prognostic barystatic sea level (bsl_now, A_ocean_now)
+across a MALI restart. Written and read alongside config_fastisostasy_restart_file; see its
+description for details.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
 
 <!-- calving -->
 
