@@ -50,6 +50,14 @@ ifeq "$(SLM)" "true"
     override CPPFLAGS += -DUSE_SEALEVELMODEL
 endif
 
+# Optional FastIsostasy model
+ifeq "$(FASTISOSTASY)" "true"
+    override CPPFLAGS += -DUSE_FASTISOSTASY
+    FASTISOSTASY_LINK_LIBS += $(ROOT_DIR)/FastIsostasy/libisostasy/include/libisostasy.a
+    FASTISOSTASY_LINK_LIBS += $(ROOT_DIR)/fesm-utils/utils/include-serial/libfesmutils.a
+    FASTISOSTASY_LINK_LIBS += $(ROOT_DIR)/fesm-utils/fftw-serial/lib/libfftw3.a
+endif
+
 # ===================================
 report_builds:
 	@echo "CORE=landice"

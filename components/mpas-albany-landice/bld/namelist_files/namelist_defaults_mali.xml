@@ -30,6 +30,10 @@
 <config_slm_coupling_interval>2</config_slm_coupling_interval>
 <config_MALI_to_SLM_weights_file>'mpas_to_grid.nc'</config_MALI_to_SLM_weights_file>
 <config_SLM_to_MALI_weights_file>'grid_to_mpas.nc'</config_SLM_to_MALI_weights_file>
+<config_fastisostasy_coupling_interval>2</config_fastisostasy_coupling_interval>
+<config_MALI_to_FASTISOSTASY_weights_file>'mpas_to_fastisostasy.nc'</config_MALI_to_FASTISOSTASY_weights_file>
+<config_FASTISOSTASY_to_MALI_weights_file>'fastisostasy_to_mpas.nc'</config_FASTISOSTASY_to_MALI_weights_file>
+<config_fastisostasy_parameter_file>'fastisostasy.nml'</config_fastisostasy_parameter_file>
 
 <!-- calving -->
 <config_calving>'none'</config_calving>
