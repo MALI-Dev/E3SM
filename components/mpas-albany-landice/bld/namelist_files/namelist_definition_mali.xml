@@ -250,6 +250,20 @@ Valid values: Any file name string
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_fastisostasy_grid_resolution" type="real"
+	category="solidearth" group="solidearth">
+Physical grid spacing (dx=dy; FastIsostasy requires a square grid), in meters, of the regular Cartesian
+target grid that config_MALI_to_FASTISOSTASY_weights_file/config_FASTISOSTASY_to_MALI_weights_file remap
+between. The mapping files only define connectivity and interpolation weights, not the destination grid's
+physical spacing, but FastIsostasy needs a physical spacing to convert its own 'pad' namelist option
+(given in km) into a number of grid cells. This must be set to match whatever resolution was used to
+generate those mapping files; the default of 0.0 is a deliberate invalid sentinel that causes MALI to
+abort with an error if left unset, rather than silently assuming an incorrect spacing.
+
+Valid values: Any positive real number matching the resolution used to build the FastIsostasy mapping files
+Default: Defined in namelist_defaults.xml
+</entry>
+
 <entry id="config_fastisostasy_parameter_file" type="char*1024"
 	category="solidearth" group="solidearth">
 Path to the FastIsostasy parameter namelist file containing the isostasy and barysealevel records.

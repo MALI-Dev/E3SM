@@ -33,6 +33,7 @@
 <config_fastisostasy_coupling_interval>2</config_fastisostasy_coupling_interval>
 <config_MALI_to_FASTISOSTASY_weights_file>'mpas_to_fastisostasy.nc'</config_MALI_to_FASTISOSTASY_weights_file>
 <config_FASTISOSTASY_to_MALI_weights_file>'fastisostasy_to_mpas.nc'</config_FASTISOSTASY_to_MALI_weights_file>
+<config_fastisostasy_grid_resolution>0.0</config_fastisostasy_grid_resolution>
 <config_fastisostasy_parameter_file>'fastisostasy.nml'</config_fastisostasy_parameter_file>
 <config_fastisostasy_restart_file>'fastisostasy_restart.nc'</config_fastisostasy_restart_file>
 <config_fastisostasy_bsl_restart_file>'fastisostasy_bsl_restart.nc'</config_fastisostasy_bsl_restart_file>

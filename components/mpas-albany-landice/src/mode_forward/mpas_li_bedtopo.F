@@ -907,6 +907,7 @@ contains
       character (len=StrKIND), pointer :: config_fastisostasy_parameter_file
       character (len=StrKIND), pointer :: config_MALI_to_FASTISOSTASY_weights_file
       character (len=StrKIND), pointer :: config_FASTISOSTASY_to_MALI_weights_file
+      real (kind=RKIND), pointer :: config_fastisostasy_grid_resolution
       character (len=StrKIND), pointer :: config_fastisostasy_restart_file
       character (len=StrKIND), pointer :: config_fastisostasy_bsl_restart_file
       logical :: fastisostasyRestartFileExists, fastisostasyBslRestartFileExists
@@ -940,7 +941,19 @@ contains
 
       call mpas_pool_get_config(liConfigs, 'config_MALI_to_FASTISOSTASY_weights_file', config_MALI_to_FASTISOSTASY_weights_file)
       call mpas_pool_get_config(liConfigs, 'config_FASTISOSTASY_to_MALI_weights_file', config_FASTISOSTASY_to_MALI_weights_file)
+      call mpas_pool_get_config(liConfigs, 'config_fastisostasy_grid_resolution', config_fastisostasy_grid_resolution)
       call mpas_pool_get_config(liConfigs, 'config_fastisostasy_parameter_file', config_fastisostasy_parameter_file)
+
+      ! config_fastisostasy_grid_resolution has no physically valid default: an unset (<=0) value must
+      ! abort here rather than fall back to some assumed spacing, because a wrong-but-plausible-looking
+      ! value would not necessarily fail loudly (see Registry.xml description for how this can silently
+      ! either exhaust memory or under-pad the domain).
+      if (config_fastisostasy_grid_resolution <= 0.0_RKIND) then
+         call mpas_log_write("config_fastisostasy_grid_resolution must be set to the physical grid " // &
+              "spacing (in meters) of the regular grid defined by config_MALI_to_FASTISOSTASY_weights_file " // &
+              "and config_FASTISOSTASY_to_MALI_weights_file. It has no valid default.", MPAS_LOG_ERR)
+         err = ior(err, 1)
+      endif
 
       ! initialize interpolation
       call interpolate_init(domain, err_tmp, trim(config_MALI_to_FASTISOSTASY_weights_file), &
@@ -1069,9 +1082,10 @@ contains
          thicknessFastIsostasy2D = real(reshape(thicknessFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
          bedtopoFastIsostasy2D = real(reshape(bedtopoFastIsostasy1D, [nFastIsostasyX,nFastIsostasyY]), wp)
 
-         ! Use unit grid spacing unless configured otherwise in a follow-up change.
-         fastisostasyDx = 1.0_wp
-         fastisostasyDy = 1.0_wp
+         ! FastIsostasy requires a square grid (isos_utils::init_domain_size aborts otherwise), so
+         ! both dx and dy are set from the single config_fastisostasy_grid_resolution value.
+         fastisostasyDx = real(config_fastisostasy_grid_resolution, wp)
+         fastisostasyDy = real(config_fastisostasy_grid_resolution, wp)
 
          if (err == 0) then
             call bsl_init(bslFastIsostasy, trim(config_fastisostasy_parameter_file), fastisostasyInitTime)

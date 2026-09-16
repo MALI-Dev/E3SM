@@ -184,6 +184,10 @@
 			description="File containing interpolation weights for regridding from the regular Cartesian grid used by FastIsostasy to the MPAS mesh."
 			possible_values="Any file name string"
 		/>
+		<nml_option name="config_fastisostasy_grid_resolution" type="real" default_value="0.0" units="m"
+			description="Physical grid spacing (dx=dy; FastIsostasy requires a square grid) of the regular Cartesian target grid that config_MALI_to_FASTISOSTASY_weights_file/config_FASTISOSTASY_to_MALI_weights_file remap between. The mapping files only define connectivity and interpolation weights between grids, not the destination grid's physical spacing, but FastIsostasy needs a physical spacing (not just a cell count) to convert its own 'pad' namelist option (given in km) into a number of grid cells to pad its computational domain with. There is currently no way to derive this automatically from the mapping files, so it must be set here to match whatever resolution was used to generate them. The default of 0.0 is a deliberate invalid sentinel: MALI aborts with an error if this is left unset rather than silently falling back to some assumed spacing, since an incorrect value here does not necessarily fail loudly (a too-small value inflates the padded grid to a size that typically exhausts memory during allocation, as a too-large value would silently under-pad the domain instead)."
+			possible_values="Any positive real number matching the resolution used to build the FastIsostasy mapping files"
+		/>
 		<nml_option name="config_fastisostasy_parameter_file" type="character" default_value="fastisostasy.nml" units="unitless"
 			description="Path to the FastIsostasy parameter namelist file containing the isostasy and barysealevel records."
 			possible_values="Any file name string"
