@@ -411,8 +411,12 @@
                             possible_values="Any positive real value"
                 />
                 <nml_option name="config_ismip7_melt_spatially_variable_slope" type="logical" default_value=".false." units="unitless"
-                            description="Whether the ISMIP7 local quadratic melt parameterization uses spatially-varying ice-shelf basal slopes instead of the uniform config_ismip7_melt_sin_slope value.  When .true., the slope is calculated at each cell from the ice geometry as the smoothed average of |dz/dx| on adjacent edges, capped at 0.01 (about 0.57 degrees).  When .false. (default), the parameterization uses the scalar config_ismip7_melt_sin_slope everywhere, matching the published protocol and avoiding slope-melt feedbacks.  WARNING: spatially-varying slopes were found to produce unstable behavior in testing (MALI-Dev/E3SM PR #48), specifically melting holes in ice shelves under increasing thermal forcing.  This option should be used with caution and only for experimental purposes."
+                            description="Whether the ISMIP7 local quadratic melt parameterization uses spatially-varying ice-shelf basal slopes instead of the uniform config_ismip7_melt_sin_slope value.  When .true., the slope is calculated at each cell from the ice geometry as the smoothed average of |dz/dx| on adjacent edges, capped at config_ismip7_melt_max_slope.  When .false. (default), the parameterization uses the scalar config_ismip7_melt_sin_slope everywhere, matching the published protocol and avoiding slope-melt feedbacks.  WARNING: spatially-varying slopes were found to produce unstable behavior in testing (MALI-Dev/E3SM PR #48), specifically melting holes in ice shelves under increasing thermal forcing.  This option should be used with caution and only for experimental purposes."
                             possible_values=".true. or .false."
+                />
+                <nml_option name="config_ismip7_melt_max_slope" type="real" default_value="0.01" units="unitless"
+                            description="Maximum ice-shelf basal slope used when config_ismip7_melt_spatially_variable_slope=.true.  Slopes are capped at this value after smoothing.  Default 0.01 corresponds to about 0.57 degrees.  This cap is resolution-dependent: finer meshes may resolve steeper local slopes that get artificially truncated."
+                            possible_values="Any positive real value"
                 />
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^-2"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."

@@ -1485,6 +1485,7 @@ module li_iceshelf_melt
       real (kind=RKIND), pointer :: sinSlope, coriolis
       real (kind=RKIND), pointer :: meltK
       real (kind=RKIND), pointer :: constSalinity
+      real (kind=RKIND), pointer :: maxSlope
       character (len=StrKIND), pointer :: salinitySource
       logical :: useDataSalinity
       logical, pointer :: useSpatiallyVariableSlope
@@ -1501,11 +1502,14 @@ module li_iceshelf_melt
       integer, dimension(:), pointer :: cellMask, indexToCellID
       integer, dimension(:), pointer :: connectedOceanMask
       real (kind=RKIND), dimension(:), pointer :: shelfBaseSlope
-      integer, dimension(:), pointer :: nEdgesOnCell, edgesOnCell, cellsOnEdge
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: edgesOnCell, cellsOnEdge, cellsOnCell
       real (kind=RKIND), dimension(:), pointer :: dcEdge
       integer :: iEdge, cell1, cell2, nFloatingEdges, iNeighbor
+      integer :: nCellsCapped, nCellsZeroSlope
       real (kind=RKIND) :: coef, wDeep, wShallow, TF_local, coefLocal
       real (kind=RKIND) :: slopeSum, edgeSlope
+      real (kind=RKIND) :: minSlope, maxSlopeBeforeCap, meanSlope, slopeSum_diag
       real (kind=RKIND), allocatable, dimension(:) :: slopeTmp
 
       err = 0
@@ -1517,6 +1521,7 @@ module li_iceshelf_melt
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_salinity', constSalinity)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_salinity_source', salinitySource)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_spatially_variable_slope', useSpatiallyVariableSlope)
+      call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_max_slope', maxSlope)
 
       if (coriolis <= 0.0_RKIND) then
          call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_coriolis must be positive", MPAS_LOG_ERR)
@@ -1616,6 +1621,7 @@ module li_iceshelf_melt
             call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
             call mpas_pool_get_array(meshPool, 'edgesOnCell', edgesOnCell)
             call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
+            call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
             call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
          endif
 
@@ -1643,10 +1649,16 @@ module li_iceshelf_melt
                      cell1 = cellsOnEdge(1, edgesOnCell(iEdge, iCell))
                      cell2 = cellsOnEdge(2, edgesOnCell(iEdge, iCell))
 
-                     ! Only use edges between two floating ice cells
-                     if (cell1 > 0 .and. cell2 > 0) then
+                     ! Only use edges between two floating AND dynamic ice cells.
+                     ! This avoids spuriously high slopes at the edge of the
+                     ! dynamic domain, where margin cells may have artificial
+                     ! geometry transitions (addresses PR #48 review comment).
+                     if (cell1 > 0 .and. cell1 <= nCellsSolve .and. &
+                         cell2 > 0 .and. cell2 <= nCellsSolve) then
                         if (li_mask_is_floating_ice(cellMask(cell1)) .and. &
-                            li_mask_is_floating_ice(cellMask(cell2))) then
+                            li_mask_is_floating_ice(cellMask(cell2)) .and. &
+                            li_mask_is_dynamic_ice(cellMask(cell1)) .and. &
+                            li_mask_is_dynamic_ice(cellMask(cell2))) then
                            edgeSlope = abs(lowerSurface(cell1) - lowerSurface(cell2)) / &
                                        dcEdge(edgesOnCell(iEdge, iCell))
                            slopeSum = slopeSum + edgeSlope
@@ -1667,23 +1679,18 @@ module li_iceshelf_melt
 
             ! Smoothing pass: average with neighbors
             do iCell = 1, nCellsSolve
-               if (li_mask_is_floating_ice(cellMask(iCell))) then
+               if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
+                   li_mask_is_dynamic_ice(cellMask(iCell))) then
                   nFloatingEdges = 0
                   slopeSum = shelfBaseSlope(iCell)
 
                   do iEdge = 1, nEdgesOnCell(iCell)
-                     cell1 = cellsOnEdge(1, edgesOnCell(iEdge, iCell))
-                     cell2 = cellsOnEdge(2, edgesOnCell(iEdge, iCell))
-
-                     ! Find the neighbor cell
-                     if (cell1 == iCell) then
-                        iNeighbor = cell2
-                     else
-                        iNeighbor = cell1
-                     endif
+                     ! Use cellsOnCell for direct neighbor access
+                     iNeighbor = cellsOnCell(iEdge, iCell)
 
                      if (iNeighbor > 0 .and. iNeighbor <= nCellsSolve) then
-                        if (li_mask_is_floating_ice(cellMask(iNeighbor))) then
+                        if (li_mask_is_floating_ice(cellMask(iNeighbor)) .and. &
+                            li_mask_is_dynamic_ice(cellMask(iNeighbor))) then
                            slopeSum = slopeSum + shelfBaseSlope(iNeighbor)
                            nFloatingEdges = nFloatingEdges + 1
                         endif
@@ -1696,15 +1703,57 @@ module li_iceshelf_melt
                endif
             enddo
 
-            ! Copy smoothed slopes back and apply cap
+            ! Copy smoothed slopes back and apply cap, and compute diagnostics
+            nCellsCapped = 0
+            nCellsZeroSlope = 0
+            minSlope = 1.0e10_RKIND
+            maxSlopeBeforeCap = 0.0_RKIND
+            slopeSum_diag = 0.0_RKIND
+            nFloatingEdges = 0
+
             do iCell = 1, nCellsSolve
-               shelfBaseSlope(iCell) = min(slopeTmp(iCell), 0.01_RKIND)
+               if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
+                   li_mask_is_dynamic_ice(cellMask(iCell))) then
+                  nFloatingEdges = nFloatingEdges + 1
+
+                  ! Check if this cell will be capped
+                  if (slopeTmp(iCell) > maxSlope) then
+                     nCellsCapped = nCellsCapped + 1
+                     maxSlopeBeforeCap = max(maxSlopeBeforeCap, slopeTmp(iCell))
+                  endif
+
+                  ! Apply cap
+                  shelfBaseSlope(iCell) = min(slopeTmp(iCell), maxSlope)
+
+                  ! Accumulate for mean, check for zero
+                  slopeSum_diag = slopeSum_diag + shelfBaseSlope(iCell)
+
+                  if (shelfBaseSlope(iCell) == 0.0_RKIND) then
+                     nCellsZeroSlope = nCellsZeroSlope + 1
+                  else
+                     minSlope = min(minSlope, shelfBaseSlope(iCell))
+                  endif
+               endif
             enddo
 
             deallocate(slopeTmp)
 
+            ! Log slope statistics
             call mpas_log_write("iceshelf_melt_ismip7: K=$r, spatially-varying sin(slope), |f|=$r", &
                realArgs=(/meltK, coriolis/))
+            call mpas_log_write("iceshelf_melt_ismip7: slope statistics:")
+            call mpas_log_write("  floating+dynamic cells: $i", intArgs=(/nFloatingEdges/))
+            if (nFloatingEdges > 0) then
+               meanSlope = slopeSum_diag / real(nFloatingEdges, RKIND)
+               call mpas_log_write("  mean slope: $r, min: $r", realArgs=(/meanSlope, minSlope/))
+               if (nCellsCapped > 0) then
+                  call mpas_log_write("  cells capped at $r: $i, max before cap: $r", &
+                     realArgs=(/maxSlope, real(nCellsCapped, RKIND), maxSlopeBeforeCap/))
+               else
+                  call mpas_log_write("  no cells exceeded max slope cap of $r", realArgs=(/maxSlope/))
+               endif
+               call mpas_log_write("  cells with zero slope: $i", intArgs=(/nCellsZeroSlope/))
+            endif
          endif
 
          ! Check zOcean for valid values
