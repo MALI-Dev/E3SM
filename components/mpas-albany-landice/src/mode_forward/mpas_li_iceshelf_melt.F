@@ -1486,6 +1486,7 @@ module li_iceshelf_melt
       real (kind=RKIND), pointer :: meltK
       real (kind=RKIND), pointer :: constSalinity
       real (kind=RKIND), pointer :: maxSlope
+      integer, pointer :: nSmoothingIterations
       character (len=StrKIND), pointer :: salinitySource
       logical :: useDataSalinity
       logical, pointer :: useSpatiallyVariableSlope
@@ -1505,7 +1506,7 @@ module li_iceshelf_melt
       integer, dimension(:), pointer :: nEdgesOnCell
       integer, dimension(:,:), pointer :: edgesOnCell, cellsOnEdge, cellsOnCell
       real (kind=RKIND), dimension(:), pointer :: dcEdge
-      integer :: iEdge, cell1, cell2, nFloatingEdges, iNeighbor
+      integer :: iEdge, cell1, cell2, nFloatingEdges, iNeighbor, iSmooth
       integer :: nCellsCapped, nCellsZeroSlope
       real (kind=RKIND) :: coef, wDeep, wShallow, TF_local, coefLocal
       real (kind=RKIND) :: slopeSum, edgeSlope
@@ -1522,6 +1523,14 @@ module li_iceshelf_melt
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_salinity_source', salinitySource)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_spatially_variable_slope', useSpatiallyVariableSlope)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_max_slope', maxSlope)
+      call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_slope_smoothing_iterations', nSmoothingIterations)
+
+      if (nSmoothingIterations < 0) then
+         call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_slope_smoothing_iterations must be " // &
+            "non-negative, but is $i", MPAS_LOG_ERR, intArgs=(/nSmoothingIterations/))
+         err = ior(err, 1)
+         return
+      endif
 
       if (coriolis <= 0.0_RKIND) then
          call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_coriolis must be positive", MPAS_LOG_ERR)
@@ -1677,31 +1686,54 @@ module li_iceshelf_melt
                endif
             enddo
 
-            ! Smoothing pass: average with neighbors
-            do iCell = 1, nCellsSolve
-               if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
-                   li_mask_is_dynamic_ice(cellMask(iCell))) then
-                  nFloatingEdges = 0
-                  slopeSum = shelfBaseSlope(iCell)
+            ! Smoothing passes: average with neighbors
+            if (nSmoothingIterations > 0) then
+               do iSmooth = 1, nSmoothingIterations
+                  do iCell = 1, nCellsSolve
+                     if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
+                         li_mask_is_dynamic_ice(cellMask(iCell))) then
+                        nFloatingEdges = 0
+                        slopeSum = shelfBaseSlope(iCell)
 
-                  do iEdge = 1, nEdgesOnCell(iCell)
-                     ! Use cellsOnCell for direct neighbor access
-                     iNeighbor = cellsOnCell(iEdge, iCell)
+                        do iEdge = 1, nEdgesOnCell(iCell)
+                           ! Use cellsOnCell for direct neighbor access
+                           iNeighbor = cellsOnCell(iEdge, iCell)
 
-                     if (iNeighbor > 0 .and. iNeighbor <= nCellsSolve) then
-                        if (li_mask_is_floating_ice(cellMask(iNeighbor)) .and. &
-                            li_mask_is_dynamic_ice(cellMask(iNeighbor))) then
-                           slopeSum = slopeSum + shelfBaseSlope(iNeighbor)
-                           nFloatingEdges = nFloatingEdges + 1
-                        endif
+                           ! Access both owned and halo cells for smoothing
+                           if (iNeighbor > 0) then
+                              if (li_mask_is_floating_ice(cellMask(iNeighbor)) .and. &
+                                  li_mask_is_dynamic_ice(cellMask(iNeighbor))) then
+                                 slopeSum = slopeSum + shelfBaseSlope(iNeighbor)
+                                 nFloatingEdges = nFloatingEdges + 1
+                              endif
+                           endif
+                        enddo
+
+                        slopeTmp(iCell) = slopeSum / real(nFloatingEdges + 1, RKIND)
+                     else
+                        slopeTmp(iCell) = 0.0_RKIND
                      endif
                   enddo
 
-                  slopeTmp(iCell) = slopeSum / real(nFloatingEdges + 1, RKIND)
-               else
-                  slopeTmp(iCell) = 0.0_RKIND
-               endif
-            enddo
+                  ! Copy back smoothed values to shelfBaseSlope
+                  do iCell = 1, nCellsSolve
+                     shelfBaseSlope(iCell) = slopeTmp(iCell)
+                  enddo
+
+                  ! Halo exchange after each smoothing pass (except the last)
+                  ! This ensures neighbor values are up-to-date for the next iteration
+                  if (iSmooth < nSmoothingIterations) then
+                     call mpas_timer_start("halo updates")
+                     call mpas_dmpar_field_halo_exch(domain, 'ismip7shelfMelt_shelfBaseSlope')
+                     call mpas_timer_stop("halo updates")
+                  endif
+               enddo
+            else
+               ! No smoothing: copy raw slopes directly to slopeTmp
+               do iCell = 1, nCellsSolve
+                  slopeTmp(iCell) = shelfBaseSlope(iCell)
+               enddo
+            endif
 
             ! Copy smoothed slopes back and apply cap, and compute diagnostics
             nCellsCapped = 0
@@ -1741,6 +1773,12 @@ module li_iceshelf_melt
             ! Log slope statistics
             call mpas_log_write("iceshelf_melt_ismip7: K=$r, spatially-varying sin(slope), |f|=$r", &
                realArgs=(/meltK, coriolis/))
+            if (nSmoothingIterations > 0) then
+               call mpas_log_write("iceshelf_melt_ismip7: applied $i smoothing iteration(s)", &
+                  intArgs=(/nSmoothingIterations/))
+            else
+               call mpas_log_write("iceshelf_melt_ismip7: no smoothing applied (nSmoothingIterations=0)")
+            endif
             call mpas_log_write("iceshelf_melt_ismip7: slope statistics:")
             call mpas_log_write("  floating+dynamic cells: $i", intArgs=(/nFloatingEdges/))
             if (nFloatingEdges > 0) then

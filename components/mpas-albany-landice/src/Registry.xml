@@ -418,6 +418,10 @@
                             description="Maximum ice-shelf basal slope used when config_ismip7_melt_spatially_variable_slope=.true.  Slopes are capped at this value after smoothing.  Default 0.01 corresponds to about 0.57 degrees.  This cap is resolution-dependent: finer meshes may resolve steeper local slopes that get artificially truncated."
                             possible_values="Any positive real value"
                 />
+                <nml_option name="config_ismip7_melt_slope_smoothing_iterations" type="integer" default_value="1" units="unitless"
+                            description="Number of smoothing iterations to apply to spatially-varying ice-shelf basal slopes when config_ismip7_melt_spatially_variable_slope=.true.  Each iteration averages a cell's slope with its neighbors' slopes.  Multiple iterations (2-3) produce smoother fields but require halo exchanges in parallel runs, increasing computational cost.  Default 1 preserves current behavior."
+                            possible_values="Any non-negative integer (0 = no smoothing, 1 = current default, 2-3 = typical)"
+                />
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^-2"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."
 		            possible_values="Any positive real value"
