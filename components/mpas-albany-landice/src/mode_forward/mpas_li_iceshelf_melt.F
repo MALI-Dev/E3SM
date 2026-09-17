@@ -33,6 +33,8 @@ module li_iceshelf_melt
    use li_mask
    use li_constants
    use li_ocean_extrap
+   use mpas_geometry_utils, only: mpas_poly_fit_2
+   use mpas_hash
 
    implicit none
    private
@@ -1488,6 +1490,8 @@ module li_iceshelf_melt
       real (kind=RKIND), pointer :: maxSlope
       integer, pointer :: nSmoothingIterations
       character (len=StrKIND), pointer :: salinitySource
+      character (len=StrKIND), pointer :: slopeMethod
+      integer, pointer :: slopeStencilRings
       logical :: useDataSalinity
       logical, pointer :: useSpatiallyVariableSlope
       type (block_type), pointer :: block
@@ -1524,6 +1528,8 @@ module li_iceshelf_melt
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_spatially_variable_slope', useSpatiallyVariableSlope)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_max_slope', maxSlope)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_slope_smoothing_iterations', nSmoothingIterations)
+      call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_slope_method', slopeMethod)
+      call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_slope_stencil_rings', slopeStencilRings)
 
       if (nSmoothingIterations < 0) then
          call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_slope_smoothing_iterations must be " // &
@@ -1638,159 +1644,26 @@ module li_iceshelf_melt
 
          ! Calculate spatially-varying slopes if enabled
          if (useSpatiallyVariableSlope) then
-            call mpas_log_write("iceshelf_melt_ismip7: using spatially-varying slopes " // &
-               "(WARNING: experimental feature with known stability issues from PR #48)")
-
-            ! Allocate temporary array for smoothing
-            allocate(slopeTmp(nCellsSolve))
-
-            ! Initialize slopes
-            shelfBaseSlope(:) = 0.0_RKIND
-            slopeTmp(:) = 0.0_RKIND
-
-            ! Calculate edge-based slopes and interpolate to cells
-            do iCell = 1, nCellsSolve
-               if (li_mask_is_floating_ice(cellMask(iCell))) then
-                  nFloatingEdges = 0
-                  slopeSum = 0.0_RKIND
-
-                  do iEdge = 1, nEdgesOnCell(iCell)
-                     cell1 = cellsOnEdge(1, edgesOnCell(iEdge, iCell))
-                     cell2 = cellsOnEdge(2, edgesOnCell(iEdge, iCell))
-
-                     ! Only use edges between two floating AND dynamic ice cells.
-                     ! This avoids spuriously high slopes at the edge of the
-                     ! dynamic domain, where margin cells may have artificial
-                     ! geometry transitions (addresses PR #48 review comment).
-                     if (cell1 > 0 .and. cell1 <= nCellsSolve .and. &
-                         cell2 > 0 .and. cell2 <= nCellsSolve) then
-                        if (li_mask_is_floating_ice(cellMask(cell1)) .and. &
-                            li_mask_is_floating_ice(cellMask(cell2)) .and. &
-                            li_mask_is_dynamic_ice(cellMask(cell1)) .and. &
-                            li_mask_is_dynamic_ice(cellMask(cell2))) then
-                           edgeSlope = abs(lowerSurface(cell1) - lowerSurface(cell2)) / &
-                                       dcEdge(edgesOnCell(iEdge, iCell))
-                           slopeSum = slopeSum + edgeSlope
-                           nFloatingEdges = nFloatingEdges + 1
-                        endif
-                     endif
-                  enddo
-
-                  if (nFloatingEdges > 0) then
-                     shelfBaseSlope(iCell) = slopeSum / real(nFloatingEdges, RKIND)
-                  else
-                     shelfBaseSlope(iCell) = 0.0_RKIND
-                  endif
-               else
-                  shelfBaseSlope(iCell) = 0.0_RKIND
-               endif
-            enddo
-
-            ! Smoothing passes: average with neighbors
-            if (nSmoothingIterations > 0) then
-               do iSmooth = 1, nSmoothingIterations
-                  do iCell = 1, nCellsSolve
-                     if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
-                         li_mask_is_dynamic_ice(cellMask(iCell))) then
-                        nFloatingEdges = 0
-                        slopeSum = shelfBaseSlope(iCell)
-
-                        do iEdge = 1, nEdgesOnCell(iCell)
-                           ! Use cellsOnCell for direct neighbor access
-                           iNeighbor = cellsOnCell(iEdge, iCell)
-
-                           ! Access both owned and halo cells for smoothing
-                           if (iNeighbor > 0) then
-                              if (li_mask_is_floating_ice(cellMask(iNeighbor)) .and. &
-                                  li_mask_is_dynamic_ice(cellMask(iNeighbor))) then
-                                 slopeSum = slopeSum + shelfBaseSlope(iNeighbor)
-                                 nFloatingEdges = nFloatingEdges + 1
-                              endif
-                           endif
-                        enddo
-
-                        slopeTmp(iCell) = slopeSum / real(nFloatingEdges + 1, RKIND)
-                     else
-                        slopeTmp(iCell) = 0.0_RKIND
-                     endif
-                  enddo
-
-                  ! Copy back smoothed values to shelfBaseSlope
-                  do iCell = 1, nCellsSolve
-                     shelfBaseSlope(iCell) = slopeTmp(iCell)
-                  enddo
-
-                  ! Halo exchange after each smoothing pass (except the last)
-                  ! This ensures neighbor values are up-to-date for the next iteration
-                  if (iSmooth < nSmoothingIterations) then
-                     call mpas_timer_start("halo updates")
-                     call mpas_dmpar_field_halo_exch(domain, 'ismip7shelfMelt_shelfBaseSlope')
-                     call mpas_timer_stop("halo updates")
-                  endif
-               enddo
+            ! Dispatch to appropriate slope calculation method
+            if (trim(slopeMethod) == 'local') then
+               call calculate_slope_local(domain, shelfBaseSlope, lowerSurface, &
+                                          cellMask, nEdgesOnCell, edgesOnCell, &
+                                          cellsOnEdge, cellsOnCell, dcEdge, &
+                                          nCellsSolve, nSmoothingIterations, &
+                                          maxSlope, coriolis, meltK, err)
+               if (err /= 0) return
+            elseif (trim(slopeMethod) == 'polyfit') then
+               call calculate_slope_polyfit(domain, meshPool, geometryPool, &
+                                            shelfBaseSlope, lowerSurface, &
+                                            cellMask, nCellsSolve, &
+                                            slopeStencilRings, maxSlope, &
+                                            coriolis, meltK, err)
+               if (err /= 0) return
             else
-               ! No smoothing: copy raw slopes directly to slopeTmp
-               do iCell = 1, nCellsSolve
-                  slopeTmp(iCell) = shelfBaseSlope(iCell)
-               enddo
-            endif
-
-            ! Copy smoothed slopes back and apply cap, and compute diagnostics
-            nCellsCapped = 0
-            nCellsZeroSlope = 0
-            minSlope = 1.0e10_RKIND
-            maxSlopeBeforeCap = 0.0_RKIND
-            slopeSum_diag = 0.0_RKIND
-            nFloatingEdges = 0
-
-            do iCell = 1, nCellsSolve
-               if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
-                   li_mask_is_dynamic_ice(cellMask(iCell))) then
-                  nFloatingEdges = nFloatingEdges + 1
-
-                  ! Check if this cell will be capped
-                  if (slopeTmp(iCell) > maxSlope) then
-                     nCellsCapped = nCellsCapped + 1
-                     maxSlopeBeforeCap = max(maxSlopeBeforeCap, slopeTmp(iCell))
-                  endif
-
-                  ! Apply cap
-                  shelfBaseSlope(iCell) = min(slopeTmp(iCell), maxSlope)
-
-                  ! Accumulate for mean, check for zero
-                  slopeSum_diag = slopeSum_diag + shelfBaseSlope(iCell)
-
-                  if (shelfBaseSlope(iCell) == 0.0_RKIND) then
-                     nCellsZeroSlope = nCellsZeroSlope + 1
-                  else
-                     minSlope = min(minSlope, shelfBaseSlope(iCell))
-                  endif
-               endif
-            enddo
-
-            deallocate(slopeTmp)
-
-            ! Log slope statistics
-            call mpas_log_write("iceshelf_melt_ismip7: K=$r, spatially-varying sin(slope), |f|=$r", &
-               realArgs=(/meltK, coriolis/))
-            if (nSmoothingIterations > 0) then
-               call mpas_log_write("iceshelf_melt_ismip7: applied $i smoothing iteration(s)", &
-                  intArgs=(/nSmoothingIterations/))
-            else
-               call mpas_log_write("iceshelf_melt_ismip7: no smoothing applied (nSmoothingIterations=0)")
-            endif
-            call mpas_log_write("iceshelf_melt_ismip7: slope statistics:")
-            call mpas_log_write("  floating+dynamic cells: $i", intArgs=(/nFloatingEdges/))
-            if (nFloatingEdges > 0) then
-               meanSlope = slopeSum_diag / real(nFloatingEdges, RKIND)
-               call mpas_log_write("  mean slope: $r, min: $r", realArgs=(/meanSlope, minSlope/))
-               if (nCellsCapped > 0) then
-                  call mpas_log_write("  cells capped at $r: $i, max before cap: $r", &
-                     realArgs=(/maxSlope, real(nCellsCapped, RKIND), maxSlopeBeforeCap/))
-               else
-                  call mpas_log_write("  no cells exceeded max slope cap of $r", realArgs=(/maxSlope/))
-               endif
-               call mpas_log_write("  cells with zero slope: $i", intArgs=(/nCellsZeroSlope/))
+               call mpas_log_write("iceshelf_melt_ismip7: invalid config_ismip7_melt_slope_method='" // &
+                  trim(slopeMethod) // "'. Must be 'local' or 'polyfit'", MPAS_LOG_ERR)
+               err = ior(err, 1)
+               return
             endif
          endif
 
@@ -1898,6 +1771,603 @@ module li_iceshelf_melt
       enddo   ! associated(block)
 
     end subroutine iceshelf_melt_ismip7
+!-----------------------------------------------------------------------
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!  routine calculate_slope_local
+!
+!> \brief Calculate ice-shelf basal slopes using local edge-based method
+!> \author Matthew Hoffman
+!> \date   September 2024
+!> \details
+!>  This routine calculates ice-shelf basal slopes using the original
+!>  edge-based method with optional smoothing. Extracted from
+!>  iceshelf_melt_ismip7 for modularity when adding polynomial fit method.
+!
+!-----------------------------------------------------------------------
+   subroutine calculate_slope_local(domain, shelfBaseSlope, lowerSurface, &
+                                      cellMask, nEdgesOnCell, edgesOnCell, &
+                                      cellsOnEdge, cellsOnCell, dcEdge, &
+                                      nCellsSolve, nSmoothingIterations, &
+                                      maxSlope, coriolis, meltK, err)
+!-----------------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain
+      integer, intent(in) :: nCellsSolve
+      integer, intent(in) :: nSmoothingIterations
+      real (kind=RKIND), intent(in) :: maxSlope, coriolis, meltK
+      real (kind=RKIND), dimension(:), pointer :: lowerSurface
+      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: edgesOnCell, cellsOnEdge, cellsOnCell
+      real (kind=RKIND), dimension(:), pointer :: dcEdge
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      real (kind=RKIND), dimension(:), pointer :: shelfBaseSlope
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: err
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      integer :: iCell, iEdge, cell1, cell2, nFloatingEdges, iNeighbor, iSmooth
+      integer :: nCellsCapped, nCellsZeroSlope
+      real (kind=RKIND) :: slopeSum, edgeSlope
+      real (kind=RKIND) :: minSlope, maxSlopeBeforeCap, meanSlope, slopeSum_diag
+      real (kind=RKIND), allocatable, dimension(:) :: slopeTmp
+
+      err = 0
+
+      call mpas_log_write("iceshelf_melt_ismip7: using spatially-varying slopes " // &
+         "(WARNING: experimental feature with known stability issues from PR #48)")
+
+      ! Allocate temporary array for smoothing
+      allocate(slopeTmp(nCellsSolve))
+
+      ! Initialize slopes
+      shelfBaseSlope(:) = 0.0_RKIND
+      slopeTmp(:) = 0.0_RKIND
+
+      ! Calculate edge-based slopes and interpolate to cells
+      do iCell = 1, nCellsSolve
+         if (li_mask_is_floating_ice(cellMask(iCell))) then
+            nFloatingEdges = 0
+            slopeSum = 0.0_RKIND
+
+            do iEdge = 1, nEdgesOnCell(iCell)
+               cell1 = cellsOnEdge(1, edgesOnCell(iEdge, iCell))
+               cell2 = cellsOnEdge(2, edgesOnCell(iEdge, iCell))
+
+               ! Only use edges between two floating AND dynamic ice cells.
+               ! This avoids spuriously high slopes at the edge of the
+               ! dynamic domain, where margin cells may have artificial
+               ! geometry transitions (addresses PR #48 review comment).
+               if (cell1 > 0 .and. cell1 <= nCellsSolve .and. &
+                   cell2 > 0 .and. cell2 <= nCellsSolve) then
+                  if (li_mask_is_floating_ice(cellMask(cell1)) .and. &
+                      li_mask_is_floating_ice(cellMask(cell2)) .and. &
+                      li_mask_is_dynamic_ice(cellMask(cell1)) .and. &
+                      li_mask_is_dynamic_ice(cellMask(cell2))) then
+                     edgeSlope = abs(lowerSurface(cell1) - lowerSurface(cell2)) / &
+                                 dcEdge(edgesOnCell(iEdge, iCell))
+                     slopeSum = slopeSum + edgeSlope
+                     nFloatingEdges = nFloatingEdges + 1
+                  endif
+               endif
+            enddo
+
+            if (nFloatingEdges > 0) then
+               shelfBaseSlope(iCell) = slopeSum / real(nFloatingEdges, RKIND)
+            else
+               shelfBaseSlope(iCell) = 0.0_RKIND
+            endif
+         else
+            shelfBaseSlope(iCell) = 0.0_RKIND
+         endif
+      enddo
+
+      ! Smoothing passes: average with neighbors
+      if (nSmoothingIterations > 0) then
+         do iSmooth = 1, nSmoothingIterations
+            do iCell = 1, nCellsSolve
+               if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
+                   li_mask_is_dynamic_ice(cellMask(iCell))) then
+                  nFloatingEdges = 0
+                  slopeSum = shelfBaseSlope(iCell)
+
+                  do iEdge = 1, nEdgesOnCell(iCell)
+                     ! Use cellsOnCell for direct neighbor access
+                     iNeighbor = cellsOnCell(iEdge, iCell)
+
+                     ! Access both owned and halo cells for smoothing
+                     if (iNeighbor > 0) then
+                        if (li_mask_is_floating_ice(cellMask(iNeighbor)) .and. &
+                            li_mask_is_dynamic_ice(cellMask(iNeighbor))) then
+                           slopeSum = slopeSum + shelfBaseSlope(iNeighbor)
+                           nFloatingEdges = nFloatingEdges + 1
+                        endif
+                     endif
+                  enddo
+
+                  slopeTmp(iCell) = slopeSum / real(nFloatingEdges + 1, RKIND)
+               else
+                  slopeTmp(iCell) = 0.0_RKIND
+               endif
+            enddo
+
+            ! Copy back smoothed values to shelfBaseSlope
+            do iCell = 1, nCellsSolve
+               shelfBaseSlope(iCell) = slopeTmp(iCell)
+            enddo
+
+            ! Halo exchange after each smoothing pass (except the last)
+            ! This ensures neighbor values are up-to-date for the next iteration
+            if (iSmooth < nSmoothingIterations) then
+               call mpas_timer_start("halo updates")
+               call mpas_dmpar_field_halo_exch(domain, 'ismip7shelfMelt_shelfBaseSlope')
+               call mpas_timer_stop("halo updates")
+            endif
+         enddo
+      else
+         ! No smoothing: copy raw slopes directly to slopeTmp
+         do iCell = 1, nCellsSolve
+            slopeTmp(iCell) = shelfBaseSlope(iCell)
+         enddo
+      endif
+
+      ! Copy smoothed slopes back and apply cap, and compute diagnostics
+      nCellsCapped = 0
+      nCellsZeroSlope = 0
+      minSlope = 1.0e10_RKIND
+      maxSlopeBeforeCap = 0.0_RKIND
+      slopeSum_diag = 0.0_RKIND
+      nFloatingEdges = 0
+
+      do iCell = 1, nCellsSolve
+         if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
+             li_mask_is_dynamic_ice(cellMask(iCell))) then
+            nFloatingEdges = nFloatingEdges + 1
+
+            ! Check if this cell will be capped
+            if (slopeTmp(iCell) > maxSlope) then
+               nCellsCapped = nCellsCapped + 1
+               maxSlopeBeforeCap = max(maxSlopeBeforeCap, slopeTmp(iCell))
+            endif
+
+            ! Apply cap
+            shelfBaseSlope(iCell) = min(slopeTmp(iCell), maxSlope)
+
+            ! Accumulate for mean, check for zero
+            slopeSum_diag = slopeSum_diag + shelfBaseSlope(iCell)
+
+            if (shelfBaseSlope(iCell) == 0.0_RKIND) then
+               nCellsZeroSlope = nCellsZeroSlope + 1
+            else
+               minSlope = min(minSlope, shelfBaseSlope(iCell))
+            endif
+         endif
+      enddo
+
+      deallocate(slopeTmp)
+
+      ! Log slope statistics
+      call mpas_log_write("iceshelf_melt_ismip7: K=$r, spatially-varying sin(slope), |f|=$r", &
+         realArgs=(/meltK, coriolis/))
+      if (nSmoothingIterations > 0) then
+         call mpas_log_write("iceshelf_melt_ismip7: applied $i smoothing iteration(s)", &
+            intArgs=(/nSmoothingIterations/))
+      else
+         call mpas_log_write("iceshelf_melt_ismip7: no smoothing applied (nSmoothingIterations=0)")
+      endif
+      call mpas_log_write("iceshelf_melt_ismip7: slope statistics:")
+      call mpas_log_write("  floating+dynamic cells: $i", intArgs=(/nFloatingEdges/))
+      if (nFloatingEdges > 0) then
+         meanSlope = slopeSum_diag / real(nFloatingEdges, RKIND)
+         call mpas_log_write("  mean slope: $r, min: $r", realArgs=(/meanSlope, minSlope/))
+         if (nCellsCapped > 0) then
+            call mpas_log_write("  cells capped at $r: $i, max before cap: $r", &
+               realArgs=(/maxSlope, real(nCellsCapped, RKIND), maxSlopeBeforeCap/))
+         else
+            call mpas_log_write("  no cells exceeded max slope cap of $r", realArgs=(/maxSlope/))
+         endif
+         call mpas_log_write("  cells with zero slope: $i", intArgs=(/nCellsZeroSlope/))
+      endif
+
+   end subroutine calculate_slope_local
+!-----------------------------------------------------------------------
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!  routine calculate_slope_polyfit
+!
+!> \brief Calculate ice-shelf basal slopes using polynomial fit method
+!> \author Matthew Hoffman
+!> \date   September 2024
+!> \details
+!>  This routine calculates ice-shelf basal slopes using polynomial fit
+!>  over multi-ring stencils. More accurate than local method and requires
+!>  no smoothing. Computational cost is independent of stencil size.
+!
+!-----------------------------------------------------------------------
+   subroutine calculate_slope_polyfit(domain, meshPool, geometryPool, &
+                                       shelfBaseSlope, lowerSurface, &
+                                       cellMask, nCellsSolve, &
+                                       nRings, maxSlope, coriolis, meltK, err)
+!-----------------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain
+      type (mpas_pool_type), pointer :: meshPool, geometryPool
+      integer, intent(in) :: nCellsSolve, nRings
+      real (kind=RKIND), intent(in) :: maxSlope, coriolis, meltK
+      real (kind=RKIND), dimension(:), pointer :: lowerSurface
+      integer, dimension(:), pointer :: cellMask
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      real (kind=RKIND), dimension(:), pointer :: shelfBaseSlope
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: err
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      integer :: iCell, i, j, iStencil, nStencil
+      integer :: nHalos, nCells
+      integer :: nFloatingDynamic, nInsufficientStencil, nCellsCapped, nCellsZeroSlope
+      integer :: nCreepFillIterations, iterCreep, nFilledThisIter, nRemaining
+      real (kind=RKIND) :: slope_x, slope_y, slope_mag
+      real (kind=RKIND) :: minSlope, maxSlopeBeforeCap, meanSlope, slopeSum_diag
+      real (kind=RKIND) :: dx, dy
+      integer, parameter :: maxStencilSize = 100
+      integer, parameter :: minStencilSize = 3
+      integer, parameter :: polynomialOrder = 1
+      integer, parameter :: na = 3
+      real (kind=RKIND), parameter :: fallbackSlope = 0.001_RKIND
+      integer, dimension(maxStencilSize) :: stencilCells
+      real (kind=RKIND), dimension(maxStencilSize) :: fieldValues
+      real (kind=RKIND), dimension(maxStencilSize) :: xp, yp
+      real (kind=RKIND), dimension(maxStencilSize+1, na) :: amatrix, bmatrix
+      real (kind=RKIND), dimension(maxStencilSize+1, maxStencilSize+1) :: wmatrix
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: cellsOnCell
+      real (kind=RKIND), dimension(:), pointer :: xCell, yCell
+      integer, allocatable, dimension(:) :: validMask
+      real (kind=RKIND), allocatable, dimension(:) :: slopeTmp
+
+      err = 0
+
+      ! Validate stencil rings vs halo depth
+      call mpas_pool_get_dimension(meshPool, 'nHalos', nHalos)
+      if (nRings > nHalos) then
+         call mpas_log_write("iceshelf_melt_ismip7: polyfit slope method ERROR: " // &
+            "config_ismip7_melt_slope_stencil_rings ($i) exceeds mesh nHalos ($i)", &
+            MPAS_LOG_ERR, intArgs=(/nRings, nHalos/))
+         call mpas_log_write("  Standard MPAS meshes have nHalos=1. " // &
+            "Stencil construction beyond available halos will access invalid memory.", MPAS_LOG_ERR)
+         err = ior(err, 1)
+         return
+      endif
+
+      call mpas_log_write("iceshelf_melt_ismip7: using polynomial fit slopes (order=$i, stencil=$i rings)", &
+         intArgs=(/polynomialOrder, nRings/))
+
+      ! Get mesh arrays
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+      call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
+      call mpas_pool_get_array(meshPool, 'xCell', xCell)
+      call mpas_pool_get_array(meshPool, 'yCell', yCell)
+
+      ! Allocate working arrays
+      allocate(validMask(nCellsSolve))
+      allocate(slopeTmp(nCellsSolve))
+
+      ! Perform upfront halo exchanges for lowerSurface and cellMask
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'lowerSurface')
+      call mpas_dmpar_field_halo_exch(domain, 'cellMask')
+      call mpas_timer_stop("halo updates")
+
+      ! Initialize
+      shelfBaseSlope(:) = 0.0_RKIND
+      slopeTmp(:) = 0.0_RKIND
+      validMask(:) = -1
+      nInsufficientStencil = 0
+
+      ! Mark valid cells (floating+dynamic)
+      do iCell = 1, nCellsSolve
+         if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
+             li_mask_is_dynamic_ice(cellMask(iCell))) then
+            validMask(iCell) = 0
+         endif
+      enddo
+
+      ! Build stencils and compute slopes for owned cells only
+      do iCell = 1, nCellsSolve
+         if (validMask(iCell) /= 0) cycle
+
+         ! Build multi-ring stencil
+         call build_multiring_stencil(iCell, nRings, nEdgesOnCell, cellsOnCell, &
+                                       cellMask, nCells, stencilCells, nStencil)
+
+         if (nStencil < minStencilSize) then
+            nInsufficientStencil = nInsufficientStencil + 1
+            cycle
+         endif
+
+         ! Build local coordinate system and field values
+         do iStencil = 1, nStencil
+            j = stencilCells(iStencil)
+            dx = xCell(j) - xCell(iCell)
+            dy = yCell(j) - yCell(iCell)
+            xp(iStencil) = dx
+            yp(iStencil) = dy
+            fieldValues(iStencil) = lowerSurface(j)
+         enddo
+
+         ! Build polynomial fit matrices (order 1: planar)
+         amatrix = 0.0_RKIND
+         bmatrix = 0.0_RKIND
+         wmatrix = 0.0_RKIND
+
+         ! Center cell at (0,0)
+         amatrix(1,1) = 1.0_RKIND
+         wmatrix(1,1) = 1.0_RKIND
+
+         ! Stencil cells
+         do iStencil = 1, nStencil
+            amatrix(iStencil+1, 1) = 1.0_RKIND
+            amatrix(iStencil+1, 2) = xp(iStencil)
+            amatrix(iStencil+1, 3) = yp(iStencil)
+            wmatrix(iStencil+1, iStencil+1) = 1.0_RKIND
+         enddo
+
+         ! Call polynomial fit
+         call mpas_poly_fit_2(amatrix, bmatrix, wmatrix, nStencil+1, na, maxStencilSize+1)
+
+         ! Extract derivatives: slope_x and slope_y are coefficients of bmatrix row 2 and 3
+         slope_x = bmatrix(2, 1) * lowerSurface(iCell)
+         slope_y = bmatrix(3, 1) * lowerSurface(iCell)
+         do iStencil = 1, nStencil
+            j = stencilCells(iStencil)
+            slope_x = slope_x + bmatrix(2, iStencil+1) * lowerSurface(j)
+            slope_y = slope_y + bmatrix(3, iStencil+1) * lowerSurface(j)
+         enddo
+
+         ! Compute slope magnitude
+         slope_mag = sqrt(slope_x**2 + slope_y**2)
+         slopeTmp(iCell) = slope_mag
+         validMask(iCell) = 1
+      enddo
+
+      ! Creep fill for insufficient stencil cells
+      if (nInsufficientStencil > 0) then
+         call mpas_log_write("iceshelf_melt_ismip7: polyfit slope creep-filling $i cells with insufficient stencil", &
+            intArgs=(/nInsufficientStencil/))
+
+         nCreepFillIterations = 10
+         do iterCreep = 1, nCreepFillIterations
+            nFilledThisIter = 0
+
+            do iCell = 1, nCellsSolve
+               if (validMask(iCell) /= 0) cycle
+
+               ! Try to fill from valid neighbors
+               slope_mag = 0.0_RKIND
+               nStencil = 0
+               do i = 1, nEdgesOnCell(iCell)
+                  j = cellsOnCell(i, iCell)
+                  if (j > 0 .and. j <= nCells) then
+                     if (validMask(j) == 1) then
+                        slope_mag = slope_mag + slopeTmp(j)
+                        nStencil = nStencil + 1
+                     endif
+                  endif
+               enddo
+
+               if (nStencil > 0) then
+                  slopeTmp(iCell) = slope_mag / real(nStencil, RKIND)
+                  validMask(iCell) = 1
+                  nFilledThisIter = nFilledThisIter + 1
+               endif
+            enddo
+
+            ! Halo exchange between iterations (except last)
+            if (iterCreep < nCreepFillIterations .and. nFilledThisIter > 0) then
+               call mpas_timer_start("halo updates")
+               call mpas_dmpar_field_halo_exch(domain, 'ismip7shelfMelt_shelfBaseSlope')
+               call mpas_timer_stop("halo updates")
+            endif
+
+            ! Exit early if nothing filled
+            if (nFilledThisIter == 0) exit
+         enddo
+      endif
+
+      ! Apply hardcoded fallback to any remaining unfilled cells
+      nRemaining = 0
+      do iCell = 1, nCellsSolve
+         if (validMask(iCell) == 0) then
+            slopeTmp(iCell) = fallbackSlope
+            validMask(iCell) = 1
+            nRemaining = nRemaining + 1
+         endif
+      enddo
+
+      if (nRemaining > 0) then
+         call mpas_log_write("iceshelf_melt_ismip7: polyfit slope applied fallback ($r) to $i cells after creep fill", &
+            realArgs=(/fallbackSlope/), intArgs=(/nRemaining/))
+      endif
+
+      ! Apply cap and compute diagnostics
+      nCellsCapped = 0
+      nCellsZeroSlope = 0
+      minSlope = 1.0e10_RKIND
+      maxSlopeBeforeCap = 0.0_RKIND
+      slopeSum_diag = 0.0_RKIND
+      nFloatingDynamic = 0
+
+      do iCell = 1, nCellsSolve
+         if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
+             li_mask_is_dynamic_ice(cellMask(iCell))) then
+            nFloatingDynamic = nFloatingDynamic + 1
+
+            if (slopeTmp(iCell) > maxSlope) then
+               nCellsCapped = nCellsCapped + 1
+               maxSlopeBeforeCap = max(maxSlopeBeforeCap, slopeTmp(iCell))
+            endif
+
+            shelfBaseSlope(iCell) = min(slopeTmp(iCell), maxSlope)
+            slopeSum_diag = slopeSum_diag + shelfBaseSlope(iCell)
+
+            if (shelfBaseSlope(iCell) == 0.0_RKIND) then
+               nCellsZeroSlope = nCellsZeroSlope + 1
+            else
+               minSlope = min(minSlope, shelfBaseSlope(iCell))
+            endif
+         endif
+      enddo
+
+      deallocate(validMask, slopeTmp)
+
+      ! Log diagnostics
+      call mpas_log_write("iceshelf_melt_ismip7: K=$r, spatially-varying sin(slope), |f|=$r", &
+         realArgs=(/meltK, coriolis/))
+      call mpas_log_write("iceshelf_melt_ismip7: polyfit slope statistics:")
+      call mpas_log_write("  floating+dynamic cells: $i", intArgs=(/nFloatingDynamic/))
+      if (nFloatingDynamic > 0) then
+         meanSlope = slopeSum_diag / real(nFloatingDynamic, RKIND)
+         call mpas_log_write("  mean slope: $r, min: $r", realArgs=(/meanSlope, minSlope/))
+         if (nCellsCapped > 0) then
+            call mpas_log_write("  cells capped at $r: $i, max before cap: $r", &
+               realArgs=(/maxSlope, real(nCellsCapped, RKIND), maxSlopeBeforeCap/))
+         else
+            call mpas_log_write("  no cells exceeded max slope cap of $r", realArgs=(/maxSlope/))
+         endif
+         call mpas_log_write("  cells with zero slope: $i", intArgs=(/nCellsZeroSlope/))
+      endif
+      if (nInsufficientStencil > 0) then
+         call mpas_log_write("  cells requiring creep fill: $i", intArgs=(/nInsufficientStencil/))
+      endif
+
+   end subroutine calculate_slope_polyfit
+!-----------------------------------------------------------------------
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!  routine build_multiring_stencil
+!
+!> \brief Build multi-ring neighbor stencil for a cell
+!> \author Matthew Hoffman
+!> \date   September 2024
+!> \details
+!>  This routine builds a unique list of neighbor cells within nRings
+!>  rings of a center cell, applying floating+dynamic ice mask.
+!
+!-----------------------------------------------------------------------
+   subroutine build_multiring_stencil(iCellCenter, nRings, nEdgesOnCell, &
+                                      cellsOnCell, cellMask, nCells, &
+                                      stencilCells, nStencil)
+!-----------------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+      integer, intent(in) :: iCellCenter, nRings, nCells
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: cellsOnCell
+      integer, dimension(:), pointer :: cellMask
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: nStencil
+      integer, dimension(:), intent(out) :: stencilCells
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      integer :: iRing, i, iCell, jCell, nCurrentRing, nNextRing
+      integer, parameter :: maxRingSize = 100
+      integer, dimension(maxRingSize) :: currentRing, nextRing
+      type (mpas_hash_type) :: cell_hash
+
+      nStencil = 0
+
+      ! Initialize hash table for uniqueness
+      call mpas_hash_init(cell_hash)
+
+      ! Start with center cell's neighbors as ring 1
+      nCurrentRing = 0
+      do i = 1, nEdgesOnCell(iCellCenter)
+         jCell = cellsOnCell(i, iCellCenter)
+         if (jCell > 0 .and. jCell <= nCells) then
+            if (li_mask_is_floating_ice(cellMask(jCell)) .and. &
+                li_mask_is_dynamic_ice(cellMask(jCell))) then
+               if (.not. mpas_hash_search(cell_hash, jCell)) then
+                  nCurrentRing = nCurrentRing + 1
+                  currentRing(nCurrentRing) = jCell
+                  nStencil = nStencil + 1
+                  stencilCells(nStencil) = jCell
+                  call mpas_hash_insert(cell_hash, jCell)
+               endif
+            endif
+         endif
+      enddo
+
+      ! Expand to additional rings
+      do iRing = 2, nRings
+         nNextRing = 0
+
+         do i = 1, nCurrentRing
+            iCell = currentRing(i)
+
+            do j = 1, nEdgesOnCell(iCell)
+               jCell = cellsOnCell(j, iCell)
+               if (jCell > 0 .and. jCell <= nCells) then
+                  if (li_mask_is_floating_ice(cellMask(jCell)) .and. &
+                      li_mask_is_dynamic_ice(cellMask(jCell))) then
+                     if (.not. mpas_hash_search(cell_hash, jCell)) then
+                        nNextRing = nNextRing + 1
+                        nextRing(nNextRing) = jCell
+                        nStencil = nStencil + 1
+                        stencilCells(nStencil) = jCell
+                        call mpas_hash_insert(cell_hash, jCell)
+                     endif
+                  endif
+               endif
+            enddo
+         enddo
+
+         ! Move next ring to current ring for next iteration
+         nCurrentRing = nNextRing
+         do i = 1, nCurrentRing
+            currentRing(i) = nextRing(i)
+         enddo
+
+         ! Stop if no new cells found
+         if (nCurrentRing == 0) exit
+      enddo
+
+      call mpas_hash_destroy(cell_hash)
+
+   end subroutine build_multiring_stencil
 !-----------------------------------------------------------------------
 
 
