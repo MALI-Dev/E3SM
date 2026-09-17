@@ -1487,6 +1487,7 @@ module li_iceshelf_melt
       real (kind=RKIND), pointer :: constSalinity
       character (len=StrKIND), pointer :: salinitySource
       logical :: useDataSalinity
+      logical, pointer :: useSpatiallyVariableSlope
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: geometryPool, meshPool
       real (kind=RKIND), dimension(:,:), pointer :: TFocean3d, Socean3d
@@ -1499,7 +1500,13 @@ module li_iceshelf_melt
       real (kind=RKIND), dimension(:), pointer :: areaCell
       integer, dimension(:), pointer :: cellMask, indexToCellID
       integer, dimension(:), pointer :: connectedOceanMask
-      real (kind=RKIND) :: coef, wDeep, wShallow, TF_local
+      real (kind=RKIND), dimension(:), pointer :: shelfBaseSlope
+      integer, dimension(:), pointer :: nEdgesOnCell, edgesOnCell, cellsOnEdge
+      real (kind=RKIND), dimension(:), pointer :: dcEdge
+      integer :: iEdge, cell1, cell2, nFloatingEdges, iNeighbor
+      real (kind=RKIND) :: coef, wDeep, wShallow, TF_local, coefLocal
+      real (kind=RKIND) :: slopeSum, edgeSlope
+      real (kind=RKIND), allocatable, dimension(:) :: slopeTmp
 
       err = 0
 
@@ -1509,6 +1516,7 @@ module li_iceshelf_melt
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_coriolis', coriolis)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_salinity', constSalinity)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_salinity_source', salinitySource)
+      call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_spatially_variable_slope', useSpatiallyVariableSlope)
 
       if (coriolis <= 0.0_RKIND) then
          call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_coriolis must be positive", MPAS_LOG_ERR)
@@ -1575,14 +1583,20 @@ module li_iceshelf_melt
          ! against Eq. (1); do not "simplify" by dropping one of them.  (The
          ! protocol's own worked example takes 917 in the formula and 918 in
          ! the conversion, so they do not quite cancel there.)
-         coef = meltK * sinSlope * (rhosw / rhoi) &
-              * (cp_seawater / latent_heat_ice)**2 &
-              * haline_contraction_coeff &
-              * gravity / (2.0_RKIND * abs(coriolis)) &
-              * rhoi
+         !
+         ! When spatially-varying slope is disabled (default), calculate coef
+         ! once with the scalar slope.  When enabled, coef is calculated per
+         ! cell in the loop below.
+         if (.not. useSpatiallyVariableSlope) then
+            coef = meltK * sinSlope * (rhosw / rhoi) &
+                 * (cp_seawater / latent_heat_ice)**2 &
+                 * haline_contraction_coeff &
+                 * gravity / (2.0_RKIND * abs(coriolis)) &
+                 * rhoi
 
-         call mpas_log_write("iceshelf_melt_ismip7: K=$r, sin(slope)=$r, |f|=$r", &
-            realArgs=(/meltK, sinSlope, coriolis/))
+            call mpas_log_write("iceshelf_melt_ismip7: K=$r, sin(slope)=$r, |f|=$r", &
+               realArgs=(/meltK, sinSlope, coriolis/))
+         endif
 
          call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_3dThermalForcing', TFocean3d)
          call mpas_pool_get_array(geometryPool, 'ismip7shelfMelt_3dSalinity', Socean3d)
@@ -1596,7 +1610,102 @@ module li_iceshelf_melt
          call mpas_pool_get_array(geometryPool, 'connectedOceanMask', connectedOceanMask)
          call mpas_pool_get_array(geometryPool, 'ismip6shelfMelt_deltaT', deltaT)
 
+         ! Get additional field pointers needed for spatially-varying slope
+         if (useSpatiallyVariableSlope) then
+            call mpas_pool_get_array(geometryPool, 'ismip7shelfMelt_shelfBaseSlope', shelfBaseSlope)
+            call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+            call mpas_pool_get_array(meshPool, 'edgesOnCell', edgesOnCell)
+            call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
+            call mpas_pool_get_array(meshPool, 'dcEdge', dcEdge)
+         endif
+
          floatingBasalMassBal(:) = 0.0_RKIND
+
+         ! Calculate spatially-varying slopes if enabled
+         if (useSpatiallyVariableSlope) then
+            call mpas_log_write("iceshelf_melt_ismip7: using spatially-varying slopes " // &
+               "(WARNING: experimental feature with known stability issues from PR #48)")
+
+            ! Allocate temporary array for smoothing
+            allocate(slopeTmp(nCellsSolve))
+
+            ! Initialize slopes
+            shelfBaseSlope(:) = 0.0_RKIND
+            slopeTmp(:) = 0.0_RKIND
+
+            ! Calculate edge-based slopes and interpolate to cells
+            do iCell = 1, nCellsSolve
+               if (li_mask_is_floating_ice(cellMask(iCell))) then
+                  nFloatingEdges = 0
+                  slopeSum = 0.0_RKIND
+
+                  do iEdge = 1, nEdgesOnCell(iCell)
+                     cell1 = cellsOnEdge(1, edgesOnCell(iEdge, iCell))
+                     cell2 = cellsOnEdge(2, edgesOnCell(iEdge, iCell))
+
+                     ! Only use edges between two floating ice cells
+                     if (cell1 > 0 .and. cell2 > 0) then
+                        if (li_mask_is_floating_ice(cellMask(cell1)) .and. &
+                            li_mask_is_floating_ice(cellMask(cell2))) then
+                           edgeSlope = abs(lowerSurface(cell1) - lowerSurface(cell2)) / &
+                                       dcEdge(edgesOnCell(iEdge, iCell))
+                           slopeSum = slopeSum + edgeSlope
+                           nFloatingEdges = nFloatingEdges + 1
+                        endif
+                     endif
+                  enddo
+
+                  if (nFloatingEdges > 0) then
+                     shelfBaseSlope(iCell) = slopeSum / real(nFloatingEdges, RKIND)
+                  else
+                     shelfBaseSlope(iCell) = 0.0_RKIND
+                  endif
+               else
+                  shelfBaseSlope(iCell) = 0.0_RKIND
+               endif
+            enddo
+
+            ! Smoothing pass: average with neighbors
+            do iCell = 1, nCellsSolve
+               if (li_mask_is_floating_ice(cellMask(iCell))) then
+                  nFloatingEdges = 0
+                  slopeSum = shelfBaseSlope(iCell)
+
+                  do iEdge = 1, nEdgesOnCell(iCell)
+                     cell1 = cellsOnEdge(1, edgesOnCell(iEdge, iCell))
+                     cell2 = cellsOnEdge(2, edgesOnCell(iEdge, iCell))
+
+                     ! Find the neighbor cell
+                     if (cell1 == iCell) then
+                        iNeighbor = cell2
+                     else
+                        iNeighbor = cell1
+                     endif
+
+                     if (iNeighbor > 0 .and. iNeighbor <= nCellsSolve) then
+                        if (li_mask_is_floating_ice(cellMask(iNeighbor))) then
+                           slopeSum = slopeSum + shelfBaseSlope(iNeighbor)
+                           nFloatingEdges = nFloatingEdges + 1
+                        endif
+                     endif
+                  enddo
+
+                  slopeTmp(iCell) = slopeSum / real(nFloatingEdges + 1, RKIND)
+               else
+                  slopeTmp(iCell) = 0.0_RKIND
+               endif
+            enddo
+
+            ! Copy smoothed slopes back and apply cap
+            do iCell = 1, nCellsSolve
+               shelfBaseSlope(iCell) = min(slopeTmp(iCell), 0.01_RKIND)
+            enddo
+
+            deallocate(slopeTmp)
+
+            call mpas_log_write("iceshelf_melt_ismip7: K=$r, spatially-varying sin(slope), |f|=$r", &
+               realArgs=(/meltK, coriolis/))
+         endif
 
          ! Check zOcean for valid values
          if (minval(zOcean) >= 0.0_RKIND) then
@@ -1676,8 +1785,21 @@ module li_iceshelf_melt
                ! so the sign is flipped relative to the melt rate m.  Melting
                ! where TF > 0 and refreezing where TF < 0 follows from the
                ! |TF| TF factor keeping the sign of the local TF.
-               floatingBasalMassBal(iCell) = -1.0_RKIND * coef * Sdraft(iCell) &
-                  * abs(TF_local) * TF_local
+               if (useSpatiallyVariableSlope) then
+                  ! Calculate coef per cell using local slope
+                  coefLocal = meltK * shelfBaseSlope(iCell) * (rhosw / rhoi) &
+                            * (cp_seawater / latent_heat_ice)**2 &
+                            * haline_contraction_coeff &
+                            * gravity / (2.0_RKIND * abs(coriolis)) &
+                            * rhoi
+
+                  floatingBasalMassBal(iCell) = -1.0_RKIND * coefLocal * Sdraft(iCell) &
+                     * abs(TF_local) * TF_local
+               else
+                  ! Use uniform coef calculated outside loop
+                  floatingBasalMassBal(iCell) = -1.0_RKIND * coef * Sdraft(iCell) &
+                     * abs(TF_local) * TF_local
+               endif
 
             else
                TFdraft(iCell) = 0.0_RKIND

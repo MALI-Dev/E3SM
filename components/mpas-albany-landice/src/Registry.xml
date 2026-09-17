@@ -410,6 +410,10 @@
                             description="Magnitude of the Coriolis parameter used by the ISMIP7 local quadratic melt parameterization.  The protocol writes g/(2|f|) but its reference implementation uses a single constant, whose default here corresponds to about 74 degrees S, near the middle of the range spanned by Antarctic ice shelves.  |f| varies by only about 12 percent across those latitudes."
                             possible_values="Any positive real value"
                 />
+                <nml_option name="config_ismip7_melt_spatially_variable_slope" type="logical" default_value=".false." units="unitless"
+                            description="Whether the ISMIP7 local quadratic melt parameterization uses spatially-varying ice-shelf basal slopes instead of the uniform config_ismip7_melt_sin_slope value.  When .true., the slope is calculated at each cell from the ice geometry as the smoothed average of |dz/dx| on adjacent edges, capped at 0.01 (about 0.57 degrees).  When .false. (default), the parameterization uses the scalar config_ismip7_melt_sin_slope everywhere, matching the published protocol and avoiding slope-melt feedbacks.  WARNING: spatially-varying slopes were found to produce unstable behavior in testing (MALI-Dev/E3SM PR #48), specifically melting holes in ice shelves under increasing thermal forcing.  This option should be used with caution and only for experimental purposes."
+                            possible_values=".true. or .false."
+                />
                 <nml_option name="config_bmlt_float_flux" type="real" default_value="0.0" units="W m^-2"
 		            description="Value of the constant heat flux applied to the base of floating ice (positive upward)."
 		            possible_values="Any positive real value"
@@ -1614,6 +1618,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="ismip7shelfMelt_Sdraft" type="real" dimensions="nCells Time" units="PSU" packages="ismip7ShelfMelt"
                      description="practical salinity at the ice shelf draft used for the ISMIP7 local quadratic ice-shelf melting method, calculated by param."
+                />
+                <var name="ismip7shelfMelt_shelfBaseSlope" type="real" dimensions="nCells Time" units="unitless" packages="ismip7ShelfMelt"
+                     description="Local ice-shelf basal slope (sin(theta)) used in the ISMIP7 melt parameterization when config_ismip7_melt_spatially_variable_slope=.true.  Calculated as the smoothed average of |dz/dx| on adjacent cell edges, capped at 0.01.  When the spatially_variable_slope option is .false., this field is not computed."
                 />
                 <!-- Variables needed for ISMIP6 grounded face melt parameterization -->
                 <var name="frontAblationMask" type="integer" dimensions="nCells Time" time_levs="1"
