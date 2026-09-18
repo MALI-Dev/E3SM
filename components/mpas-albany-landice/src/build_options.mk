@@ -56,6 +56,7 @@ ifeq "$(FASTISOSTASY)" "true"
     FASTISOSTASY_LINK_LIBS += $(ROOT_DIR)/FastIsostasy/libisostasy/include/libisostasy.a
     FASTISOSTASY_LINK_LIBS += $(ROOT_DIR)/fesm-utils/utils/include-serial/libfesmutils.a
     FASTISOSTASY_LINK_LIBS += $(ROOT_DIR)/fesm-utils/fftw-serial/lib/libfftw3.a
+    override LIBS += $(FASTISOSTASY_LINK_LIBS)
 endif
 
 # ===================================
