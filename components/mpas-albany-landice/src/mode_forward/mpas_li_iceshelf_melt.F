@@ -1482,7 +1482,7 @@ module li_iceshelf_melt
       ! local variables
       !-----------------------------------------------------------------
       integer :: iCell, ksup, kinf, kk
-      integer, pointer :: nOceanLayers, nCellsSolve
+      integer, pointer :: nOceanLayers, nCellsSolve, nCells
       real (kind=RKIND), pointer :: rhoi, rhosw
       real (kind=RKIND), pointer :: sinSlope, coriolis
       real (kind=RKIND), pointer :: meltK
@@ -1538,6 +1538,12 @@ module li_iceshelf_melt
          return
       endif
 
+      if (maxSlope <= 0.0_RKIND) then
+         call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_max_slope must be positive", MPAS_LOG_ERR)
+         err = ior(err, 1)
+         return
+      endif
+
       if (coriolis <= 0.0_RKIND) then
          call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_coriolis must be positive", MPAS_LOG_ERR)
          err = ior(err, 1)
@@ -1574,6 +1580,7 @@ module li_iceshelf_melt
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
 
          call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
+         call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
          call mpas_pool_get_dimension(meshPool, 'nISMIP6OceanLayers', nOceanLayers)
          call mpas_pool_get_array(meshPool, 'indexToCellID', indexToCellID)
 
@@ -1649,7 +1656,7 @@ module li_iceshelf_melt
                call calculate_slope_local(domain, shelfBaseSlope, lowerSurface, &
                                           cellMask, nEdgesOnCell, edgesOnCell, &
                                           cellsOnEdge, cellsOnCell, dcEdge, &
-                                          nCellsSolve, nSmoothingIterations, &
+                                          nCellsSolve, nCells, nSmoothingIterations, &
                                           maxSlope, coriolis, meltK, err)
                if (err /= 0) return
             elseif (trim(slopeMethod) == 'polyfit') then
@@ -1789,7 +1796,7 @@ module li_iceshelf_melt
    subroutine calculate_slope_local(domain, shelfBaseSlope, lowerSurface, &
                                       cellMask, nEdgesOnCell, edgesOnCell, &
                                       cellsOnEdge, cellsOnCell, dcEdge, &
-                                      nCellsSolve, nSmoothingIterations, &
+                                      nCellsSolve, nCells, nSmoothingIterations, &
                                       maxSlope, coriolis, meltK, err)
 !-----------------------------------------------------------------------
 
@@ -1797,7 +1804,7 @@ module li_iceshelf_melt
       ! input variables
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: domain
-      integer, intent(in) :: nCellsSolve
+      integer, intent(in) :: nCellsSolve, nCells
       integer, intent(in) :: nSmoothingIterations
       real (kind=RKIND), intent(in) :: maxSlope, coriolis, meltK
       real (kind=RKIND), dimension(:), pointer :: lowerSurface
@@ -1851,8 +1858,12 @@ module li_iceshelf_melt
                ! This avoids spuriously high slopes at the edge of the
                ! dynamic domain, where margin cells may have artificial
                ! geometry transitions (addresses PR #48 review comment).
-               if (cell1 > 0 .and. cell1 <= nCellsSolve .and. &
-                   cell2 > 0 .and. cell2 <= nCellsSolve) then
+               ! Halo cells (indices > nCellsSolve but <= nCells) are
+               ! included so that edges crossing MPI partition boundaries
+               ! are treated the same as interior edges, keeping the
+               ! computed slope decomposition-independent.
+               if (cell1 > 0 .and. cell1 <= nCells .and. &
+                   cell2 > 0 .and. cell2 <= nCells) then
                   if (li_mask_is_floating_ice(cellMask(cell1)) .and. &
                       li_mask_is_floating_ice(cellMask(cell2)) .and. &
                       li_mask_is_dynamic_ice(cellMask(cell1)) .and. &
@@ -2028,7 +2039,7 @@ module li_iceshelf_melt
       ! local variables
       !-----------------------------------------------------------------
       integer :: iCell, i, j, iStencil, nStencil
-      integer :: nHalos, nCells
+      integer, pointer :: nHalos, nCells
       integer :: nFloatingDynamic, nInsufficientStencil, nCellsCapped, nCellsZeroSlope
       integer :: nCreepFillIterations, iterCreep, nFilledThisIter, nRemaining
       real (kind=RKIND) :: slope_x, slope_y, slope_mag
@@ -2074,9 +2085,12 @@ module li_iceshelf_melt
       call mpas_pool_get_array(meshPool, 'xCell', xCell)
       call mpas_pool_get_array(meshPool, 'yCell', yCell)
 
-      ! Allocate working arrays
-      allocate(validMask(nCellsSolve))
-      allocate(slopeTmp(nCellsSolve))
+      ! Allocate working arrays. Sized to nCells (not just nCellsSolve) because
+      ! creep-fill and stencil-building below index these arrays using halo
+      ! cell IDs (which can be as large as nCells), so a size limited to
+      ! nCellsSolve would read/write out of bounds for halo cells.
+      allocate(validMask(nCells))
+      allocate(slopeTmp(nCells))
 
       ! Perform upfront halo exchanges for lowerSurface and cellMask
       call mpas_timer_start("halo updates")
@@ -2090,8 +2104,9 @@ module li_iceshelf_melt
       validMask(:) = -1
       nInsufficientStencil = 0
 
-      ! Mark valid cells (floating+dynamic)
-      do iCell = 1, nCellsSolve
+      ! Mark valid cells (floating+dynamic), including halo cells, since
+      ! they may be referenced as neighbors of owned cells below.
+      do iCell = 1, nCells
          if (li_mask_is_floating_ice(cellMask(iCell)) .and. &
              li_mask_is_dynamic_ice(cellMask(iCell))) then
             validMask(iCell) = 0
@@ -2303,10 +2318,10 @@ module li_iceshelf_melt
       !-----------------------------------------------------------------
       ! local variables
       !-----------------------------------------------------------------
-      integer :: iRing, i, iCell, jCell, nCurrentRing, nNextRing
+      integer :: iRing, i, j, iCell, jCell, nCurrentRing, nNextRing
       integer, parameter :: maxRingSize = 100
       integer, dimension(maxRingSize) :: currentRing, nextRing
-      type (mpas_hash_type) :: cell_hash
+      type (hashtable) :: cell_hash
 
       nStencil = 0
 
