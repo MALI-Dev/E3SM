@@ -2023,18 +2023,18 @@ module li_iceshelf_melt
       type (mpas_pool_type), pointer, intent(in) :: meshPool, geometryPool
       integer, intent(in) :: nCellsSolve, nRings, nHalos
       real (kind=RKIND), intent(in) :: maxSlope, coriolis, meltK
-      real (kind=RKIND), dimension(:), pointer, intent(in) :: lowerSurface
-      integer, dimension(:), pointer, intent(in) :: cellMask
+      real (kind=RKIND), dimension(:), intent(in) :: lowerSurface
+      integer, dimension(:), intent(in) :: cellMask
 
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: domain
-      real (kind=RKIND), dimension(:), pointer, intent(inout) :: shelfBaseSlope
 
       !-----------------------------------------------------------------
       ! output variables
       !-----------------------------------------------------------------
+      real (kind=RKIND), dimension(:), intent(out) :: shelfBaseSlope
       integer, intent(out) :: err
 
       !-----------------------------------------------------------------
@@ -2301,9 +2301,9 @@ module li_iceshelf_melt
       ! input variables
       !-----------------------------------------------------------------
       integer, intent(in) :: iCellCenter, nRings, nCells
-      integer, dimension(:), pointer :: nEdgesOnCell
-      integer, dimension(:,:), pointer :: cellsOnCell
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:) :: nEdgesOnCell
+      integer, dimension(:,:) :: cellsOnCell
+      integer, dimension(:) :: cellMask
 
       !-----------------------------------------------------------------
       ! output variables
