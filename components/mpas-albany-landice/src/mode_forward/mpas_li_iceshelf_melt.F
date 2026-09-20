@@ -2020,17 +2020,17 @@ module li_iceshelf_melt
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
-      type (domain_type), intent(inout) :: domain
-      type (mpas_pool_type), pointer :: meshPool, geometryPool
+      type (mpas_pool_type), pointer, intent(in) :: meshPool, geometryPool
       integer, intent(in) :: nCellsSolve, nRings, nHalos
       real (kind=RKIND), intent(in) :: maxSlope, coriolis, meltK
-      real (kind=RKIND), dimension(:), pointer :: lowerSurface
-      integer, dimension(:), pointer :: cellMask
+      real (kind=RKIND), dimension(:), pointer, intent(in) :: lowerSurface
+      integer, dimension(:), pointer, intent(in) :: cellMask
 
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
-      real (kind=RKIND), dimension(:), pointer :: shelfBaseSlope
+      type (domain_type), intent(inout) :: domain
+      real (kind=RKIND), dimension(:), pointer, intent(inout) :: shelfBaseSlope
 
       !-----------------------------------------------------------------
       ! output variables
@@ -2093,12 +2093,6 @@ module li_iceshelf_melt
       ! nCellsSolve would read/write out of bounds for halo cells.
       allocate(validMask(nCells))
       allocate(slopeTmp(nCells))
-
-      ! Perform upfront halo exchanges for lowerSurface and cellMask
-      call mpas_timer_start("halo updates")
-      call mpas_dmpar_field_halo_exch(domain, 'lowerSurface')
-      call mpas_dmpar_field_halo_exch(domain, 'cellMask')
-      call mpas_timer_stop("halo updates")
 
       ! Initialize
       shelfBaseSlope(:) = 0.0_RKIND
