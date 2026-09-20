@@ -1492,6 +1492,7 @@ module li_iceshelf_melt
       character (len=StrKIND), pointer :: salinitySource
       character (len=StrKIND), pointer :: slopeMethod
       integer, pointer :: slopeStencilRings
+      integer, pointer :: config_num_halos
       logical :: useDataSalinity
       logical, pointer :: useSpatiallyVariableSlope
       type (block_type), pointer :: block
@@ -1530,6 +1531,7 @@ module li_iceshelf_melt
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_slope_smoothing_iterations', nSmoothingIterations)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_slope_method', slopeMethod)
       call mpas_pool_get_config(liConfigs, 'config_ismip7_melt_slope_stencil_rings', slopeStencilRings)
+      call mpas_pool_get_config(liConfigs, 'config_num_halos', config_num_halos)
 
       if (nSmoothingIterations < 0) then
          call mpas_log_write("iceshelf_melt_ismip7: config_ismip7_melt_slope_smoothing_iterations must be " // &
@@ -1663,7 +1665,7 @@ module li_iceshelf_melt
                call calculate_slope_polyfit(domain, meshPool, geometryPool, &
                                             shelfBaseSlope, lowerSurface, &
                                             cellMask, nCellsSolve, &
-                                            slopeStencilRings, maxSlope, &
+                                            slopeStencilRings, config_num_halos, maxSlope, &
                                             coriolis, meltK, err)
                if (err /= 0) return
             else
@@ -2012,7 +2014,7 @@ module li_iceshelf_melt
    subroutine calculate_slope_polyfit(domain, meshPool, geometryPool, &
                                        shelfBaseSlope, lowerSurface, &
                                        cellMask, nCellsSolve, &
-                                       nRings, maxSlope, coriolis, meltK, err)
+                                       nRings, nHalos, maxSlope, coriolis, meltK, err)
 !-----------------------------------------------------------------------
 
       !-----------------------------------------------------------------
@@ -2020,7 +2022,7 @@ module li_iceshelf_melt
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: domain
       type (mpas_pool_type), pointer :: meshPool, geometryPool
-      integer, intent(in) :: nCellsSolve, nRings
+      integer, intent(in) :: nCellsSolve, nRings, nHalos
       real (kind=RKIND), intent(in) :: maxSlope, coriolis, meltK
       real (kind=RKIND), dimension(:), pointer :: lowerSurface
       integer, dimension(:), pointer :: cellMask
@@ -2039,7 +2041,7 @@ module li_iceshelf_melt
       ! local variables
       !-----------------------------------------------------------------
       integer :: iCell, i, j, iStencil, nStencil
-      integer, pointer :: nHalos, nCells
+      integer, pointer :: nCells
       integer :: nFloatingDynamic, nInsufficientStencil, nCellsCapped, nCellsZeroSlope
       integer :: nCreepFillIterations, iterCreep, nFilledThisIter, nRemaining
       real (kind=RKIND) :: slope_x, slope_y, slope_mag
@@ -2063,14 +2065,14 @@ module li_iceshelf_melt
 
       err = 0
 
-      ! Validate stencil rings vs halo depth
-      call mpas_pool_get_dimension(meshPool, 'nHalos', nHalos)
+      ! Validate stencil rings vs halo depth (config_num_halos, passed in
+      ! as nHalos, since 'nHalos' is not a registered mesh-pool dimension)
       if (nRings > nHalos) then
          call mpas_log_write("iceshelf_melt_ismip7: polyfit slope method ERROR: " // &
-            "config_ismip7_melt_slope_stencil_rings ($i) exceeds mesh nHalos ($i)", &
+            "config_ismip7_melt_slope_stencil_rings ($i) exceeds config_num_halos ($i)", &
             MPAS_LOG_ERR, intArgs=(/nRings, nHalos/))
-         call mpas_log_write("  Standard MPAS meshes have nHalos=1. " // &
-            "Stencil construction beyond available halos will access invalid memory.", MPAS_LOG_ERR)
+         call mpas_log_write("  Reduce config_ismip7_melt_slope_stencil_rings or increase " // &
+            "config_num_halos.  Stencil construction beyond available halos will access invalid memory.", MPAS_LOG_ERR)
          err = ior(err, 1)
          return
       endif
