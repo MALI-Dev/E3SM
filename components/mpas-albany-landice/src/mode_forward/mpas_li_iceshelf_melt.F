@@ -2043,6 +2043,8 @@ module li_iceshelf_melt
       integer :: iCell, i, j, iStencil, nStencil
       integer, pointer :: nCells
       integer :: nFloatingDynamic, nInsufficientStencil, nCellsCapped, nCellsZeroSlope
+      integer :: nStencilTruncated
+      logical :: stencilTruncated
       integer :: nCreepFillIterations, iterCreep, nFilledThisIter, nRemaining
       real (kind=RKIND) :: slope_x, slope_y, slope_mag
       real (kind=RKIND) :: minSlope, maxSlopeBeforeCap, meanSlope, slopeSum_diag
@@ -2055,7 +2057,15 @@ module li_iceshelf_melt
       integer, dimension(maxStencilSize) :: stencilCells
       real (kind=RKIND), dimension(maxStencilSize) :: fieldValues
       real (kind=RKIND), dimension(maxStencilSize) :: xp, yp
-      real (kind=RKIND), dimension(maxStencilSize+1, na) :: amatrix, bmatrix
+      ! amatrix/bmatrix must be square (ne,ne), matching wmatrix and the
+      ! explicit-shape dummy args a_in/b_out in mpas_poly_fit_2 (which are
+      ! declared dimension(ne,ne)).  Declaring them (maxStencilSize+1, na)
+      ! undersizes the actual argument memory: mpas_poly_fit_2 writes
+      ! b_out(1:n,1:m) with m up to nStencil+1 (can exceed na=3), which
+      ! silently overflowed past the end of bmatrix and corrupted adjacent
+      ! stack variables -- the root cause of the "lowerSurface index above
+      ! upper bound of 0" crash seen downstream in calculate_slope_polyfit.
+      real (kind=RKIND), dimension(maxStencilSize+1, maxStencilSize+1) :: amatrix, bmatrix
       real (kind=RKIND), dimension(maxStencilSize+1, maxStencilSize+1) :: wmatrix
       integer, dimension(:), pointer :: nEdgesOnCell
       integer, dimension(:,:), pointer :: cellsOnCell
@@ -2087,6 +2097,20 @@ module li_iceshelf_melt
       call mpas_pool_get_array(meshPool, 'xCell', xCell)
       call mpas_pool_get_array(meshPool, 'yCell', yCell)
 
+      ! Defensive check: lowerSurface, cellMask, and shelfBaseSlope must all
+      ! be sized consistently with this block's nCells/nCellsSolve.  A
+      ! mismatch here (e.g. from a stale or unassociated pool pointer) would
+      ! otherwise surface downstream as an opaque out-of-bounds crash with no
+      ! indication of which array or block was at fault.
+      if (size(lowerSurface) < nCells .or. size(cellMask) < nCells .or. &
+          size(shelfBaseSlope) < nCellsSolve) then
+         call mpas_log_write("iceshelf_melt_ismip7: polyfit slope method ERROR: array size mismatch. " // &
+            "nCells=$i nCellsSolve=$i size(lowerSurface)=$i size(cellMask)=$i size(shelfBaseSlope)=$i", &
+            MPAS_LOG_ERR, intArgs=(/nCells, nCellsSolve, size(lowerSurface), size(cellMask), size(shelfBaseSlope)/))
+         err = ior(err, 1)
+         return
+      endif
+
       ! Allocate working arrays. Sized to nCells (not just nCellsSolve) because
       ! creep-fill and stencil-building below index these arrays using halo
       ! cell IDs (which can be as large as nCells), so a size limited to
@@ -2099,6 +2123,7 @@ module li_iceshelf_melt
       slopeTmp(:) = 0.0_RKIND
       validMask(:) = -1
       nInsufficientStencil = 0
+      nStencilTruncated = 0
 
       ! Mark valid cells (floating+dynamic), including halo cells, since
       ! they may be referenced as neighbors of owned cells below.
@@ -2115,7 +2140,11 @@ module li_iceshelf_melt
 
          ! Build multi-ring stencil
          call build_multiring_stencil(iCell, nRings, nEdgesOnCell, cellsOnCell, &
-                                       cellMask, nCells, stencilCells, nStencil)
+                                       cellMask, nCells, stencilCells, nStencil, stencilTruncated)
+
+         if (stencilTruncated) then
+            nStencilTruncated = nStencilTruncated + 1
+         endif
 
          if (nStencil < minStencilSize) then
             nInsufficientStencil = nInsufficientStencil + 1
@@ -2276,6 +2305,13 @@ module li_iceshelf_melt
       if (nInsufficientStencil > 0) then
          call mpas_log_write("  cells requiring creep fill: $i", intArgs=(/nInsufficientStencil/))
       endif
+      if (nStencilTruncated > 0) then
+         call mpas_log_write("  WARNING: $i cells had a stencil that exceeded the " // &
+            "maxStencilSize/maxRingSize buffer ($i cells) and was truncated; their slope " // &
+            "estimate used an incomplete neighbor set.  Consider increasing maxStencilSize " // &
+            "in calculate_slope_polyfit if this count is large.", &
+            MPAS_LOG_WARN, intArgs=(/nStencilTruncated, maxStencilSize/))
+      endif
 
    end subroutine calculate_slope_polyfit
 !-----------------------------------------------------------------------
@@ -2294,7 +2330,7 @@ module li_iceshelf_melt
 !-----------------------------------------------------------------------
    subroutine build_multiring_stencil(iCellCenter, nRings, nEdgesOnCell, &
                                       cellsOnCell, cellMask, nCells, &
-                                      stencilCells, nStencil)
+                                      stencilCells, nStencil, truncated)
 !-----------------------------------------------------------------------
 
       !-----------------------------------------------------------------
@@ -2310,16 +2346,26 @@ module li_iceshelf_melt
       !-----------------------------------------------------------------
       integer, intent(out) :: nStencil
       integer, dimension(:), intent(out) :: stencilCells
+      ! Set to .true. if the stencil or ring-expansion buffers filled up
+      ! before all in-range neighbors could be added (see maxStencilSize
+      ! below), so the caller knows the returned stencil may be incomplete.
+      logical, intent(out) :: truncated
 
       !-----------------------------------------------------------------
       ! local variables
       !-----------------------------------------------------------------
       integer :: iRing, i, j, iCell, jCell, nCurrentRing, nNextRing
+      integer :: maxStencilSize
       integer, parameter :: maxRingSize = 100
       integer, dimension(maxRingSize) :: currentRing, nextRing
       type (hashtable) :: cell_hash
 
       nStencil = 0
+      truncated = .false.
+      ! stencilCells is caller-allocated (maxStencilSize in
+      ! calculate_slope_polyfit); use its actual size here so the two stay
+      ! in sync and this routine never writes past it.
+      maxStencilSize = size(stencilCells)
 
       ! Initialize hash table for uniqueness
       call mpas_hash_init(cell_hash)
@@ -2332,6 +2378,10 @@ module li_iceshelf_melt
             if (li_mask_is_floating_ice(cellMask(jCell)) .and. &
                 li_mask_is_dynamic_ice(cellMask(jCell))) then
                if (.not. mpas_hash_search(cell_hash, jCell)) then
+                  if (nStencil >= maxStencilSize .or. nCurrentRing >= maxRingSize) then
+                     truncated = .true.
+                     cycle
+                  endif
                   nCurrentRing = nCurrentRing + 1
                   currentRing(nCurrentRing) = jCell
                   nStencil = nStencil + 1
@@ -2355,6 +2405,10 @@ module li_iceshelf_melt
                   if (li_mask_is_floating_ice(cellMask(jCell)) .and. &
                       li_mask_is_dynamic_ice(cellMask(jCell))) then
                      if (.not. mpas_hash_search(cell_hash, jCell)) then
+                        if (nStencil >= maxStencilSize .or. nNextRing >= maxRingSize) then
+                           truncated = .true.
+                           cycle
+                        endif
                         nNextRing = nNextRing + 1
                         nextRing(nNextRing) = jCell
                         nStencil = nStencil + 1
