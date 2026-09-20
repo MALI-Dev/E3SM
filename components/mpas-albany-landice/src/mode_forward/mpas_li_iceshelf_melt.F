@@ -2047,6 +2047,7 @@ module li_iceshelf_melt
       logical :: stencilTruncated
       integer :: nCreepFillIterations, iterCreep, nFilledThisIter, nRemaining
       real (kind=RKIND) :: slope_x, slope_y, slope_mag
+      real (kind=RKIND) :: sumXX, sumYY, sumXY
       real (kind=RKIND) :: minSlope, maxSlopeBeforeCap, meanSlope, slopeSum_diag
       real (kind=RKIND) :: dx, dy
       integer, parameter :: maxStencilSize = 100
@@ -2160,6 +2161,20 @@ module li_iceshelf_melt
             yp(iStencil) = dy
             fieldValues(iStencil) = lowerSurface(j)
          enddo
+
+         ! Reject stencils whose points are (nearly) collinear through the
+         ! center cell: the order-1 fit's normal equations are singular in
+         ! that case (e.g. a one-cell-wide ice tongue/channel, where every
+         ! in-range neighbor lies along the same line), and mpas_poly_fit_2
+         ! would divide by a zero pivot in mpas_migs, raising SIGFPE.
+         ! Treat these like an insufficient stencil and creep-fill instead.
+         sumXX = sum(xp(1:nStencil)**2)
+         sumYY = sum(yp(1:nStencil)**2)
+         sumXY = sum(xp(1:nStencil) * yp(1:nStencil))
+         if ((sumXX * sumYY - sumXY**2) <= 1.0e-6_RKIND * sumXX * sumYY) then
+            nInsufficientStencil = nInsufficientStencil + 1
+            cycle
+         endif
 
          ! Build polynomial fit matrices (order 1: planar)
          amatrix = 0.0_RKIND
