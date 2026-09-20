@@ -1809,16 +1809,16 @@ module li_iceshelf_melt
       integer, intent(in) :: nCellsSolve, nCells
       integer, intent(in) :: nSmoothingIterations
       real (kind=RKIND), intent(in) :: maxSlope, coriolis, meltK
-      real (kind=RKIND), dimension(:), pointer :: lowerSurface
-      integer, dimension(:), pointer :: cellMask
-      integer, dimension(:), pointer :: nEdgesOnCell
-      integer, dimension(:,:), pointer :: edgesOnCell, cellsOnEdge, cellsOnCell
-      real (kind=RKIND), dimension(:), pointer :: dcEdge
+      real (kind=RKIND), dimension(:), intent(in) :: lowerSurface
+      integer, dimension(:), intent(in) :: cellMask
+      integer, dimension(:), intent(in) :: nEdgesOnCell
+      integer, dimension(:,:), intent(in) :: edgesOnCell, cellsOnEdge, cellsOnCell
+      real (kind=RKIND), dimension(:), intent(in) :: dcEdge
 
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
-      real (kind=RKIND), dimension(:), pointer :: shelfBaseSlope
+      real (kind=RKIND), dimension(:), intent(inout) :: shelfBaseSlope
 
       !-----------------------------------------------------------------
       ! output variables
@@ -2301,9 +2301,9 @@ module li_iceshelf_melt
       ! input variables
       !-----------------------------------------------------------------
       integer, intent(in) :: iCellCenter, nRings, nCells
-      integer, dimension(:) :: nEdgesOnCell
-      integer, dimension(:,:) :: cellsOnCell
-      integer, dimension(:) :: cellMask
+      integer, dimension(:), intent(in) :: nEdgesOnCell
+      integer, dimension(:,:), intent(in) :: cellsOnCell
+      integer, dimension(:), intent(in) :: cellMask
 
       !-----------------------------------------------------------------
       ! output variables
