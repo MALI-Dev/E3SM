@@ -944,10 +944,6 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_fastisostasy_grid_resolution', config_fastisostasy_grid_resolution)
       call mpas_pool_get_config(liConfigs, 'config_fastisostasy_parameter_file', config_fastisostasy_parameter_file)
 
-      ! config_fastisostasy_grid_resolution has no physically valid default: an unset (<=0) value must
-      ! abort here rather than fall back to some assumed spacing, because a wrong-but-plausible-looking
-      ! value would not necessarily fail loudly (see Registry.xml description for how this can silently
-      ! either exhaust memory or under-pad the domain).
       if (config_fastisostasy_grid_resolution <= 0.0_RKIND) then
          call mpas_log_write("config_fastisostasy_grid_resolution must be set to the physical grid " // &
               "spacing (in meters) of the regular grid defined by config_MALI_to_FASTISOSTASY_weights_file " // &
@@ -999,12 +995,7 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_fastisostasy_restart_file', config_fastisostasy_restart_file)
       call mpas_pool_get_config(liConfigs, 'config_fastisostasy_bsl_restart_file', config_fastisostasy_bsl_restart_file)
 
-      ! Determine FastIsostasy's own coupling-step counter and internal clock. On a
-      ! restart these must resume where the previous run left off (recomputed from
-      ! elapsed simulation time, the same way find_slm_restart_timestep does for the
-      ! sea-level model) rather than restarting FastIsostasy's clock at year zero,
-      ! which is what isos_init_state/isos_update use to decide whether prognostic
-      ! bsl/volume bookkeeping should advance on the first post-restart call.
+      ! Determine FastIsostasy's own coupling-step counter and internal clock.
       if (config_do_restart) then
          call find_fastisostasy_restart_timestep(meshPool, fastisostasyTimeStep, err_tmp)
          err = ior(err, err_tmp)
@@ -1093,16 +1084,6 @@ contains
                            nFastIsostasyX, nFastIsostasyY, fastisostasyDx, fastisostasyDy)
 
             if (config_do_restart) then
-               ! Override whatever the static FastIsostasy parameter file says about
-               ! 'restart': config_do_restart (MALI's own restart flag) is the single
-               ! source of truth here, and the restart file is the one MALI itself
-               ! wrote in lockstep with its own restart stream (li_bedtopo_write_restart).
-               ! isos_init_state (called below) reads this file and restores the
-               ! viscous displacement, its ODE state, and the load reference state,
-               ! instead of re-deriving the reference state from the current
-               ! (restart-time) bedTopography/thickness -- which would otherwise make
-               ! FastIsostasy treat the solid Earth as already in equilibrium with
-               ! today's load, discarding all outstanding viscous relaxation.
                isosFastIsostasy%par%restart = trim(config_fastisostasy_restart_file)
                isosFastIsostasy%par%use_restart = .true.
                call bsl_restart_read(bslFastIsostasy, trim(config_fastisostasy_bsl_restart_file))
