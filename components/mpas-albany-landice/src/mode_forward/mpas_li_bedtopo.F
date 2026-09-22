@@ -1150,6 +1150,7 @@ contains
    subroutine fastisostasy_solve(fastisostasyTimeStep, domain)
 
       use li_advection, only: li_update_geometry
+      use isos_utils, only: in2out
 
       integer, intent(in) :: fastisostasyTimeStep
       type (domain_type), intent(inout) :: domain
@@ -1169,6 +1170,7 @@ contains
       real (kind=wp), dimension(:,:), allocatable :: thicknessFastIsostasy2D
       real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasy2D
       real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasyUpdated2D
+      real (kind=wp), dimension(:,:), allocatable :: zssRefFastIsostasy2D
       real (kind=wp), dimension(:), allocatable :: topoChangeFastIsostasy1D
       real (kind=wp) :: fastisostasyTime
       integer, dimension(:), pointer :: cellMask
@@ -1199,6 +1201,7 @@ contains
          allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          allocate(bedtopoFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          allocate(bedtopoFastIsostasyUpdated2D(nFastIsostasyX,nFastIsostasyY))
+         allocate(zssRefFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          meshMask(:) = 0.0_RKIND
          thicknessFastIsostasy1D(:) = 0.0_RKIND
          bedtopoFastIsostasy1D(:) = 0.0_RKIND
@@ -1236,7 +1239,10 @@ contains
          fastisostasyTime = real(fastisostasyTimeStep * config_fastisostasy_coupling_interval, wp)
          call bsl_update(bslFastIsostasy, fastisostasyTime)
          call isos_update(isosFastIsostasy, thicknessFastIsostasy2D, fastisostasyTime, bslFastIsostasy)
-         bedtopoFastIsostasyUpdated2D = isosFastIsostasy%out%z_bed
+         ! Correct for sea-surface-height change
+	 call in2out(zssRefFastIsostasy2D, isosFastIsostasy%ref%z_ss, isosFastIsostasy%domain)
+         bedtopoFastIsostasyUpdated2D = isosFastIsostasy%out%z_bed - &
+            (isosFastIsostasy%out%z_ss - zssRefFastIsostasy2D)
 
          topoChangeFastIsostasy1D = reshape(bedtopoFastIsostasyUpdated2D - bedtopoFastIsostasy2D, [nGrid])
          topoChangeFastIsostasy1D_rkind = real(topoChangeFastIsostasy1D, RKIND)
@@ -1250,6 +1256,7 @@ contains
          deallocate(thicknessFastIsostasy1D, bedtopoFastIsostasy1D)
          deallocate(topoChangeFastIsostasy1D, topoChangeFastIsostasy1D_rkind)
          deallocate(thicknessFastIsostasy2D, bedtopoFastIsostasy2D, bedtopoFastIsostasyUpdated2D)
+         deallocate(zssRefFastIsostasy2D)
       endif
 
       call MPI_SCATTERV(gatheredArrayTopoChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
