@@ -652,16 +652,6 @@ ifdef CORE
 
 ifneq ($(wildcard src), ) # CHECK FOR EXISTENCE OF CORE DIRECTORY
 
-# Snapshot of LIBS containing only the generic framework libraries (PIO, NetCDF,
-# PNetCDF, LAPACK, PAPI, GPTL) assembled above, before src/build_options.mk has a
-# chance to append any core-specific static libraries below. pio_test uses this
-# snapshot rather than the full $(LIBS), because a core's extra libraries (e.g.
-# MALI's FastIsostasy/fesm-utils static libraries) may not exist on disk yet at
-# the point pio_test runs -- they are built later, as part of that core's own
-# target dependencies -- and pio_test only needs to check PIO usability, not
-# link against every library the final model executable will need.
-PIO_TEST_LIBS := $(LIBS)
-
 ifneq ($(wildcard src/build_options.mk), ) # Check for build_options.mk
 include src/build_options.mk
 else # ELSE Use Default Options
@@ -988,8 +978,8 @@ pio_test:
 	@# See whether either of the test programs can be compiled
 	@#
 	@echo "Checking for a usable PIO library..."
-	@($(FC) pio1.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(PIO_TEST_LIBS) -o pio1.out &> /dev/null && echo "=> PIO 1 detected") || \
-	 ($(FC) pio2.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(PIO_TEST_LIBS) -o pio2.out &> /dev/null && echo "=> PIO 2 detected") || \
+	@($(FC) pio1.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(LIBS) -o pio1.out &> /dev/null && echo "=> PIO 1 detected") || \
+	 ($(FC) pio2.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(LIBS) -o pio2.out &> /dev/null && echo "=> PIO 2 detected") || \
 	 (echo "************ ERROR ************"; \
 	  echo "Failed to compile a PIO test program"; \
 	  echo "Please ensure the PIO environment variable is set to the PIO installation directory"; \
@@ -1002,13 +992,13 @@ pio_test:
 	@# Check that what the user has specified agrees with the PIO library version that was detected
 	@#
 ifeq "$(USE_PIO2)" "true"
-	@($(FC) pio2.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(PIO_TEST_LIBS) -o pio2.out &> /dev/null) || \
+	@($(FC) pio2.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(LIBS) -o pio2.out &> /dev/null) || \
 	(echo "************ ERROR ************"; \
 	 echo "PIO 1 was detected, but USE_PIO2=true was specified in the make command"; \
 	 echo "************ ERROR ************"; \
 	 rm -rf pio[12].f90 pio[12].out; exit 1)
 else
-	@($(FC) pio1.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(PIO_TEST_LIBS) -o pio1.out &> /dev/null) || \
+	@($(FC) pio1.f90 $(FCINCLUDES) $(FFLAGS) $(LDFLAGS) $(LIBS) -o pio1.out &> /dev/null) || \
 	(echo "************ ERROR ************"; \
 	 echo "PIO 2 was detected. Please specify USE_PIO2=true in the make command"; \
 	 echo "************ ERROR ************"; \
