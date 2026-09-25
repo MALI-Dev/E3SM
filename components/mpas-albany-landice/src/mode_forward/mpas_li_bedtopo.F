@@ -1066,6 +1066,7 @@ contains
             call mpas_log_write('FastIsostasy coupling currently expects a square target grid in the mapping file.', &
                                 MPAS_LOG_ERR)
             err = ior(err, 1)
+            return
          endif
 
          allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
