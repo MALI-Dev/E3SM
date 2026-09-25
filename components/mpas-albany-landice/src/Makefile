@@ -14,8 +14,6 @@ SHARED_INCLUDES += -I$(PWD)/FastIsostasy/libisostasy/include
 SHARED_INCLUDES += -I$(PWD)/fesm-utils/utils/include-serial
 endif
 
-FASTISOSTASY_FESM_MACHINE ?= linux
-FASTISOSTASY_FESM_COMPILER ?= gfortran
 FASTISOSTASY_FESM_CPP ?= cpp -P
 FASTISOSTASY_FESM_UTILS_CONFIG ?= config/pik_hpc2024_gfortran
 FASTISOSTASY_NETCDFF_ROOT ?= $(shell nf-config --prefix 2>/dev/null)
@@ -52,7 +50,7 @@ ifeq "$(FASTISOSTASY)" "true"
 			if [ -z "$(FASTISOSTASY_NETCDFF_ROOT)" ] || [ -z "$(FASTISOSTASY_NETCDFC_ROOT)" ]; then \
 				(echo "Unable to determine NetCDF roots for fesm-utils (nf-config/nc-config)."; exit 1); \
 			fi; \
-			(cd fesm-utils; CPP="$(FASTISOSTASY_FESM_CPP)" python3 build.py -m $(FASTISOSTASY_FESM_MACHINE) -c $(FASTISOSTASY_FESM_COMPILER) --component fftw --variant serial); \
+			(cd fesm-utils; CC="$(CC_SERIAL)" F77="$(FC_SERIAL)" CFLAGS="$(CFLAGS_OPT)" FFLAGS="$(FFLAGS_OPT)" CPP="$(FASTISOSTASY_FESM_CPP)" python3 build.py -m linux -c gfortran --component fftw --variant serial); \
 			(cd fesm-utils/utils; NETCDFF_ROOT="$(FASTISOSTASY_NETCDFF_ROOT)" NETCDFC_ROOT="$(FASTISOSTASY_NETCDFC_ROOT)" python3 config.py $(FASTISOSTASY_FESM_UTILS_CONFIG)); \
 			(cd fesm-utils/utils; NETCDFF_ROOT="$(FASTISOSTASY_NETCDFF_ROOT)" NETCDFC_ROOT="$(FASTISOSTASY_NETCDFC_ROOT)" MAKEFLAGS= MAKEOVERRIDES= $(MAKE) -j 1 fesmutils-static openmp=0 debug=0); \
 					(cd fesm-utils/utils; ar rc include-serial/libfesmutils.a include-serial/*.o && ranlib include-serial/libfesmutils.a); \
@@ -74,6 +72,15 @@ endif
 core_landice: mode_forward shared analysis_members sea_level_model fastisostasy_lib
 	rm -f libdycore.a
 	ar -ru libdycore.a `find mode_forward shared analysis_members SeaLevelModel -type f -name "*.o" 2>/dev/null`
+ifeq "$(FASTISOSTASY)" "true"
+	@# Extract FastIsostasy static libraries and add their objects to libdycore.a
+	@mkdir -p .fastisostasy_objs
+	@cd .fastisostasy_objs && ar x ../FastIsostasy/libisostasy/include/libisostasy.a
+	@cd .fastisostasy_objs && ar x ../fesm-utils/utils/include-serial/libfesmutils.a
+	@cd .fastisostasy_objs && ar x ../fesm-utils/fftw-serial/lib/libfftw3.a
+	ar -ru libdycore.a .fastisostasy_objs/*.o
+	@rm -rf .fastisostasy_objs
+endif
 
 core_input_gen:
 	if [ ! -e default_inputs ]; then  mkdir default_inputs; fi
@@ -99,7 +106,7 @@ clean:
 	@# Certain systems with intel compilers generate *.i files
 	@# This removes them during the clean process
 	$(RM) *.i
-	$(RM) -r default_inputs
+	$(RM) -r default_inputs .fastisostasy_objs
 	(cd shared; $(MAKE) clean)
 	(cd mode_forward; $(MAKE) clean)
 	(cd analysis_members; $(MAKE) clean)
