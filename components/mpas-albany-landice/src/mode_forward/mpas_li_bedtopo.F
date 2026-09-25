@@ -1131,7 +1131,9 @@ contains
    subroutine fastisostasy_solve(fastisostasyTimeStep, domain)
 
       use li_advection, only: li_update_geometry
+#ifdef USE_FASTISOSTASY
       use isos_utils, only: in2out
+#endif
 
       integer, intent(in) :: fastisostasyTimeStep
       type (domain_type), intent(inout) :: domain
