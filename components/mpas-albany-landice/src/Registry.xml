@@ -598,8 +598,8 @@
 		            description="Global ocean surface area for sea level change calculations (ISMIP7 default: 3.625e14 m^2; adjust for regional domains)"
 		            possible_values="Any positive real value"
 		/>
-		<nml_option name="config_compute_slc_G2020" type="logical" default_value=".false." units="unitless"
-		            description="If true, compute Goelzer et al. (2020) sea level change metric in global stats analysis member"
+		<nml_option name="config_compute_slc_metrics" type="logical" default_value=".false." units="unitless"
+		            description="If true, compute both Goelzer et al. (2020) and Adhikari et al. (2020) sea level change metrics in global stats analysis member"
 		            possible_values=".true. or .false."
 		/>
 		<nml_option name="config_default_flowParamA" type="real" default_value="3.1709792e-24" units="s^-1 Pa^-n"
