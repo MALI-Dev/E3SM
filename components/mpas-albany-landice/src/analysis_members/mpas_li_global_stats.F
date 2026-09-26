@@ -39,6 +39,15 @@ module li_global_stats
 
    !--------------------------------------------------------------------
    !
+   ! Private module variables
+   !
+   !--------------------------------------------------------------------
+
+   ! Flag for SLC reference state initialization (Goelzer et al. 2020)
+   integer :: slc_reference_initialized = 0
+
+   !--------------------------------------------------------------------
+   !
    ! Public member functions
    !
    !--------------------------------------------------------------------
@@ -214,7 +223,6 @@ contains
       ! Sea level change metrics (Goelzer et al. 2020)
       real (kind=RKIND), pointer ::  slc_G2020, slc_G2020_af, slc_G2020_pov, slc_G2020_den
       real (kind=RKIND), pointer ::  slc_VAF_ref, slc_v_pov_ref, slc_v_den_ref
-      integer, pointer :: slc_reference_initialized
       ! Config for SLC calculations
       real (kind=RKIND), pointer :: oceanSurfaceArea
       logical, pointer :: config_compute_slc_G2020
@@ -702,7 +710,6 @@ contains
             call mpas_pool_get_array(globalStatsAMPool, 'slc_VAF_ref', slc_VAF_ref)
             call mpas_pool_get_array(globalStatsAMPool, 'slc_v_pov_ref', slc_v_pov_ref)
             call mpas_pool_get_array(globalStatsAMPool, 'slc_v_den_ref', slc_v_den_ref)
-            call mpas_pool_get_array(globalStatsAMPool, 'slc_reference_initialized', slc_reference_initialized)
 
             ! Extract reduced volumes from appropriate indices
             if (config_SGH) then

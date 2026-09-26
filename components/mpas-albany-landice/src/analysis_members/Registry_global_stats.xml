@@ -55,9 +55,6 @@
                 <var name="slc_v_den_ref" type="real" dimensions="Time" units="m^3"
                         description="Reference density effect volume for SLC calculation (initialized at simulation start)"
                 />
-                <var name="slc_reference_initialized" type="integer" dimensions="Time" units="unitless"
-                        description="Flag indicating if SLC reference state has been initialized (0=no, 1=yes)"
-                />
                 <var name="totalIceArea" type="real" dimensions="Time" units="m^2"
                         description="total ice sheet area"
                 />
