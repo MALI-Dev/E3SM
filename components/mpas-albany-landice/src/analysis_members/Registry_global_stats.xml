@@ -22,6 +22,7 @@
 	</nml_record>
 	<packages>
 		<package name="globalStatsAMPKG" description="This package includes variables required for the globalStats analysis member."/>
+		<package name="slcMetricsPKG" description="This package includes 2D reference fields for sea level change metrics (only allocated when config_compute_slc_metrics is true)."/>
 	</packages>
 	<var_struct name="globalStatsAM" time_levs="1" packages="globalStatsAMPKG">
 
@@ -30,6 +31,35 @@
                 />
                 <var name="volumeAboveFloatation" type="real" dimensions="Time" units="m^3"
                         description="total ice sheet volume above floatation"
+                />
+                <!-- Sea Level Change Metrics following Goelzer et al. 2020 -->
+                <!-- Reference: Goelzer, H., et al. (2020), https://doi.org/10.5194/tc-14-833-2020 -->
+                <var name="slc_G2020" type="real" dimensions="Time" units="m"
+                        description="Total sea level change following Goelzer et al. (2020) decomposition, relative to simulation start"
+                />
+                <var name="slc_G2020_af" type="real" dimensions="Time" units="m"
+                        description="Sea level change due to volume above floatation component (Goelzer et al. 2020)"
+                />
+                <var name="slc_G2020_pov" type="real" dimensions="Time" units="m"
+                        description="Sea level change due to perturbation ocean volume component (Goelzer et al. 2020)"
+                />
+                <var name="slc_G2020_den" type="real" dimensions="Time" units="m"
+                        description="Sea level change due to density effect component (Goelzer et al. 2020)"
+                />
+                <!-- Reference state variables for SLC (stored in pool but not written to output) -->
+                <var name="slc_VAF_ref" type="real" dimensions="Time" units="m^3"
+                        description="Reference volume above floatation for SLC calculation (initialized at simulation start)"
+                />
+                <var name="slc_v_pov_ref" type="real" dimensions="Time" units="m^3"
+                        description="Reference perturbation ocean volume for SLC calculation (initialized at simulation start)"
+                />
+                <var name="slc_v_den_ref" type="real" dimensions="Time" units="m^3"
+                        description="Reference density effect volume for SLC calculation (initialized at simulation start)"
+                />
+                <!-- Sea Level Change Metric following Adhikari et al. 2020 -->
+                <!-- Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-833-2020 -->
+                <var name="slc_A2020" type="real" dimensions="Time" units="m"
+                        description="Total sea level change following Adhikari et al. (2020) unified formulation, relative to simulation start"
                 />
                 <var name="totalIceArea" type="real" dimensions="Time" units="m^2"
                         description="total ice sheet area"
@@ -136,6 +166,16 @@
                 />
 
  	</var_struct>
+	<!-- Reference state variables for A2020 (2D fields) - separate var_struct with package -->
+	<!-- Note: No Time dimension - these are constant reference snapshots -->
+	<var_struct name="slcMetrics" time_levs="1" packages="slcMetricsPKG">
+		<var name="slc_H_ref" type="real" dimensions="nCells" units="m"
+			description="Reference ice thickness for A2020 SLC calculation (constant, initialized at simulation start)"
+		/>
+		<var name="slc_B_ref" type="real" dimensions="nCells" units="m"
+			description="Reference bedrock elevation for A2020 SLC calculation (constant, initialized at simulation start)"
+		/>
+	</var_struct>
 	<streams>
 		<stream name="globalStatsOutput" type="output"
 				mode="forward;analysis"

@@ -39,6 +39,15 @@ module li_global_stats
 
    !--------------------------------------------------------------------
    !
+   ! Private module variables
+   !
+   !--------------------------------------------------------------------
+
+   ! Flag for SLC reference state initialization (Goelzer et al. 2020)
+   integer :: slc_reference_initialized = 0
+
+   !--------------------------------------------------------------------
+   !
    ! Public member functions
    !
    !--------------------------------------------------------------------
@@ -154,6 +163,7 @@ contains
       !-----------------------------------------------------------------
 
       type (mpas_pool_type), pointer :: globalStatsAMPool
+      type (mpas_pool_type), pointer :: slcMetricsPool
       type (dm_info) :: dminfo
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: statePool
@@ -211,6 +221,15 @@ contains
       ! scalars to be calculated here from global reductions
       real (kind=RKIND), pointer ::  totalIceArea, totalIceVolume
       real (kind=RKIND), pointer ::  volumeAboveFloatation
+      ! Sea level change metrics (Goelzer et al. 2020)
+      real (kind=RKIND), pointer ::  slc_G2020, slc_G2020_af, slc_G2020_pov, slc_G2020_den
+      real (kind=RKIND), pointer ::  slc_VAF_ref, slc_v_pov_ref, slc_v_den_ref
+      ! Sea level change metric (Adhikari et al. 2020)
+      real (kind=RKIND), pointer ::  slc_A2020
+      real (kind=RKIND), dimension(:), pointer ::  slc_H_ref, slc_B_ref
+      ! Config for SLC calculations
+      real (kind=RKIND), pointer :: oceanSurfaceArea
+      logical, pointer :: config_compute_slc_metrics
       real (kind=RKIND), pointer ::  groundedIceArea, groundedIceVolume
       real (kind=RKIND), pointer ::  floatingIceArea, floatingIceVolume
       real (kind=RKIND), pointer ::  iceThicknessMax, iceThicknessMin, iceThicknessMean
@@ -241,6 +260,10 @@ contains
       ! scalar reductions over all blocks on this processor
       real (kind=RKIND) ::  blockSumIceArea, blockSumIceVolume
       real (kind=RKIND) ::  blockSumVAF
+      ! Sea level change block sums (Goelzer 2020)
+      real (kind=RKIND) ::  blockSum_v_pov, blockSum_v_den
+      ! Sea level change block sum (Adhikari 2020)
+      real (kind=RKIND) ::  blockSum_HS
       real (kind=RKIND) ::  blockSumGroundedIceArea, blockSumGroundedIceVolume
       real (kind=RKIND) ::  blockSumFloatingIceArea, blockSumFloatingIceVolume
       real (kind=RKIND) ::  blockThickMin, blockThickMax
@@ -267,9 +290,11 @@ contains
 
       ! Local variables for calculations
       real (kind=RKIND) ::  totalFlotationFraction
+      ! Local variables for SLC calculations
+      real (kind=RKIND) ::  v_pov, v_den, sum_HS
 
       ! variables for processing stats
-      integer, parameter :: kMaxVariables = 35 ! Increase if number of stats increase
+      integer, parameter :: kMaxVariables = 40 ! Increased for SLC metrics
       integer :: nVars
       real (kind=RKIND), dimension(kMaxVariables) :: reductions, sums, mins, maxes
 
@@ -281,6 +306,10 @@ contains
       blockSumIceArea = 0.0_RKIND
       blockSumIceVolume = 0.0_RKIND
       blockSumVAF = 0.0_RKIND
+      ! Initialize SLC block sums
+      blockSum_v_pov = 0.0_RKIND
+      blockSum_v_den = 0.0_RKIND
+      blockSum_HS = 0.0_RKIND
       blockSumGroundedIceArea = 0.0_RKIND
       blockSumGroundedIceVolume = 0.0_RKIND
       blockSumFloatingIceArea = 0.0_RKIND
@@ -319,6 +348,8 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', rhow)
       call mpas_pool_get_config(liConfigs, 'config_SGH_bed_roughness_max', bedBumpMax)
       call mpas_pool_get_config(liConfigs, 'config_SGH', config_SGH)
+      call mpas_pool_get_config(liConfigs, 'config_ocean_surface_area', oceanSurfaceArea)
+      call mpas_pool_get_config(liConfigs, 'config_compute_slc_metrics', config_compute_slc_metrics)
 
       ! loop over blocks
       block => domain % blocklist
@@ -375,6 +406,76 @@ contains
 
             blockSumVAF = blockSumVAF + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) * areaCell(iCell) * &
                 ( thickness(iCell) + (rhow / rhoi) * min(0.0_RKIND, (bedTopography(iCell) - config_sea_level)) )
+
+            ! === Sea level change components (Goelzer et al. 2020) ===
+            ! Reference: Goelzer, H., et al. (2020), https://doi.org/10.5194/tc-14-833-2020
+            if (config_compute_slc_metrics) then
+                ! Perturbation ocean volume: v_pov = sum(max(-B, 0) * A)
+                ! This represents the volume of the ocean basin below the datum
+                blockSum_v_pov = blockSum_v_pov + max(-bedTopography(iCell), 0.0_RKIND) * areaCell(iCell)
+
+                ! Density effect: v_den = sum(H * (ρ_i/ρ_fw - ρ_i/ρ_sw) * A)
+                ! This accounts for the difference between ice volume and its freshwater equivalent
+                blockSum_v_den = blockSum_v_den + thickness(iCell) * &
+                    (rhoi / rho_water - rhoi / rhow) * areaCell(iCell)
+
+                ! === Sea level change (Adhikari et al. 2020) ===
+                ! Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-833-2020
+                ! Only compute after reference state is initialized
+                if (slc_reference_initialized == 1) then
+                    ! Local variables for current cell
+                    real (kind=RKIND) :: H, B, A
+                    real (kind=RKIND) :: H0, B0
+                    real (kind=RKIND) :: F, F0, Hn, Hn0, HF, HF0
+                    real (kind=RKIND) :: L, L0, G, G0
+                    real (kind=RKIND) :: HM, HV, HS
+                    real (kind=RKIND) :: rho_ratio_sw, rho_ratio_fw
+
+                    ! Get current state
+                    H = thickness(iCell)
+                    B = bedTopography(iCell)
+                    A = areaCell(iCell)
+
+                    ! Get reference state
+                    H0 = slc_H_ref(iCell)
+                    B0 = slc_B_ref(iCell)
+
+                    ! Density ratios
+                    rho_ratio_sw = rhow / rhoi
+                    rho_ratio_fw = 1.0_RKIND - (rho_water / rhow)
+
+                    ! Flotation criterion: F = H - (ρ_sw/ρ_i)×(config_sea_level - B)
+                    ! Note: S = config_sea_level (mean sea level, constant)
+                    F = H - rho_ratio_sw * (config_sea_level - B)
+                    F0 = H0 - rho_ratio_sw * (config_sea_level - B0)
+
+                    ! Masks
+                    L = merge(1.0_RKIND, 0.0_RKIND, F >= 0.0_RKIND)   ! Grounded
+                    L0 = merge(1.0_RKIND, 0.0_RKIND, F0 >= 0.0_RKIND)
+                    G = merge(L, 0.0_RKIND, H > 0.0_RKIND)             ! Grounded ice
+                    G0 = merge(L0, 0.0_RKIND, H0 > 0.0_RKIND)
+
+                    ! Equivalent ocean thickness: Hn = (ρ_sw/ρ_i) × max(config_sea_level - B, 0)
+                    Hn = rho_ratio_sw * max(config_sea_level - B, 0.0_RKIND)
+                    Hn0 = rho_ratio_sw * max(config_sea_level - B0, 0.0_RKIND)
+
+                    ! Flotation-adjusted thickness: HF = G × (H - Hn)
+                    HF = G * (H - Hn)
+                    HF0 = G0 * (H0 - Hn0)
+
+                    ! Mass-conserving component
+                    HM = (H - H0) * L0 * L + (HF - HF0) * (1.0_RKIND - L0 * L)
+
+                    ! Volume-conserving component
+                    HV = rho_ratio_fw * ((H - H0) - (HF - HF0)) * (1.0_RKIND - L0 * L)
+
+                    ! Total sea level contribution thickness
+                    HS = HM + HV
+
+                    ! Accumulate weighted by cell area
+                    blockSum_HS = blockSum_HS + HS * A
+                endif
+            endif
 
             blockSumGroundedIceArea = blockSumGroundedIceArea + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) &
                  * areaCell(iCell)
@@ -547,9 +648,31 @@ contains
          sums(26) = blockSumChannelGLMeltFlux
          sums(27) = blockSumChannelTerrestrialMeltFlux
          sums(28) = blockSumFlotationFraction
-         nVars = 28
+         if (config_compute_slc_metrics) then
+            sums(29) = blockSum_v_pov
+            sums(30) = blockSum_v_den
+            if (slc_reference_initialized == 1) then
+               sums(31) = blockSum_HS
+               nVars = 31
+            else
+               nVars = 30
+            endif
+         else
+            nVars = 28
+         endif
       else
-        nVars = 17
+         if (config_compute_slc_metrics) then
+            sums(18) = blockSum_v_pov
+            sums(19) = blockSum_v_den
+            if (slc_reference_initialized == 1) then
+               sums(20) = blockSum_HS
+               nVars = 20
+            else
+               nVars = 19
+            endif
+         else
+            nVars = 17
+         endif
       endif
 
       call mpas_dmpar_sum_real_array(dminfo, nVars, sums(1:nVars), reductions(1:nVars))
@@ -651,7 +774,88 @@ contains
             endif
          endif
 
+         ! === Sea level change calculations (Goelzer et al. 2020) ===
+         ! Reference: Goelzer, H., et al. (2020), https://doi.org/10.5194/tc-14-833-2020
+         if (config_compute_slc_metrics) then
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_G2020', slc_G2020)
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_G2020_af', slc_G2020_af)
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_G2020_pov', slc_G2020_pov)
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_G2020_den', slc_G2020_den)
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_VAF_ref', slc_VAF_ref)
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_v_pov_ref', slc_v_pov_ref)
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_v_den_ref', slc_v_den_ref)
 
+            ! Extract reduced volumes from appropriate indices
+            if (config_SGH) then
+               v_pov = reductions(29)
+               v_den = reductions(30)
+            else
+               v_pov = reductions(18)
+               v_den = reductions(19)
+            endif
+
+            ! Initialize reference state on first call
+            if (slc_reference_initialized == 0) then
+               slc_VAF_ref = volumeAboveFloatation
+               slc_v_pov_ref = v_pov
+               slc_v_den_ref = v_den
+               slc_reference_initialized = 1
+
+               ! On initialization, all SLC components are zero by definition
+               slc_G2020 = 0.0_RKIND
+               slc_G2020_af = 0.0_RKIND
+               slc_G2020_pov = 0.0_RKIND
+               slc_G2020_den = 0.0_RKIND
+            else
+               ! Compute SLC components relative to reference state
+
+               ! Component 1: Volume above floatation
+               ! More ice above floatation → positive VAF change → negative SLC
+               slc_G2020_af = -(volumeAboveFloatation - slc_VAF_ref) / oceanSurfaceArea * (rhoi / rhow)
+
+               ! Component 2: Perturbation ocean volume
+               ! Deeper bed → larger v_pov → positive change → negative SLC
+               slc_G2020_pov = -(v_pov - slc_v_pov_ref) / oceanSurfaceArea
+
+               ! Component 3: Density effect
+               ! More ice volume → positive v_den change → negative SLC
+               slc_G2020_den = -(v_den - slc_v_den_ref) / oceanSurfaceArea
+
+               ! Total SLC (sum of three components)
+               slc_G2020 = slc_G2020_af + slc_G2020_pov + slc_G2020_den
+            endif
+
+            ! === Sea level change (Adhikari et al. 2020) - Reference state ===
+            ! Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-833-2020
+            call mpas_pool_get_array(globalStatsAMPool, 'slc_A2020', slc_A2020)
+
+            ! Get slcMetrics pool and reference arrays (only allocated if package is active)
+            call mpas_pool_get_subpool(block % structs, 'slcMetrics', slcMetricsPool)
+            call mpas_pool_get_array(slcMetricsPool, 'slc_H_ref', slc_H_ref)
+            call mpas_pool_get_array(slcMetricsPool, 'slc_B_ref', slc_B_ref)
+
+            ! Initialize reference state on first call (shared with G2020)
+            if (slc_reference_initialized == 0) then
+               ! Store current geometry as reference
+               slc_H_ref(:) = thickness(:)
+               slc_B_ref(:) = bedTopography(:)
+               ! Note: No S_ref needed (config_sea_level is constant)
+
+               ! SLC is zero by definition at initialization
+               slc_A2020 = 0.0_RKIND
+            else
+               ! Extract reduced sum from appropriate index
+               ! Both metrics use same flag, so G2020 is always present when A2020 is
+               if (config_SGH) then
+                  sum_HS = reductions(31)  ! After G2020's 29-30
+               else
+                  sum_HS = reductions(20)  ! After G2020's 18-19
+               endif
+
+               ! Compute SLC: slc = -(ρ_i/ρ_fw) × Σ(HS × A) / A_o
+               slc_A2020 = -(rhoi / rho_water) * sum_HS / oceanSurfaceArea
+            endif
+         endif
 
          block => block % next
       end do
