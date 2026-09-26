@@ -112,19 +112,7 @@ contains
       !
       !-----------------------------------------------------------------
 
-      type (mpas_pool_type), pointer :: liConfigs
-      logical, pointer :: config_compute_slc_metrics
-
       err = 0
-
-      ! Get config pool
-      call mpas_pool_get_subpool(domain % configs, 'landIceAMConfig', liConfigs)
-      call mpas_pool_get_config(liConfigs, 'config_compute_slc_metrics', config_compute_slc_metrics)
-
-      ! Activate slcMetricsPKG package if SLC metrics are enabled
-      if (config_compute_slc_metrics) then
-         call mpas_packages_set_state(domain % packages, 'slcMetricsPKG', .true.)
-      endif
 
    end subroutine li_init_global_stats
 
