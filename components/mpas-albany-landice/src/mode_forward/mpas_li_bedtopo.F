@@ -1150,16 +1150,14 @@ contains
       real (kind=RKIND), dimension(:), pointer :: geoidChange
       real (kind=RKIND), dimension(:), allocatable :: thicknessFastIsostasy1D
       real (kind=RKIND), dimension(:), allocatable :: bedtopoFastIsostasy1D
-      real (kind=RKIND), dimension(:), allocatable :: topoChangeFastIsostasy1D_rkind
-      real (kind=RKIND), dimension(:), allocatable :: geoidChangeFastIsostasy1D_rkind
+      real (kind=RKIND), dimension(:), allocatable :: topoChangeFastIsostasy1D
+      real (kind=RKIND), dimension(:), allocatable :: geoidChangeFastIsostasy1D
       real (kind=RKIND), dimension(:), allocatable :: meshMask
       real (kind=wp), dimension(:,:), allocatable :: thicknessFastIsostasy2D
       real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasy2D
       real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasyUpdated2D
       real (kind=wp), dimension(:,:), allocatable :: zssRefFastIsostasy2D
       real (kind=wp), dimension(:,:), allocatable :: geoidChangeFastIsostasy2D
-      real (kind=wp), dimension(:), allocatable :: topoChangeFastIsostasy1D
-      real (kind=wp), dimension(:), allocatable :: geoidChangeFastIsostasy1D
       real (kind=wp) :: fastisostasyTime
       integer, dimension(:), pointer :: cellMask
       integer :: err, err_tmp
@@ -1187,8 +1185,8 @@ contains
          allocate(globalArrayGeoidChange(nCellsGlobal), gatheredArrayGeoidChange(nCellsGlobal))
          allocate(meshMask(nCellsGlobal))
          allocate(thicknessFastIsostasy1D(nGrid), bedtopoFastIsostasy1D(nGrid))
-         allocate(topoChangeFastIsostasy1D(nGrid), topoChangeFastIsostasy1D_rkind(nGrid))
-         allocate(geoidChangeFastIsostasy1D(nGrid), geoidChangeFastIsostasy1D_rkind(nGrid))
+         allocate(topoChangeFastIsostasy1D(nGrid))
+         allocate(geoidChangeFastIsostasy1D(nGrid))
          allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          allocate(bedtopoFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          allocate(bedtopoFastIsostasyUpdated2D(nFastIsostasyX,nFastIsostasyY))
@@ -1197,10 +1195,8 @@ contains
          meshMask(:) = 0.0_RKIND
          thicknessFastIsostasy1D(:) = 0.0_RKIND
          bedtopoFastIsostasy1D(:) = 0.0_RKIND
-         topoChangeFastIsostasy1D(:) = 0.0_wp
-         topoChangeFastIsostasy1D_rkind(:) = 0.0_RKIND
-         geoidChangeFastIsostasy1D(:) = 0.0_wp
-         geoidChangeFastIsostasy1D_rkind(:) = 0.0_RKIND
+         topoChangeFastIsostasy1D(:) = 0.0_RKIND
+         geoidChangeFastIsostasy1D(:) = 0.0_RKIND
       else
          allocate(globalArrayThickness(1), gatheredArrayThickness(1))
          allocate(globalArrayBedTopography(1), gatheredArrayBedTopography(1))
@@ -1242,14 +1238,11 @@ contains
          ! Calculate geoid change
          geoidChangeFastIsostasy2D = isosFastIsostasy%out%z_ss - zssRefFastIsostasy2D
 
-         topoChangeFastIsostasy1D = reshape(bedtopoFastIsostasyUpdated2D - bedtopoFastIsostasy2D, [nGrid])
-         topoChangeFastIsostasy1D_rkind = real(topoChangeFastIsostasy1D, RKIND)
+         topoChangeFastIsostasy1D = real(reshape(bedtopoFastIsostasyUpdated2D - bedtopoFastIsostasy2D, [nGrid]), RKIND)
+         geoidChangeFastIsostasy1D = real(reshape(geoidChangeFastIsostasy2D, [nGrid]), RKIND)
 
-         geoidChangeFastIsostasy1D = reshape(geoidChangeFastIsostasy2D, [nGrid])
-         geoidChangeFastIsostasy1D_rkind = real(geoidChangeFastIsostasy1D, RKIND)
-
-         call interpolate(fromColValues, fromRowValues, fromSValues, topoChangeFastIsostasy1D_rkind, globalArrayTopoChange)
-         call interpolate(fromColValues, fromRowValues, fromSValues, geoidChangeFastIsostasy1D_rkind, globalArrayGeoidChange)
+         call interpolate(fromColValues, fromRowValues, fromSValues, topoChangeFastIsostasy1D, globalArrayTopoChange)
+         call interpolate(fromColValues, fromRowValues, fromSValues, geoidChangeFastIsostasy1D, globalArrayGeoidChange)
 
          do iCell = 1,nCellsGlobal
             gatheredArrayTopoChange(iCell) = globalArrayTopoChange(indexToCellIDGathered(iCell))
@@ -1257,8 +1250,8 @@ contains
          enddo
 
          deallocate(thicknessFastIsostasy1D, bedtopoFastIsostasy1D)
-         deallocate(topoChangeFastIsostasy1D, topoChangeFastIsostasy1D_rkind)
-         deallocate(geoidChangeFastIsostasy1D, geoidChangeFastIsostasy1D_rkind)
+         deallocate(topoChangeFastIsostasy1D)
+         deallocate(geoidChangeFastIsostasy1D)
          deallocate(thicknessFastIsostasy2D, bedtopoFastIsostasy2D, bedtopoFastIsostasyUpdated2D)
          deallocate(zssRefFastIsostasy2D, geoidChangeFastIsostasy2D)
       endif
