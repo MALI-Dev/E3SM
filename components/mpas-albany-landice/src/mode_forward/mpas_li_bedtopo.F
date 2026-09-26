@@ -1147,15 +1147,17 @@ contains
 
       real (kind=RKIND), dimension(:), pointer :: bedTopography, thickness
       real (kind=RKIND), dimension(:), pointer :: bedTopographyChange
+      real (kind=RKIND), dimension(:), pointer :: geoidChange
       real (kind=RKIND), dimension(:), allocatable :: thicknessFastIsostasy1D
       real (kind=RKIND), dimension(:), allocatable :: bedtopoFastIsostasy1D
-      real (kind=RKIND), dimension(:), allocatable :: topoChangeFastIsostasy1D_rkind
+      real (kind=RKIND), dimension(:), allocatable :: topoChangeFastIsostasy1D
+      real (kind=RKIND), dimension(:), allocatable :: geoidChangeFastIsostasy1D
       real (kind=RKIND), dimension(:), allocatable :: meshMask
       real (kind=wp), dimension(:,:), allocatable :: thicknessFastIsostasy2D
       real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasy2D
       real (kind=wp), dimension(:,:), allocatable :: bedtopoFastIsostasyUpdated2D
       real (kind=wp), dimension(:,:), allocatable :: zssRefFastIsostasy2D
-      real (kind=wp), dimension(:), allocatable :: topoChangeFastIsostasy1D
+      real (kind=wp), dimension(:,:), allocatable :: geoidChangeFastIsostasy2D
       real (kind=wp) :: fastisostasyTime
       integer, dimension(:), pointer :: cellMask
       integer :: err, err_tmp
@@ -1167,6 +1169,7 @@ contains
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'bedTopographyChange', bedTopographyChange)
+      call mpas_pool_get_array(geometryPool, 'geoidChange', geoidChange)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
@@ -1179,22 +1182,26 @@ contains
          allocate(globalArrayThickness(nCellsGlobal), gatheredArrayThickness(nCellsGlobal))
          allocate(globalArrayBedTopography(nCellsGlobal), gatheredArrayBedTopography(nCellsGlobal))
          allocate(globalArrayTopoChange(nCellsGlobal), gatheredArrayTopoChange(nCellsGlobal))
+         allocate(globalArrayGeoidChange(nCellsGlobal), gatheredArrayGeoidChange(nCellsGlobal))
          allocate(meshMask(nCellsGlobal))
          allocate(thicknessFastIsostasy1D(nGrid), bedtopoFastIsostasy1D(nGrid))
-         allocate(topoChangeFastIsostasy1D(nGrid), topoChangeFastIsostasy1D_rkind(nGrid))
+         allocate(topoChangeFastIsostasy1D(nGrid))
+         allocate(geoidChangeFastIsostasy1D(nGrid))
          allocate(thicknessFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          allocate(bedtopoFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          allocate(bedtopoFastIsostasyUpdated2D(nFastIsostasyX,nFastIsostasyY))
          allocate(zssRefFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
+         allocate(geoidChangeFastIsostasy2D(nFastIsostasyX,nFastIsostasyY))
          meshMask(:) = 0.0_RKIND
          thicknessFastIsostasy1D(:) = 0.0_RKIND
          bedtopoFastIsostasy1D(:) = 0.0_RKIND
-         topoChangeFastIsostasy1D(:) = 0.0_wp
-         topoChangeFastIsostasy1D_rkind(:) = 0.0_RKIND
+         topoChangeFastIsostasy1D(:) = 0.0_RKIND
+         geoidChangeFastIsostasy1D(:) = 0.0_RKIND
       else
          allocate(globalArrayThickness(1), gatheredArrayThickness(1))
          allocate(globalArrayBedTopography(1), gatheredArrayBedTopography(1))
          allocate(globalArrayTopoChange(1), gatheredArrayTopoChange(1))
+         allocate(globalArrayGeoidChange(1), gatheredArrayGeoidChange(1))
          allocate(meshMask(1))
       endif
 
@@ -1228,27 +1235,37 @@ contains
          bedtopoFastIsostasyUpdated2D = isosFastIsostasy%out%z_bed - &
             (isosFastIsostasy%out%z_ss - zssRefFastIsostasy2D)
 
-         topoChangeFastIsostasy1D = reshape(bedtopoFastIsostasyUpdated2D - bedtopoFastIsostasy2D, [nGrid])
-         topoChangeFastIsostasy1D_rkind = real(topoChangeFastIsostasy1D, RKIND)
+         ! Calculate geoid change
+         geoidChangeFastIsostasy2D = isosFastIsostasy%out%z_ss - zssRefFastIsostasy2D
 
-         call interpolate(fromColValues, fromRowValues, fromSValues, topoChangeFastIsostasy1D_rkind, globalArrayTopoChange)
+         topoChangeFastIsostasy1D = real(reshape(bedtopoFastIsostasyUpdated2D - bedtopoFastIsostasy2D, [nGrid]), RKIND)
+         geoidChangeFastIsostasy1D = real(reshape(geoidChangeFastIsostasy2D, [nGrid]), RKIND)
+
+         call interpolate(fromColValues, fromRowValues, fromSValues, topoChangeFastIsostasy1D, globalArrayTopoChange)
+         call interpolate(fromColValues, fromRowValues, fromSValues, geoidChangeFastIsostasy1D, globalArrayGeoidChange)
 
          do iCell = 1,nCellsGlobal
             gatheredArrayTopoChange(iCell) = globalArrayTopoChange(indexToCellIDGathered(iCell))
+            gatheredArrayGeoidChange(iCell) = globalArrayGeoidChange(indexToCellIDGathered(iCell))
          enddo
 
          deallocate(thicknessFastIsostasy1D, bedtopoFastIsostasy1D)
-         deallocate(topoChangeFastIsostasy1D, topoChangeFastIsostasy1D_rkind)
+         deallocate(topoChangeFastIsostasy1D)
+         deallocate(geoidChangeFastIsostasy1D)
          deallocate(thicknessFastIsostasy2D, bedtopoFastIsostasy2D, bedtopoFastIsostasyUpdated2D)
-         deallocate(zssRefFastIsostasy2D)
+         deallocate(zssRefFastIsostasy2D, geoidChangeFastIsostasy2D)
       endif
 
       call MPI_SCATTERV(gatheredArrayTopoChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
                         bedTopographyChange, nCellsAll, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
       err = ior(err, err_tmp)
+      call MPI_SCATTERV(gatheredArrayGeoidChange, nCellsPerProc, nCellsDisplacement, MPI_DOUBLE, &
+                        geoidChange, nCellsAll, MPI_DOUBLE, 0, domain % dminfo % comm, err_tmp)
+      err = ior(err, err_tmp)
 
       bedTopography(:) = bedTopography(:) + bedTopographyChange(:)
 
+      ! Don't bother with geoidChange halo exchange because it is only a diagnostic output
       call mpas_dmpar_field_halo_exch(domain,'bedTopography')
       call li_update_geometry(geometryPool)
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
@@ -1260,6 +1277,8 @@ contains
       deallocate(gatheredArrayBedTopography)
       deallocate(globalArrayTopoChange)
       deallocate(gatheredArrayTopoChange)
+      deallocate(globalArrayGeoidChange)
+      deallocate(gatheredArrayGeoidChange)
       deallocate(meshMask)
 #endif
 
