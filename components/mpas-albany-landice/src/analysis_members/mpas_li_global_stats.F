@@ -292,6 +292,13 @@ contains
       real (kind=RKIND) ::  totalFlotationFraction
       ! Local variables for SLC calculations
       real (kind=RKIND) ::  v_pov, v_den, sum_HS
+      ! Local variables for Adhikari et al. (2020) SLC calculations
+      real (kind=RKIND) ::  H, B, A
+      real (kind=RKIND) ::  H0, B0
+      real (kind=RKIND) ::  F, F0, Hn, Hn0, HF, HF0
+      real (kind=RKIND) ::  L, L0, G, G0
+      real (kind=RKIND) ::  HM, HV, HS
+      real (kind=RKIND) ::  rho_ratio_sw, rho_ratio_fw
 
       ! variables for processing stats
       integer, parameter :: kMaxVariables = 40 ! Increased for SLC metrics
@@ -423,14 +430,6 @@ contains
                 ! Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-833-2020
                 ! Only compute after reference state is initialized
                 if (slc_reference_initialized == 1) then
-                    ! Local variables for current cell
-                    real (kind=RKIND) :: H, B, A
-                    real (kind=RKIND) :: H0, B0
-                    real (kind=RKIND) :: F, F0, Hn, Hn0, HF, HF0
-                    real (kind=RKIND) :: L, L0, G, G0
-                    real (kind=RKIND) :: HM, HV, HS
-                    real (kind=RKIND) :: rho_ratio_sw, rho_ratio_fw
-
                     ! Get current state
                     H = thickness(iCell)
                     B = bedTopography(iCell)
