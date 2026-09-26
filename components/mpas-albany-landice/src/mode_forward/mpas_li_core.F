@@ -469,6 +469,7 @@ module li_core
       use li_statistics
       use li_time_integration
       use li_time_average_coupled, only: li_time_average_coupled_init
+      use li_bedtopo, only: li_bedtopo_write_restart
 
       implicit none
 
@@ -658,6 +659,16 @@ module li_core
                   err = ior(err, err_tmp2)
                   close(restartTimestampUnit)
                   call mpas_release_unit(restartTimestampUnit)
+
+                  ! Keep any sub-model that carries its own prognostic, history-dependent
+                  ! state (currently just FastIsostasy) in lockstep with MALI's restart
+                  ! stream, so a subsequent restart can resume that state instead of
+                  ! silently re-initializing it (see li_bedtopo_write_restart).
+                  call li_bedtopo_write_restart(domain, err_tmp2)
+                  if (err_tmp2 > 0) then
+                     call mpas_log_write('Error writing FastIsostasy restart file.', MPAS_LOG_ERR)
+                  endif
+                  err = ior(err, err_tmp2)
                end if ! isRinging
             end if ! err_tmp==0
          end if ! master task

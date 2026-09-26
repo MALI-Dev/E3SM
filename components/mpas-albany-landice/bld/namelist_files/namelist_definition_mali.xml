@@ -198,7 +198,7 @@ Default: Defined in namelist_defaults.xml
 	category="solidearth" group="solidearth">
 Selection of the method for bedrock uplift calculation.
 
-Valid values: 'none', 'data', 'sealevelmodel'
+Valid values: 'none', 'data', 'sealevelmodel', 'fastisostasy'
 Default: Defined in namelist_defaults.xml
 </entry>
 
@@ -221,6 +221,74 @@ Default: Defined in namelist_defaults.xml
 <entry id="config_SLM_to_MALI_weights_file" type="char*1024"
 	category="solidearth" group="solidearth">
 File containing the interpolation weights for regridding from the Gaussian grid used by the Sea Level Model to the MPAS mesh.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_coupling_interval" type="integer"
+	category="solidearth" group="solidearth">
+Time interval at which FastIsostasy is called by MALI. Only integer years are currently supported. The user needs to set config_adaptive_timestep_force_interval to divide evenly into config_fastisostasy_coupling_interval.
+
+Valid values: Any positive integer
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_MALI_to_FASTISOSTASY_weights_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File containing interpolation weights for regridding from MPAS mesh to the regular Cartesian grid used by FastIsostasy.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_FASTISOSTASY_to_MALI_weights_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File containing interpolation weights for regridding from the regular Cartesian grid used by FastIsostasy to the MPAS mesh.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_grid_resolution" type="real"
+	category="solidearth" group="solidearth">
+Physical grid spacing (dx=dy; FastIsostasy requires a square grid), in meters, of the regular Cartesian
+target grid that config_MALI_to_FASTISOSTASY_weights_file/config_FASTISOSTASY_to_MALI_weights_file remap
+between. The mapping files only define connectivity and interpolation weights, not the destination grid's
+physical spacing, but FastIsostasy needs a physical spacing to convert its own 'pad' namelist option
+(given in km) into a number of grid cells. This must be set to match whatever resolution was used to
+generate those mapping files; the default of 0.0 is a deliberate invalid sentinel that causes MALI to
+abort with an error if left unset, rather than silently assuming an incorrect spacing.
+
+Valid values: Any positive real number matching the resolution used to build the FastIsostasy mapping files
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_parameter_file" type="char*1024"
+	category="solidearth" group="solidearth">
+Path to the FastIsostasy parameter namelist file containing the isostasy and barysealevel records.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_restart_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File used to save and restore FastIsostasy's internal isostasy state (viscous bedrock displacement,
+its ODE integrator state, and the load reference state) across a MALI restart. MALI writes this file
+every time it writes its own 'restart' stream and reads it back on the next restart when
+config_uplift_method='fastisostasy'. Only the most recently written snapshot is kept; branching from
+an older MALI restart file requires a matching older copy of this file.
+
+Valid values: Any file name string
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_fastisostasy_bsl_restart_file" type="char*1024"
+	category="solidearth" group="solidearth">
+File used to save and restore FastIsostasy's prognostic barystatic sea level (bsl_now, A_ocean_now)
+across a MALI restart. Written and read alongside config_fastisostasy_restart_file; see its
+description for details.
 
 Valid values: Any file name string
 Default: Defined in namelist_defaults.xml

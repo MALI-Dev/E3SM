@@ -158,7 +158,7 @@
 	<nml_record name="solidearth" in_defaults="true">
 		<nml_option name="config_uplift_method" type="character" default_value="none" units="unitless"
 		            description="Selection of the method for bedrock uplift calculation."
-		            possible_values="'none', 'data', 'sealevelmodel'"
+		            possible_values="'none', 'data', 'sealevelmodel', 'fastisostasy'"
         />
         <nml_option name="config_slm_coupling_interval" type="integer" default_value="2" units="years"
             description="Time interval at which the sea-level model is called by MALI. Only integer years are currently supported. The user must set 'dt1' in namelist.sealevel to match this value.  Note that the user needs to set config_adaptive_timestep_force_interval to divide evenly into config_slm_coupling_interval.  Also, restart file output_interval needs to be a multiple of config_slm_coupling_interval."
@@ -172,6 +172,34 @@
             description="File containing the interpolation weights for regridding from the Gaussian grid used by the Sea Level Model to the MPAS mesh."
             possible_values="Any file name string"
         />
+		<nml_option name="config_fastisostasy_coupling_interval" type="integer" default_value="2" units="years"
+			description="Time interval at which FastIsostasy is called by MALI. Only integer years are currently supported. The user needs to set config_adaptive_timestep_force_interval to divide evenly into config_fastisostasy_coupling_interval."
+			possible_values="Any positive integer"
+		/>
+		<nml_option name="config_MALI_to_FASTISOSTASY_weights_file" type="character" default_value="mpas_to_fastisostasy.nc" units="unitless"
+			description="File containing interpolation weights for regridding from MPAS mesh to the regular Cartesian grid used by FastIsostasy."
+			possible_values="Any file name string"
+		/>
+		<nml_option name="config_FASTISOSTASY_to_MALI_weights_file" type="character" default_value="fastisostasy_to_mpas.nc" units="unitless"
+			description="File containing interpolation weights for regridding from the regular Cartesian grid used by FastIsostasy to the MPAS mesh."
+			possible_values="Any file name string"
+		/>
+		<nml_option name="config_fastisostasy_grid_resolution" type="real" default_value="0.0" units="m"
+			description="Physical grid spacing (dx=dy; FastIsostasy requires a square grid) of the regular Cartesian target grid that config_MALI_to_FASTISOSTASY_weights_file/config_FASTISOSTASY_to_MALI_weights_file remap between. The mapping files only define connectivity and interpolation weights between grids, not the destination grid's physical spacing, but FastIsostasy needs a physical spacing (not just a cell count) to convert its own 'pad' namelist option (given in km) into a number of grid cells to pad its computational domain with. There is currently no way to derive this automatically from the mapping files, so it must be set here to match whatever resolution was used to generate them. The default of 0.0 is a deliberate invalid sentinel: MALI aborts with an error if this is left unset rather than silently falling back to some assumed spacing, since an incorrect value here does not necessarily fail loudly (a too-small value inflates the padded grid to a size that typically exhausts memory during allocation, as a too-large value would silently under-pad the domain instead)."
+			possible_values="Any positive real number matching the resolution used to build the FastIsostasy mapping files"
+		/>
+		<nml_option name="config_fastisostasy_parameter_file" type="character" default_value="fastisostasy.nml" units="unitless"
+			description="Path to the FastIsostasy parameter namelist file containing the isostasy and barysealevel records."
+			possible_values="Any file name string"
+		/>
+		<nml_option name="config_fastisostasy_restart_file" type="character" default_value="fastisostasy_restart.nc" units="unitless"
+			description="File used to save and restore FastIsostasy's internal isostasy state (viscous bedrock displacement, its ODE integrator state, and the load reference state) across a MALI restart. MALI writes this file every time it writes its own 'restart' stream and reads it back on the next restart when config_uplift_method='fastisostasy'. Only the most recently written snapshot is kept; branching from an older MALI restart file requires a matching older copy of this file."
+			possible_values="Any file name string"
+		/>
+		<nml_option name="config_fastisostasy_bsl_restart_file" type="character" default_value="fastisostasy_bsl_restart.nc" units="unitless"
+			description="File used to save and restore FastIsostasy's prognostic barystatic sea level (bsl_now, A_ocean_now) across a MALI restart. Written and read alongside config_fastisostasy_restart_file; see its description for details."
+			possible_values="Any file name string"
+		/>
 	</nml_record>
 
 	<nml_record name="calving" in_defaults="true">
