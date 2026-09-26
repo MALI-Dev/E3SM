@@ -112,6 +112,7 @@ module li_core_interface
       logical, pointer :: config_ocean_data_extrapolation
       logical, pointer :: config_enable_timeAvgRestarts
       logical, pointer :: config_apply_smb_sat_lapse_rate
+      logical, pointer :: config_compute_slc_metrics
 
       logical, pointer :: higherOrderVelocityActive
       logical, pointer :: SIAvelocityActive
@@ -125,6 +126,7 @@ module li_core_interface
       logical, pointer :: timeAvgRestartsActive
       logical, pointer :: smbSatLapseRateActive
       logical, pointer :: damageCalvingActive
+      logical, pointer :: slcMetricsPKGActive
 
       ierr = 0
 
@@ -140,6 +142,7 @@ module li_core_interface
       call mpas_pool_get_config(configPool, 'config_thermal_solver', config_thermal_solver)
       call mpas_pool_get_config(configPool, 'config_enable_timeAvgRestarts', config_enable_timeAvgRestarts)
       call mpas_pool_get_config(configPool, 'config_apply_smb_sat_lapse_rate', config_apply_smb_sat_lapse_rate)
+      call mpas_pool_get_config(configPool, 'config_compute_slc_metrics', config_compute_slc_metrics)
 
       call mpas_pool_get_package(packagePool, 'SIAvelocityActive', SIAvelocityActive)
       call mpas_pool_get_package(packagePool, 'higherOrderVelocityActive', higherOrderVelocityActive)
@@ -153,6 +156,7 @@ module li_core_interface
       call mpas_pool_get_package(packagePool, 'timeAvgRestartsActive', timeAvgRestartsActive)
       call mpas_pool_get_package(packagePool, 'smbSatLapseRateActive', smbSatLapseRateActive)
       call mpas_pool_get_package(packagePool, 'damageCalvingActive', damageCalvingActive)
+      call mpas_pool_get_package(packagePool, 'slcMetricsPKGActive', slcMetricsPKGActive)
 
       if (trim(config_velocity_solver) == 'sia') then
          SIAvelocityActive = .true.
@@ -239,6 +243,13 @@ module li_core_interface
          damageCalvingActive = .false.
       endif
 
+      if (config_compute_slc_metrics) then
+         slcMetricsPKGActive = .true.
+         call mpas_log_write("The 'slcMetricsPKG' package and associated variables have been enabled because " // &
+              "'config_compute_slc_metrics' is set to .true.")
+      else
+         slcMetricsPKGActive = .false.
+      endif
 
       ! call setup packages in analysis driver
       call li_analysis_setup_packages(configPool, packagePool, ierr)
