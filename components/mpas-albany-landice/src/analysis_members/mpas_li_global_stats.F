@@ -112,7 +112,19 @@ contains
       !
       !-----------------------------------------------------------------
 
+      type (mpas_pool_type), pointer :: liConfigs
+      logical, pointer :: config_compute_slc_metrics
+
       err = 0
+
+      ! Get config pool
+      call mpas_pool_get_subpool(domain % configs, 'landIceAMConfig', liConfigs)
+      call mpas_pool_get_config(liConfigs, 'config_compute_slc_metrics', config_compute_slc_metrics)
+
+      ! Activate slcMetricsPKG package if SLC metrics are enabled
+      if (config_compute_slc_metrics) then
+         call mpas_packages_set_state(domain % packages, 'slcMetricsPKG', .true.)
+      endif
 
    end subroutine li_init_global_stats
 
@@ -163,6 +175,7 @@ contains
       !-----------------------------------------------------------------
 
       type (mpas_pool_type), pointer :: globalStatsAMPool
+      type (mpas_pool_type), pointer :: slcMetricsPool
       type (dm_info) :: dminfo
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: statePool
@@ -827,8 +840,11 @@ contains
             ! === Sea level change (Adhikari et al. 2020) - Reference state ===
             ! Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-833-2020
             call mpas_pool_get_array(globalStatsAMPool, 'slc_A2020', slc_A2020)
-            call mpas_pool_get_array(globalStatsAMPool, 'slc_H_ref', slc_H_ref)
-            call mpas_pool_get_array(globalStatsAMPool, 'slc_B_ref', slc_B_ref)
+
+            ! Get slcMetrics pool and reference arrays (only allocated if package is active)
+            call mpas_pool_get_subpool(block % structs, 'slcMetrics', slcMetricsPool)
+            call mpas_pool_get_array(slcMetricsPool, 'slc_H_ref', slc_H_ref)
+            call mpas_pool_get_array(slcMetricsPool, 'slc_B_ref', slc_B_ref)
 
             ! Initialize reference state on first call (shared with G2020)
             if (slc_reference_initialized == 0) then

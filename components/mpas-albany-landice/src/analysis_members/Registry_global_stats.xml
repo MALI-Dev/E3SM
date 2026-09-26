@@ -22,6 +22,7 @@
 	</nml_record>
 	<packages>
 		<package name="globalStatsAMPKG" description="This package includes variables required for the globalStats analysis member."/>
+		<package name="slcMetricsPKG" description="This package includes 2D reference fields for sea level change metrics (only allocated when config_compute_slc_metrics is true)."/>
 	</packages>
 	<var_struct name="globalStatsAM" time_levs="1" packages="globalStatsAMPKG">
 
@@ -59,13 +60,6 @@
                 <!-- Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-833-2020 -->
                 <var name="slc_A2020" type="real" dimensions="Time" units="m"
                         description="Total sea level change following Adhikari et al. (2020) unified formulation, relative to simulation start"
-                />
-                <!-- Reference state variables for A2020 (2D fields) -->
-                <var name="slc_H_ref" type="real" dimensions="nCells Time" units="m"
-                        description="Reference ice thickness for A2020 SLC calculation (initialized at simulation start)"
-                />
-                <var name="slc_B_ref" type="real" dimensions="nCells Time" units="m"
-                        description="Reference bedrock elevation for A2020 SLC calculation (initialized at simulation start)"
                 />
                 <var name="totalIceArea" type="real" dimensions="Time" units="m^2"
                         description="total ice sheet area"
@@ -172,6 +166,15 @@
                 />
 
  	</var_struct>
+	<!-- Reference state variables for A2020 (2D fields) - separate var_struct with package -->
+	<var_struct name="slcMetrics" time_levs="1" packages="slcMetricsPKG">
+		<var name="slc_H_ref" type="real" dimensions="nCells Time" units="m"
+			description="Reference ice thickness for A2020 SLC calculation (initialized at simulation start)"
+		/>
+		<var name="slc_B_ref" type="real" dimensions="nCells Time" units="m"
+			description="Reference bedrock elevation for A2020 SLC calculation (initialized at simulation start)"
+		/>
+	</var_struct>
 	<streams>
 		<stream name="globalStatsOutput" type="output"
 				mode="forward;analysis"
