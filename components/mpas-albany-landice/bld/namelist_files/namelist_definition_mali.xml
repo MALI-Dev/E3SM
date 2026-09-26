@@ -274,23 +274,25 @@ Default: Defined in namelist_defaults.xml
 
 <entry id="config_fastisostasy_restart_file" type="char*1024"
 	category="solidearth" group="solidearth">
-File used to save and restore FastIsostasy's internal isostasy state (viscous bedrock displacement,
-its ODE integrator state, and the load reference state) across a MALI restart. MALI writes this file
-every time it writes its own 'restart' stream and reads it back on the next restart when
-config_uplift_method='fastisostasy'. Only the most recently written snapshot is kept; branching from
-an older MALI restart file requires a matching older copy of this file.
+Base filename for FastIsostasy isostasy state restart files. On write, the current model time is
+automatically appended to create a timestamped filename matching MALI's restart stream pattern
+(e.g., 'fastisostasy_restart.2026-09-25_00.00.00.nc'). On read during a restart, the same timestamping
+logic constructs the filename to match the current restart time, ensuring FastIsostasy restart files
+automatically align with MALI restart files at the same model time. Specify only the base name here
+(without .nc extension or timestamp). For branching from an older restart, ensure the matching timestamped
+FastIsostasy restart files from that time are available.
 
-Valid values: Any file name string
+Valid values: Any base filename string (without .nc extension)
 Default: Defined in namelist_defaults.xml
 </entry>
 
 <entry id="config_fastisostasy_bsl_restart_file" type="char*1024"
 	category="solidearth" group="solidearth">
-File used to save and restore FastIsostasy's prognostic barystatic sea level (bsl_now, A_ocean_now)
-across a MALI restart. Written and read alongside config_fastisostasy_restart_file; see its
-description for details.
+Base filename for FastIsostasy barystatic sea level restart files. Naming behavior matches
+config_fastisostasy_restart_file - automatic timestamping on both write and read ensures alignment
+with MALI restart files. Specify only the base name (without .nc extension or timestamp).
 
-Valid values: Any file name string
+Valid values: Any base filename string (without .nc extension)
 Default: Defined in namelist_defaults.xml
 </entry>
 
