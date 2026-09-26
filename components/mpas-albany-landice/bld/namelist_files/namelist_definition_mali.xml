@@ -70,9 +70,9 @@ Default: Defined in namelist_defaults.xml
 
 <entry id="config_flowParamA_calculation" type="char*1024"
 	category="velocity_solver" group="velocity_solver">
-Selection of the method for calculating the flow law parameter A.  If 'constant' is selected, the value is set to config_default_flowParamA.  The other options are calculated from the temperature field.  This calculation only applies if config_velocity_solver is set to 'sia'.  For the 'FO' velocity solver, this is set in the albany_input.yaml file.
+Selection of the method for calculating the flow law parameter A.  If 'constant' is selected, the value is set to config_default_flowParamA.  The other options are calculated from the temperature field.  'PB1982' and 'CP2010' are for n=3; 'Fan2025' is for n=4 using parameters from Fan et al. (2025) low-strain recalibration as reported in Lilien et al. (2026) Table 1.  This calculation only applies if config_velocity_solver is set to 'sia'.  For the 'FO' velocity solver, this is set in the albany_input.yaml file.
 
-Valid values: 'constant', 'PB1982', 'CP2010'
+Valid values: 'constant', 'PB1982', 'CP2010', 'Fan2025'
 Default: Defined in namelist_defaults.xml
 </entry>
 
