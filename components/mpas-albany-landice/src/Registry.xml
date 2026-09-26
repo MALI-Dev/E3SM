@@ -594,6 +594,14 @@
 		            description="sea level to use for calculating floatation (assumed constant and uniform)"
 		            possible_values="Any real value"
 		/>
+		<nml_option name="config_ocean_surface_area" type="real" default_value="3.625e14" units="m^2"
+		            description="Global ocean surface area for sea level change calculations (ISMIP7 default: 3.625e14 m^2; adjust for regional domains)"
+		            possible_values="Any positive real value"
+		/>
+		<nml_option name="config_compute_slc_G2020" type="logical" default_value=".false." units="unitless"
+		            description="If true, compute Goelzer et al. (2020) sea level change metric in global stats analysis member"
+		            possible_values=".true. or .false."
+		/>
 		<nml_option name="config_default_flowParamA" type="real" default_value="3.1709792e-24" units="s^-1 Pa^-n"
 		            description="Defines the default value of the flow law parameter A to be used if it is not being calculated from ice temperature.  This value will be used by either the sia or FO velocity solver if they are respectively configured to use a scalar A value.  Defaults to the SI representation of 1.0e-16 yr^-1 Pa^-3."
 		            possible_values="Any positive real value"

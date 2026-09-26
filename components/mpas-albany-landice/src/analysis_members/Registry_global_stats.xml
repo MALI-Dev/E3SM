@@ -31,6 +31,33 @@
                 <var name="volumeAboveFloatation" type="real" dimensions="Time" units="m^3"
                         description="total ice sheet volume above floatation"
                 />
+                <!-- Sea Level Change Metrics following Goelzer et al. 2020 -->
+                <!-- Reference: Goelzer, H., et al. (2020), https://doi.org/10.5194/tc-14-833-2020 -->
+                <var name="slc_G2020" type="real" dimensions="Time" units="m"
+                        description="Total sea level change following Goelzer et al. (2020) decomposition, relative to simulation start"
+                />
+                <var name="slc_G2020_af" type="real" dimensions="Time" units="m"
+                        description="Sea level change due to volume above floatation component (Goelzer et al. 2020)"
+                />
+                <var name="slc_G2020_pov" type="real" dimensions="Time" units="m"
+                        description="Sea level change due to perturbation ocean volume component (Goelzer et al. 2020)"
+                />
+                <var name="slc_G2020_den" type="real" dimensions="Time" units="m"
+                        description="Sea level change due to density effect component (Goelzer et al. 2020)"
+                />
+                <!-- Reference state variables for SLC (stored in pool but not written to output) -->
+                <var name="slc_VAF_ref" type="real" dimensions="Time" units="m^3"
+                        description="Reference volume above floatation for SLC calculation (initialized at simulation start)"
+                />
+                <var name="slc_v_pov_ref" type="real" dimensions="Time" units="m^3"
+                        description="Reference perturbation ocean volume for SLC calculation (initialized at simulation start)"
+                />
+                <var name="slc_v_den_ref" type="real" dimensions="Time" units="m^3"
+                        description="Reference density effect volume for SLC calculation (initialized at simulation start)"
+                />
+                <var name="slc_reference_initialized" type="integer" dimensions="Time" units="unitless"
+                        description="Flag indicating if SLC reference state has been initialized (0=no, 1=yes)"
+                />
                 <var name="totalIceArea" type="real" dimensions="Time" units="m^2"
                         description="total ice sheet area"
                 />
