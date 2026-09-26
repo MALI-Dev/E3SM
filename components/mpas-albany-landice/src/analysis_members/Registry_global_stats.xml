@@ -167,12 +167,13 @@
 
  	</var_struct>
 	<!-- Reference state variables for A2020 (2D fields) - separate var_struct with package -->
+	<!-- Note: No Time dimension - these are constant reference snapshots -->
 	<var_struct name="slcMetrics" time_levs="1" packages="slcMetricsPKG">
-		<var name="slc_H_ref" type="real" dimensions="nCells Time" units="m"
-			description="Reference ice thickness for A2020 SLC calculation (initialized at simulation start)"
+		<var name="slc_H_ref" type="real" dimensions="nCells" units="m"
+			description="Reference ice thickness for A2020 SLC calculation (constant, initialized at simulation start)"
 		/>
-		<var name="slc_B_ref" type="real" dimensions="nCells Time" units="m"
-			description="Reference bedrock elevation for A2020 SLC calculation (initialized at simulation start)"
+		<var name="slc_B_ref" type="real" dimensions="nCells" units="m"
+			description="Reference bedrock elevation for A2020 SLC calculation (constant, initialized at simulation start)"
 		/>
 	</var_struct>
 	<streams>
