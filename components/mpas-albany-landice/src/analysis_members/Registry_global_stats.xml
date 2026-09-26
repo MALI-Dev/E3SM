@@ -57,7 +57,7 @@
                         description="Reference density effect volume for SLC calculation (initialized at simulation start)"
                 />
                 <!-- Sea Level Change Metric following Adhikari et al. 2020 -->
-                <!-- Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-833-2020 -->
+	<!-- Reference: Adhikari, S., et al. (2020), https://doi.org/10.5194/tc-14-2819-2020 -->
                 <var name="slc_A2020" type="real" dimensions="Time" units="m"
                         description="Total sea level change following Adhikari et al. (2020) unified formulation, relative to simulation start"
                 />
