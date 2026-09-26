@@ -910,6 +910,8 @@ contains
       real (kind=RKIND), pointer :: config_fastisostasy_grid_resolution
       character (len=StrKIND), pointer :: config_fastisostasy_restart_file
       character (len=StrKIND), pointer :: config_fastisostasy_bsl_restart_file
+      character (len=StrKIND) :: restart_filename, bsl_restart_filename
+      character (len=StrKIND), pointer :: xtime
       logical :: fastisostasyRestartFileExists, fastisostasyBslRestartFileExists
       real (kind=wp) :: fastisostasyInitTime
 
@@ -1001,23 +1003,57 @@ contains
          err = ior(err, err_tmp)
 
          if (curProc.eq.0) then
-            inquire(file=trim(config_fastisostasy_restart_file), exist=fastisostasyRestartFileExists)
-            inquire(file=trim(config_fastisostasy_bsl_restart_file), exist=fastisostasyBslRestartFileExists)
-            if (.not. fastisostasyRestartFileExists) then
-               call mpas_log_write("FastIsostasy restart file '" // trim(config_fastisostasy_restart_file) // &
-                    "' was not found. A restart with config_uplift_method='fastisostasy' requires restart " // &
-                    "files written by a previous run of this MALI executable (see li_bedtopo_write_restart).", &
-                    MPAS_LOG_ERR)
-               err = ior(err, 1)
-            endif
-            if (.not. fastisostasyBslRestartFileExists) then
-               call mpas_log_write("FastIsostasy restart file '" // trim(config_fastisostasy_bsl_restart_file) // &
-                    "' was not found. A restart with config_uplift_method='fastisostasy' requires restart " // &
-                    "files written by a previous run of this MALI executable (see li_bedtopo_write_restart).", &
-                    MPAS_LOG_ERR)
-               err = ior(err, 1)
+            ! Construct timestamped filenames (same as what write path creates)
+            call construct_fastisostasy_restart_filename(domain, config_fastisostasy_restart_file, &
+                                                         restart_filename, err_tmp)
+            err = ior(err, err_tmp)
+            call construct_fastisostasy_restart_filename(domain, config_fastisostasy_bsl_restart_file, &
+                                                         bsl_restart_filename, err_tmp)
+            err = ior(err, err_tmp)
+
+            ! Check if timestamped restart files exist
+            if (err == 0) then
+               inquire(file=trim(restart_filename), exist=fastisostasyRestartFileExists)
+               inquire(file=trim(bsl_restart_filename), exist=fastisostasyBslRestartFileExists)
+
+               if (.not. fastisostasyRestartFileExists) then
+                  call mpas_log_write("FastIsostasy restart file not found: " // trim(restart_filename), &
+                                      MPAS_LOG_ERR)
+                  call mpas_pool_get_array(meshPool, 'xtime', xtime)
+                  call mpas_log_write("  Current model time: " // trim(xtime), MPAS_LOG_ERR)
+                  call mpas_log_write("  Filename constructed from config_fastisostasy_restart_file (" // &
+                                      trim(config_fastisostasy_restart_file) // ") and current model time.", &
+                                      MPAS_LOG_ERR)
+                  call mpas_log_write("  This should match a MALI restart file at the same time.", MPAS_LOG_ERR)
+                  call mpas_log_write("A restart with config_uplift_method='fastisostasy' requires matching " // &
+                                      "FI restart files.", MPAS_LOG_ERR)
+                  err = ior(err, 1)
+               endif
+
+               if (.not. fastisostasyBslRestartFileExists) then
+                  call mpas_log_write("FastIsostasy BSL restart file not found: " // trim(bsl_restart_filename), &
+                                      MPAS_LOG_ERR)
+                  call mpas_pool_get_array(meshPool, 'xtime', xtime)
+                  call mpas_log_write("  Current model time: " // trim(xtime), MPAS_LOG_ERR)
+                  call mpas_log_write("  Filename constructed from config_fastisostasy_bsl_restart_file (" // &
+                                      trim(config_fastisostasy_bsl_restart_file) // ") and current model time.", &
+                                      MPAS_LOG_ERR)
+                  call mpas_log_write("  This should match a MALI restart file at the same time.", MPAS_LOG_ERR)
+                  call mpas_log_write("A restart with config_uplift_method='fastisostasy' requires matching " // &
+                                      "FI restart files.", MPAS_LOG_ERR)
+                  err = ior(err, 1)
+               endif
+
+               if (err == 0) then
+                  call mpas_log_write("Reading FastIsostasy restart files:")
+                  call mpas_log_write("  " // trim(restart_filename))
+                  call mpas_log_write("  " // trim(bsl_restart_filename))
+               endif
             endif
          endif
+
+         ! Broadcast error status to all ranks
+         call MPI_BCAST(err, 1, MPI_INTEGER, 0, domain % dminfo % comm, err_tmp)
       else
          fastisostasyTimeStep = 0
       endif
@@ -1085,9 +1121,10 @@ contains
                            nFastIsostasyX, nFastIsostasyY, fastisostasyDx, fastisostasyDy)
 
             if (config_do_restart) then
-               isosFastIsostasy%par%restart = trim(config_fastisostasy_restart_file)
+               ! Use timestamped restart filenames constructed earlier
+               isosFastIsostasy%par%restart = trim(restart_filename)
                isosFastIsostasy%par%use_restart = .true.
-               call bsl_restart_read(bslFastIsostasy, trim(config_fastisostasy_bsl_restart_file))
+               call bsl_restart_read(bslFastIsostasy, trim(bsl_restart_filename))
             else
                isosFastIsostasy%par%use_restart = .false.
                call isos_init_ref(isosFastIsostasy, bedtopoFastIsostasy2D, thicknessFastIsostasy2D)
@@ -1297,6 +1334,7 @@ contains
       character (len=StrKIND), pointer :: config_fastisostasy_restart_file
       character (len=StrKIND), pointer :: config_fastisostasy_bsl_restart_file
       integer, pointer :: config_fastisostasy_coupling_interval
+      character (len=StrKIND) :: restart_filename, bsl_restart_filename
       real (kind=wp) :: fastisostasyTime
       integer :: err_tmp
 #endif
@@ -1319,17 +1357,33 @@ contains
             call mpas_pool_get_config(liConfigs, 'config_fastisostasy_coupling_interval', &
                                       config_fastisostasy_coupling_interval)
 
-            ! Must match how fastisostasy_solve computes the time associated with the
-            ! most recent isos_update call, so that a subsequent restart resumes at
-            ! exactly the time value stamped in this file (see fastisostasy_init and
-            ! find_fastisostasy_restart_timestep).
-            fastisostasyTime = real(fastisostasyTimeStep, wp) * real(config_fastisostasy_coupling_interval, wp)
+            ! Construct timestamped filenames using MPAS clock (same source as MALI restart stream)
+            call construct_fastisostasy_restart_filename(domain, config_fastisostasy_restart_file, &
+                                                         restart_filename, err_tmp)
+            err = ior(err, err_tmp)
+            call construct_fastisostasy_restart_filename(domain, config_fastisostasy_bsl_restart_file, &
+                                                         bsl_restart_filename, err_tmp)
+            err = ior(err, err_tmp)
 
-            call mpas_log_write("Writing FastIsostasy restart files at FastIsostasy time level $i", &
-                                intArgs=(/fastisostasyTimeStep/))
-            call isos_restart_write(isosFastIsostasy, trim(config_fastisostasy_restart_file), fastisostasyTime)
-            call bsl_restart_write(bslFastIsostasy, trim(config_fastisostasy_bsl_restart_file), fastisostasyTime)
+            if (err == 0) then
+               ! Must match how fastisostasy_solve computes the time associated with the
+               ! most recent isos_update call, so that a subsequent restart resumes at
+               ! exactly the time value stamped in this file (see fastisostasy_init and
+               ! find_fastisostasy_restart_timestep).
+               fastisostasyTime = real(fastisostasyTimeStep, wp) * real(config_fastisostasy_coupling_interval, wp)
+
+               call mpas_log_write("Writing FastIsostasy restart files at FastIsostasy time level $i:", &
+                                   intArgs=(/fastisostasyTimeStep/))
+               call mpas_log_write("  " // trim(restart_filename))
+               call mpas_log_write("  " // trim(bsl_restart_filename))
+
+               call isos_restart_write(isosFastIsostasy, trim(restart_filename), fastisostasyTime)
+               call bsl_restart_write(bslFastIsostasy, trim(bsl_restart_filename), fastisostasyTime)
+            endif
          endif
+
+         ! Broadcast error status to all ranks
+         call MPI_BCAST(err, 1, MPI_INTEGER, 0, domain % dminfo % comm, err_tmp)
       endif
 #endif
 
@@ -1740,6 +1794,74 @@ contains
 
    !--------------------------------------------------------------------
    end subroutine find_slm_restart_timestep
+
+
+!***********************************************************************
+!
+!  routine construct_fastisostasy_restart_filename
+!
+!> \brief   Constructs timestamped FastIsostasy restart filename
+!> \author  Matt Hoffman
+!> \date    September 2026
+!> \details
+!>  Constructs a timestamped FastIsostasy restart filename by querying
+!>  the MPAS TimeManager clock and appending the timestamp to the base
+!>  filename. The timestamp is obtained from the same clock source used
+!>  by MALI's restart stream, ensuring that FastIsostasy restart files
+!>  match MALI restart file timestamps exactly.
+!>  Format: <base_filename>.<YYYY-MM-DD_hh.mm.ss>.nc
+!>  Example: fastisostasy_restart.2026-09-25_00.00.00.nc
+!
+!-----------------------------------------------------------------------
+
+   subroutine construct_fastisostasy_restart_filename(domain, base_filename, output_filename, err)
+
+      use mpas_timekeeping
+
+      type (domain_type), intent(in) :: domain
+      character(len=*), intent(in) :: base_filename
+      character(len=StrKIND), intent(out) :: output_filename
+      integer, intent(out) :: err
+
+      ! local vars
+      type (MPAS_Time_type) :: currTime
+      character(len=StrKIND) :: timeStamp, timeStampFormatted, base_clean
+      integer :: i, err_tmp
+
+      err = 0
+
+      ! Remove .nc extension if present in base filename
+      base_clean = trim(base_filename)
+      if (len_trim(base_clean) > 3) then
+         if (base_clean(len_trim(base_clean)-2:len_trim(base_clean)) == '.nc') then
+            base_clean = base_clean(1:len_trim(base_clean)-3)
+         endif
+      endif
+
+      ! Query the MPAS clock for current time (same source as MALI restart stream)
+      currTime = mpas_get_clock_time(domain % clock, MPAS_NOW, err_tmp)
+      err = ior(err, err_tmp)
+      if (err /= 0) return
+
+      ! Extract timestamp string (format: "YYYY-MM-DD_hh:mm:ss")
+      call mpas_get_time(currTime, dateTimeString=timeStamp, ierr=err_tmp)
+      err = ior(err, err_tmp)
+      if (err /= 0) return
+
+      ! Format timestamp for filesystem: replace ':' with '.'
+      ! Result: "YYYY-MM-DD_hh.mm.ss"
+      timeStampFormatted = timeStamp
+      do i = 1, len_trim(timeStampFormatted)
+         if (timeStampFormatted(i:i) == ':') then
+            timeStampFormatted(i:i) = '.'
+         endif
+      enddo
+
+      ! Construct timestamped filename
+      output_filename = trim(base_clean) // '.' // trim(timeStampFormatted) // '.nc'
+
+   !--------------------------------------------------------------------
+   end subroutine construct_fastisostasy_restart_filename
 
 
 !***********************************************************************
