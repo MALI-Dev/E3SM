@@ -1113,6 +1113,8 @@
                         <var name="oceanSalinity" packages="extrapOceanData"/>
                         <!-- time averaging fields for restart -->
                         <var_struct name="timeAveraging"/>
+                        <!-- SLC reference fields for restart -->
+                        <var_struct name="slcMetrics" packages="slcMetricsPKG"/>
 		</stream>
 
 
