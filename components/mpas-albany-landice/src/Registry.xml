@@ -1162,8 +1162,9 @@
                                 filename_template="fluxGateMasks.nc"
                                 input_interval="initial_only"
                                 runtime_format="single_file">
-                        <var name="fluxGateEdgeMasks"/>
-                        <var name="fluxGateEdgeMasksSigns"/>
+                        <var name="fluxGateEdgeID"/>
+                        <var name="fluxGateEdgeSign"/>
+                        <var name="fluxGateNames"/>
                 </stream>
 
 		<!-- Input stream for use with config_calving = ismip6_retreat, which requires multiple
@@ -2146,14 +2147,14 @@ is the value of that variable from the *previous* time level!
 	</var_struct>
 
         <var_struct name="fluxGates" time_levs="1">
-          <var name="fluxGateEdgeMasks" type="integer" dimensions="nFluxGates nEdges" default_value="1"
-               description="Masks set to 1 in edges that belong to a given flux gate and 0 otherwise."
+          <var name="fluxGateEdgeID" type="integer" dimensions="nEdges" default_value="0"
+               description="Gate number (1..nFluxGates) each edge belongs to; 0 if edge is on no gate."
                />
-          <var name="fluxGateEdgeMasksSigns" type="integer" dimensions="nFluxGates nEdges" default_value="1"
-               description="Sign of edge for flux gate calculations, calculated using compute_mpas_transect_masks with --add_edge_sign in MPAS-Tools."
+          <var name="fluxGateEdgeSign" type="integer" dimensions="nEdges" default_value="0"
+               description="Flux sign (-1 or +1) for the edge's gate; 0 if edge is on no gate. From compute_mpas_transect_masks --add_edge_sign, collapsed to per-edge."
                />
 	  <var name="fluxGateNames" type="text" dimensions="nFluxGates"
-	       description="name of region masks"
+	       description="name of flux gates"
                />
 	</var_struct>
 
