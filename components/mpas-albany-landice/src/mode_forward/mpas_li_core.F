@@ -134,6 +134,8 @@ module li_core
       err = 0
       err_tmp = 0
       globalErr = 0
+      streamErr = 0
+      femExtAttErr = 0
 
       call li_config_init(domain % configs)
       call mpas_pool_get_config(domain % configs, 'config_do_restart', config_do_restart)
@@ -412,9 +414,12 @@ module li_core
       call li_bedtopo_init(domain, err_tmp)
       err = ior(err, err_tmp)
 
+      if (err>0) call mpas_log_write("Error detected before analysis driver init (check prior init steps)", MPAS_LOG_CRIT)
+
       ! initialize analysis driver
       call li_analysis_init(domain, err_tmp)
       err = ior(err, err_tmp)
+      if (err>0) call mpas_log_write("Error in li_analysis_init or prior init steps", MPAS_LOG_CRIT)
 
       ! initialize time averaging of fields sent to coupler
       call li_time_average_coupled_init(meshPool,timeAveragingPool)      
@@ -516,6 +521,7 @@ module li_core
 
       err = 0
       err_tmp = 0
+      err_tmp2 = 0
       globalErr = 0
 
       ! Get Pool stuff that will be needed
@@ -570,6 +576,7 @@ module li_core
 
          call li_timestep(domain, err_tmp)
          err = ior(err,err_tmp)
+         if (err_tmp > 0) call mpas_log_write('Error in li_timestep', MPAS_LOG_ERR)
 
          ! Write statistics at designated interval
          if (config_stats_interval > 0) then
@@ -601,10 +608,13 @@ module li_core
          ! (note: alarms and timers are handled by the analysis member code)
          call li_analysis_compute(domain, err_tmp)
          err = ior(err, err_tmp)
+         if (err_tmp > 0) call mpas_log_write('Error in li_analysis_compute', MPAS_LOG_ERR)
          call li_analysis_restart(domain, err_tmp)
          err = ior(err, err_tmp)
+         if (err_tmp > 0) call mpas_log_write('Error in li_analysis_restart', MPAS_LOG_ERR)
          call li_analysis_write(domain, err_tmp)
          err = ior(err, err_tmp)
+         if (err_tmp > 0) call mpas_log_write('Error in li_analysis_write', MPAS_LOG_ERR)
 
          ! ===
          ! === Write Output and/or Restart, if needed
@@ -696,7 +706,6 @@ module li_core
             call mpas_reset_clock_alarm(domain % clock, 'timeAveragingInterval', ierr=err_tmp)
             err = ior(err, err_tmp)
          endif
-         err = ior(err, err_tmp)
 
 
          ! === (end of output section) ===
@@ -716,7 +725,6 @@ module li_core
             call mpas_reset_clock_alarm(domain % clock, 'adaptiveTimestepForceInterval', ierr=err_tmp)
             err = ior(err, err_tmp)
          endif
-         err = ior(err, err_tmp)
 
          ! === error check and exit
          call mpas_dmpar_max_int(domain % dminfo, err, globalErr)  ! Find out if any blocks got an error
