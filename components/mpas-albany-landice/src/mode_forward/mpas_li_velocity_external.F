@@ -704,7 +704,7 @@ contains
       ! Optionally remove vertical velocity inversions on the extended mesh.
       ! The reductions are collective, so every task must reach this point.
       if (config_prevent_extrusion_velo_on_extension) then
-         call li_velocity_external_block_extrusion(meshPool, geometryPool, velocityPool, &
+         call li_velocity_external_prevent_extrusion(meshPool, geometryPool, velocityPool, &
             nInterfacesAdjustedLocal, nEdgesAdjustedLocal)
          call mpas_dmpar_sum_int(dminfo, nInterfacesAdjustedLocal, nInterfacesAdjustedGlobal)
          call mpas_dmpar_sum_int(dminfo, nEdgesAdjustedLocal, nEdgesAdjustedGlobal)
@@ -731,7 +731,7 @@ contains
 
 !***********************************************************************
 !
-!  routine li_velocity_external_block_extrusion
+!  routine li_velocity_external_prevent_extrusion
 !
 !> \brief   Removes vertical inversions of normalVelocity near the extended mesh
 !> \author  Matt Hoffman
@@ -747,7 +747,7 @@ contains
 !
 !-----------------------------------------------------------------------
 
-   subroutine li_velocity_external_block_extrusion(meshPool, geometryPool, velocityPool, &
+   subroutine li_velocity_external_prevent_extrusion(meshPool, geometryPool, velocityPool, &
          nInterfacesAdjusted, nEdgesAdjusted)
 
       type (mpas_pool_type), intent(in) :: meshPool
@@ -763,6 +763,10 @@ contains
       integer :: iEdge, k, iCell, j
       logical :: onExtension
       logical :: edgeAdjusted
+      real (kind=RKIND), parameter :: extrusionTolerance = 2.0_RKIND
+         !< interface must be more than 5% faster than the one above to count as extrusion
+      real (kind=RKIND), parameter :: extrusionMinSpeed = 10.0_RKIND / (365.0_RKIND * 24.0_RKIND * 3600.0_RKIND)
+         !< interfaces slower than 10 m/yr (in m/s) are not adjusted
 
       nInterfacesAdjusted = 0
       nEdgesAdjusted = 0
@@ -777,8 +781,9 @@ contains
          onExtension = .false.
          do j = 1, 2
             iCell = cellsOnEdge(j, iEdge)
-            if (li_mask_is_albany_active(cellMask(iCell)) .and. .not. li_mask_is_dynamic_ice(cellMask(iCell))) then
-               onExtension = .true.
+            !if (li_mask_is_albany_active(cellMask(iCell)) .and. .not. li_mask_is_dynamic_ice(cellMask(iCell))) then
+            if (li_mask_is_dynamic_margin(cellMask(iCell))) then
+              onExtension = .true.
             endif
          enddo
          if (.not. onExtension) cycle
@@ -786,7 +791,8 @@ contains
          edgeAdjusted = .false.
          do k = 2, nVertInterfaces
             if (normalVelocity(k, iEdge) * normalVelocity(k-1, iEdge) > 0.0_RKIND .and. &
-                abs(normalVelocity(k, iEdge)) > abs(normalVelocity(k-1, iEdge))) then
+                abs(normalVelocity(k, iEdge)) > extrusionMinSpeed .and. &
+                abs(normalVelocity(k, iEdge)) > extrusionTolerance * abs(normalVelocity(k-1, iEdge))) then
                normalVelocity(k, iEdge) = normalVelocity(k-1, iEdge)
                nInterfacesAdjusted = nInterfacesAdjusted + 1
                edgeAdjusted = .true.
@@ -795,7 +801,7 @@ contains
          if (edgeAdjusted) nEdgesAdjusted = nEdgesAdjusted + 1
       enddo
 
-   end subroutine li_velocity_external_block_extrusion
+   end subroutine li_velocity_external_prevent_extrusion
 
 
 
