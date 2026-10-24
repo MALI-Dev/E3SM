@@ -500,7 +500,8 @@ contains
                 uReconstructZ = 0.0_RKIND
                 call mpas_log_write("Notice: Skipping velocity solve because there is no dynamic ice in domain.", MPAS_LOG_WARN)
              else
-                call li_velocity_external_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, velocityPool, err_tmp)
+                call li_velocity_external_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, velocityPool, &
+                   domain % dminfo, err_tmp)
              endif
 
          case('simple')

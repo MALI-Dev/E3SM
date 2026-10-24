@@ -405,7 +405,7 @@ contains
 !
 !-----------------------------------------------------------------------
 
-   subroutine li_velocity_external_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, velocityPool, err)
+   subroutine li_velocity_external_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, velocityPool, dminfo, err)
 
        use li_mask
 
@@ -438,6 +438,9 @@ contains
 
       type (mpas_pool_type), intent(inout) :: &
          velocityPool          !< Input/Output: velocity information
+
+      type (dm_info), intent(in) :: &
+         dminfo                !< Input: domain communication information
 
       !-----------------------------------------------------------------
       !
@@ -474,6 +477,9 @@ contains
       logical, pointer :: config_always_compute_fem_grid
       logical, pointer :: config_output_external_velocity_solver_data
       logical, pointer :: config_nonconvergence_error
+      logical, pointer :: config_prevent_extrusion_velo_on_extension
+      integer :: nInterfacesAdjustedLocal, nEdgesAdjustedLocal
+      integer :: nInterfacesAdjustedGlobal, nEdgesAdjustedGlobal
       real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND), pointer :: config_effective_pressure_max
       integer, pointer :: anyDynamicVertexMaskChanged
@@ -499,6 +505,8 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_output_external_velocity_solver_data', &
          config_output_external_velocity_solver_data)
       call mpas_pool_get_config(liConfigs, 'config_nonconvergence_error', config_nonconvergence_error)
+      call mpas_pool_get_config(liConfigs, 'config_prevent_extrusion_velo_on_extension', &
+         config_prevent_extrusion_velo_on_extension)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_effective_pressure_max', config_effective_pressure_max)
 
@@ -693,6 +701,20 @@ contains
          if (.not. li_mask_is_dynamic_ice(edgeMask(iEdge)) ) normalVelocity(:,iEdge) = 0.0e0_RKIND
       end do
 
+      ! Optionally remove vertical velocity inversions on the extended mesh.
+      ! The reductions are collective, so every task must reach this point.
+      if (config_prevent_extrusion_velo_on_extension) then
+         call li_velocity_external_block_extrusion(meshPool, geometryPool, velocityPool, &
+            nInterfacesAdjustedLocal, nEdgesAdjustedLocal)
+         call mpas_dmpar_sum_int(dminfo, nInterfacesAdjustedLocal, nInterfacesAdjustedGlobal)
+         call mpas_dmpar_sum_int(dminfo, nEdgesAdjustedLocal, nEdgesAdjustedGlobal)
+         if (nEdgesAdjustedGlobal > 0) then
+            call mpas_log_write("normalVelocity was adjusted to remove vertical velocity inversions on the extended mesh " // &
+               "(config_prevent_extrusion_velo_on_extension).  Number of interfaces adjusted: $i;  number of edges adjusted: $i", &
+               MPAS_LOG_WARN, intArgs=(/nInterfacesAdjustedGlobal, nEdgesAdjustedGlobal/))
+         endif
+      endif
+
 #if defined(USE_EXTERNAL_L1L2) || defined(USE_EXTERNAL_FIRSTORDER) || defined(USE_EXTERNAL_STOKES)
       call interface_reset_stdout()
 #endif
@@ -704,6 +726,76 @@ contains
 
    !--------------------------------------------------------------------
    end subroutine li_velocity_external_solve
+
+
+
+!***********************************************************************
+!
+!  routine li_velocity_external_block_extrusion
+!
+!> \brief   Removes vertical inversions of normalVelocity near the extended mesh
+!> \author  Matt Hoffman
+!> \date    October 2026
+!> \details
+!>  On edges adjacent to a cell that is Albany-active but not dynamic ice
+!>  (i.e. on or next to the extended mesh), search interfaces from the top down.
+!>  If an interface has a larger magnitude than the interface above it and is in
+!>  the same direction, reset it to the value of the interface above.  Because the
+!>  search proceeds downward using the already-adjusted values, a profile with speed
+!>  increasing monotonically with depth becomes plug flow at the surface speed.
+!>  Returns the local number of interfaces and edges adjusted.
+!
+!-----------------------------------------------------------------------
+
+   subroutine li_velocity_external_block_extrusion(meshPool, geometryPool, velocityPool, &
+         nInterfacesAdjusted, nEdgesAdjusted)
+
+      type (mpas_pool_type), intent(in) :: meshPool
+      type (mpas_pool_type), intent(in) :: geometryPool
+      type (mpas_pool_type), intent(inout) :: velocityPool
+      integer, intent(out) :: nInterfacesAdjusted !< number of interfaces adjusted on this block
+      integer, intent(out) :: nEdgesAdjusted !< number of edges adjusted on this block
+
+      real (kind=RKIND), dimension(:,:), pointer :: normalVelocity
+      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:,:), pointer :: cellsOnEdge
+      integer, pointer :: nEdgesSolve, nVertInterfaces
+      integer :: iEdge, k, iCell, j
+      logical :: onExtension
+      logical :: edgeAdjusted
+
+      nInterfacesAdjusted = 0
+      nEdgesAdjusted = 0
+
+      call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
+      call mpas_pool_get_dimension(meshPool, 'nVertInterfaces', nVertInterfaces)
+      call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+      call mpas_pool_get_array(velocityPool, 'normalVelocity', normalVelocity)
+
+      do iEdge = 1, nEdgesSolve
+         onExtension = .false.
+         do j = 1, 2
+            iCell = cellsOnEdge(j, iEdge)
+            if (li_mask_is_albany_active(cellMask(iCell)) .and. .not. li_mask_is_dynamic_ice(cellMask(iCell))) then
+               onExtension = .true.
+            endif
+         enddo
+         if (.not. onExtension) cycle
+
+         edgeAdjusted = .false.
+         do k = 2, nVertInterfaces
+            if (normalVelocity(k, iEdge) * normalVelocity(k-1, iEdge) > 0.0_RKIND .and. &
+                abs(normalVelocity(k, iEdge)) > abs(normalVelocity(k-1, iEdge))) then
+               normalVelocity(k, iEdge) = normalVelocity(k-1, iEdge)
+               nInterfacesAdjusted = nInterfacesAdjusted + 1
+               edgeAdjusted = .true.
+            endif
+         enddo
+         if (edgeAdjusted) nEdgesAdjusted = nEdgesAdjusted + 1
+      enddo
+
+   end subroutine li_velocity_external_block_extrusion
 
 
 

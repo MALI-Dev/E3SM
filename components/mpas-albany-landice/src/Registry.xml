@@ -111,6 +111,10 @@
 		            description="An optional maximum limit on effective pressure passed to the velocity solver."
 		            possible_values="Any positive, real number."
 		/>
+		<nml_option name="config_prevent_extrusion_velo_on_extension" type="logical" default_value=".false." units="unitless"
+		            description="If true, on edges on or adjacent to the extended mesh of an external (Albany) velocity solver (cells that are Albany-active but not dynamic ice), normalVelocity is modified to remove inversions in the vertical velocity profile.  Searching vertical interfaces from the top down, any interface with a speed larger than the interface above it and in the same direction is reset to the value of the interface above.  A warning with the number of interfaces and edges modified is written to the log if any are modified."
+		            possible_values=".true. or .false."
+		/>
 	</nml_record>
 
 
