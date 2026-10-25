@@ -480,6 +480,11 @@ contains
       logical, pointer :: config_prevent_extrusion_velo_on_extension
       integer :: nInterfacesAdjustedLocal, nCellsAdjustedLocal
       integer :: nInterfacesAdjustedGlobal, nCellsAdjustedGlobal
+      integer :: preventExtrusion
+      real (kind=RKIND), parameter :: extrusionTolerance = 1.2_RKIND
+         !< bed speed must exceed this multiple of the surface speed to count as extrusion
+      real (kind=RKIND), parameter :: extrusionMinSpeed = 10.0_RKIND  ! m/yr
+         !< columns with bed speed below this are not adjusted
       real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND), pointer :: config_effective_pressure_max
       integer, pointer :: anyDynamicVertexMaskChanged
@@ -507,6 +512,10 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_nonconvergence_error', config_nonconvergence_error)
       call mpas_pool_get_config(liConfigs, 'config_prevent_extrusion_velo_on_extension', &
          config_prevent_extrusion_velo_on_extension)
+      nInterfacesAdjustedLocal = 0
+      nCellsAdjustedLocal = 0
+      preventExtrusion = 0
+      if (config_prevent_extrusion_velo_on_extension) preventExtrusion = 1
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_effective_pressure_max', config_effective_pressure_max)
 
@@ -628,7 +637,9 @@ contains
                 bedRoughnessRC, bulkFriction, basalDebrisFactor, &
                 uReconstructX, uReconstructY,  &  ! Dirichlet boundary values to apply where dirichletVelocityMask=1
                 normalVelocity, drivingStressVert, dissipationVertexField % array, uReconstructX, uReconstructY, &  ! return values
-                deltat, albanyVelocityErrorTmp)  ! return values
+                deltat, albanyVelocityErrorTmp, &  ! return values
+                preventExtrusion, extrusionTolerance, extrusionMinSpeed, &
+                nInterfacesAdjustedLocal, nCellsAdjustedLocal)  ! return values
           call mpas_timer_stop("velocity_solver_solve_FO")
 
           ! this error code is accumulated here because the velocity solver will be called multiple times per time step
@@ -685,16 +696,13 @@ contains
       end select
       call mpas_log_write("Completed velocity solve using external velocity solver.")
 
-      ! Optionally remove extrusion flow (bed speed faster than surface speed) from the
-      ! velocity vector returned by the solver.  Still in m/yr here.
+      ! Report extrusion flow removed by the velocity solver interface (see velocity_solver_solve_fo).
       ! The reductions are collective, so every task must reach this point.
       if (config_prevent_extrusion_velo_on_extension) then
-         call li_velocity_external_prevent_extrusion(meshPool, uReconstructX, uReconstructY, &
-            nInterfacesAdjustedLocal, nCellsAdjustedLocal)
          call mpas_dmpar_sum_int(dminfo, nInterfacesAdjustedLocal, nInterfacesAdjustedGlobal)
          call mpas_dmpar_sum_int(dminfo, nCellsAdjustedLocal, nCellsAdjustedGlobal)
          if (nCellsAdjustedGlobal > 0) then
-            call mpas_log_write("uReconstructX/Y were adjusted to remove extrusion flow " // &
+            call mpas_log_write("uReconstructX/Y and normalVelocity were adjusted to remove extrusion flow " // &
                "(config_prevent_extrusion_velo_on_extension).  Number of interfaces adjusted: $i;  number of cells adjusted: $i", &
                MPAS_LOG_WARN, intArgs=(/nInterfacesAdjustedGlobal, nCellsAdjustedGlobal/))
          endif
@@ -727,68 +735,6 @@ contains
 
    !--------------------------------------------------------------------
    end subroutine li_velocity_external_solve
-
-
-
-!***********************************************************************
-!
-!  routine li_velocity_external_prevent_extrusion
-!
-!> \brief   Removes extrusion flow from the velocity vector returned by an external solver
-!> \author  Matt Hoffman
-!> \date    October 2026
-!> \details
-!>  Extrusion is defined as the bed speed exceeding the surface speed by more than
-!>  extrusionTolerance, where the bed speed is greater than extrusionMinSpeed.
-!>  Intermediate layers are ignored when detecting it.  In affected columns, the speed
-!>  at every interface is set to the surface speed, retaining the direction
-!>  of the velocity vector computed at that interface.
-!>  uReconstructX/Y are in m/yr (units of the external dycore) on input and output.
-!>  Returns the local number of interfaces and cells adjusted (owned cells only).
-!
-!-----------------------------------------------------------------------
-
-   subroutine li_velocity_external_prevent_extrusion(meshPool, uReconstructX, uReconstructY, &
-         nInterfacesAdjusted, nCellsAdjusted)
-
-      type (mpas_pool_type), intent(in) :: meshPool
-      real (kind=RKIND), dimension(:,:), intent(inout) :: uReconstructX, uReconstructY !< m/yr
-      integer, intent(out) :: nInterfacesAdjusted !< number of interfaces adjusted on this task
-      integer, intent(out) :: nCellsAdjusted !< number of cells adjusted on this task
-
-      integer, pointer :: nCells, nCellsSolve, nVertInterfaces
-      integer :: iCell, k
-      real (kind=RKIND) :: surfaceSpeed, bedSpeed, speed
-      real (kind=RKIND), parameter :: extrusionTolerance = 1.5_RKIND
-         !< bed speed must exceed this multiple of the surface speed to count as extrusion
-      real (kind=RKIND), parameter :: extrusionMinSpeed = 10.0_RKIND  ! m/yr
-         !< columns with bed speed below this are not adjusted
-
-      nInterfacesAdjusted = 0
-      nCellsAdjusted = 0
-
-      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
-      call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
-      call mpas_pool_get_dimension(meshPool, 'nVertInterfaces', nVertInterfaces)
-
-      do iCell = 1, nCells
-         surfaceSpeed = sqrt(uReconstructX(1, iCell)**2 + uReconstructY(1, iCell)**2)
-         bedSpeed = sqrt(uReconstructX(nVertInterfaces, iCell)**2 + uReconstructY(nVertInterfaces, iCell)**2)
-         if (bedSpeed > extrusionMinSpeed .and. bedSpeed > extrusionTolerance * surfaceSpeed) then
-            do k = 2, nVertInterfaces
-               speed = sqrt(uReconstructX(k, iCell)**2 + uReconstructY(k, iCell)**2)
-               if (speed > 0.0_RKIND) then
-                  uReconstructX(k, iCell) = uReconstructX(k, iCell) * (surfaceSpeed / speed)
-                  uReconstructY(k, iCell) = uReconstructY(k, iCell) * (surfaceSpeed / speed)
-                  if (iCell <= nCellsSolve) nInterfacesAdjusted = nInterfacesAdjusted + 1
-               endif
-            enddo
-            if (iCell <= nCellsSolve) nCellsAdjusted = nCellsAdjusted + 1
-         endif
-      enddo
-
-   end subroutine li_velocity_external_prevent_extrusion
-
 
 
 !***********************************************************************

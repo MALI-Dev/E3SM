@@ -250,7 +250,9 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
     double* const dirichletVelocityXValue, double* const dirichletVelocitYValue,
     double* u_normal_F, double* bodyForce_F, double* dissipation_heat_F,
     double* xVelocityOnCell, double* yVelocityOnCell, double const* deltat,
-    int *error) {
+    int *error,
+    int const* preventExtrusion, double const* extrusionTolerance, double const* extrusionMinSpeed,
+    int* nExtrusionInterfacesAdjusted, int* nExtrusionCellsAdjusted) {
 
   std::fill(u_normal_F, u_normal_F + nEdges_F * (nLayers+1), 0.);
   //import velocity from initial guess and from dirichlet values.
@@ -309,6 +311,33 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
 
   mapVerticesToCells(velocityOnVertices, &velocityOnCells[0], 2, nLayers,
       Ordering);
+
+  // Optionally remove extrusion flow (bed speed faster than surface speed) from the cell velocities
+  // before they are used to compute the normal velocities on edges, so both stay consistent.
+  *nExtrusionInterfacesAdjusted = 0;
+  *nExtrusionCellsAdjusted = 0;
+  if (*preventExtrusion && !isDomainEmpty) {
+    // Note: layers are in reversed order here: il = 0 is the bed and il = nLayers is the surface.
+    for (int iCell = 0; iCell < nCells_F; ++iCell) {
+      int base = iCell * (nLayers + 1);
+      double surfaceSpeed = std::hypot(velocityOnCells[base + nLayers], velocityOnCells[base + nLayers + sizeVelOnCell]);
+      double bedSpeed = std::hypot(velocityOnCells[base], velocityOnCells[base + sizeVelOnCell]);
+      if ((bedSpeed > *extrusionMinSpeed) && (bedSpeed > *extrusionTolerance * surfaceSpeed)) {
+        for (int il = 0; il < nLayers; ++il) {
+          double speed = std::hypot(velocityOnCells[base + il], velocityOnCells[base + il + sizeVelOnCell]);
+          if (speed > 0.) {
+            double scale = surfaceSpeed / speed;
+            velocityOnCells[base + il] *= scale;
+            velocityOnCells[base + il + sizeVelOnCell] *= scale;
+            if (iCell < nCellsSolve_F)
+              ++(*nExtrusionInterfacesAdjusted);
+          }
+        }
+        if (iCell < nCellsSolve_F)
+          ++(*nExtrusionCellsAdjusted);
+      }
+    }
+  }
 
   //computing x, yVelocityOnCell
   for(int iCell=0; iCell<nCells_F; ++iCell)
