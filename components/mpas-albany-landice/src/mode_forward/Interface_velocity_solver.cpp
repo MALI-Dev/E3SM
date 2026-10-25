@@ -323,10 +323,13 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
       double surfaceSpeed = std::hypot(velocityOnCells[base + nLayers], velocityOnCells[base + nLayers + sizeVelOnCell]);
       double bedSpeed = std::hypot(velocityOnCells[base], velocityOnCells[base + sizeVelOnCell]);
       if ((bedSpeed > *extrusionMinSpeed) && (bedSpeed > *extrusionTolerance * surfaceSpeed)) {
+        // Cap speeds at the extrusion limit (rather than resetting to the surface speed) so the
+        // adjustment varies continuously with the amount of extrusion.
+        double maxSpeed = *extrusionTolerance * surfaceSpeed;
         for (int il = 0; il < nLayers; ++il) {
           double speed = std::hypot(velocityOnCells[base + il], velocityOnCells[base + il + sizeVelOnCell]);
-          if (speed > 0.) {
-            double scale = surfaceSpeed / speed;
+          if (speed > maxSpeed) {
+            double scale = maxSpeed / speed;
             velocityOnCells[base + il] *= scale;
             velocityOnCells[base + il + sizeVelOnCell] *= scale;
             if (iCell < nCellsSolve_F)

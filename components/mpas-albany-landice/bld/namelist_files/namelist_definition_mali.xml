@@ -134,7 +134,7 @@ Default: Defined in namelist_defaults.xml
 
 <entry id="config_prevent_extrusion_velo_on_extension" type="logical"
 	category="velocity_solver" group="velocity_solver">
-If true, extrusion flow is removed from the velocity vector (uReconstructX/Y) returned by an external (Albany) velocity solver.  A column has extrusion flow if its bed speed exceeds 1.5 times its surface speed and is greater than 10 m/yr.  In such columns, the speed at all interfaces is set to the surface speed, retaining the direction computed at each interface.  A warning with the number of interfaces and cells modified is written to the log if any are modified.
+If true, extrusion flow is removed from the velocity vector (uReconstructX/Y) returned by an external (Albany) velocity solver.  A column has extrusion flow if its bed speed exceeds 1.2 times its surface speed and is greater than 10 m/yr.  In such columns, the speed at any interface exceeding 1.2 times the surface speed is capped at that value, retaining the direction computed at each interface.  A warning with the number of interfaces and cells modified is written to the log if any are modified.
 
 Valid values: .true. or .false.
 Default: Defined in namelist_defaults.xml
