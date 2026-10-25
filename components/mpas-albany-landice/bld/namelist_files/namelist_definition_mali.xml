@@ -134,7 +134,7 @@ Default: Defined in namelist_defaults.xml
 
 <entry id="config_prevent_extrusion_velo_on_extension" type="logical"
 	category="velocity_solver" group="velocity_solver">
-If true, on edges on or adjacent to the extended mesh of an external (Albany) velocity solver (cells that are Albany-active but not dynamic ice), normalVelocity is modified to remove inversions in the vertical velocity profile.  Searching vertical interfaces from the top down, any interface with a speed larger than the interface above it and in the same direction is reset to the value of the interface above.  A warning with the number of interfaces and edges modified is written to the log if any are modified.
+If true, extrusion flow is removed from the velocity vector (uReconstructX/Y) returned by an external (Albany) velocity solver.  A column has extrusion flow if its bed speed exceeds 1.5 times its surface speed and is greater than 10 m/yr.  In such columns, the speed at all interfaces is set to the surface speed, retaining the direction computed at each interface.  A warning with the number of interfaces and cells modified is written to the log if any are modified.
 
 Valid values: .true. or .false.
 Default: Defined in namelist_defaults.xml

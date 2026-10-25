@@ -478,8 +478,8 @@ contains
       logical, pointer :: config_output_external_velocity_solver_data
       logical, pointer :: config_nonconvergence_error
       logical, pointer :: config_prevent_extrusion_velo_on_extension
-      integer :: nInterfacesAdjustedLocal, nEdgesAdjustedLocal
-      integer :: nInterfacesAdjustedGlobal, nEdgesAdjustedGlobal
+      integer :: nInterfacesAdjustedLocal, nCellsAdjustedLocal
+      integer :: nInterfacesAdjustedGlobal, nCellsAdjustedGlobal
       real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND), pointer :: config_effective_pressure_max
       integer, pointer :: anyDynamicVertexMaskChanged
@@ -685,6 +685,21 @@ contains
       end select
       call mpas_log_write("Completed velocity solve using external velocity solver.")
 
+      ! Optionally remove extrusion flow (bed speed faster than surface speed) from the
+      ! velocity vector returned by the solver.  Still in m/yr here.
+      ! The reductions are collective, so every task must reach this point.
+      if (config_prevent_extrusion_velo_on_extension) then
+         call li_velocity_external_prevent_extrusion(meshPool, uReconstructX, uReconstructY, &
+            nInterfacesAdjustedLocal, nCellsAdjustedLocal)
+         call mpas_dmpar_sum_int(dminfo, nInterfacesAdjustedLocal, nInterfacesAdjustedGlobal)
+         call mpas_dmpar_sum_int(dminfo, nCellsAdjustedLocal, nCellsAdjustedGlobal)
+         if (nCellsAdjustedGlobal > 0) then
+            call mpas_log_write("uReconstructX/Y were adjusted to remove extrusion flow " // &
+               "(config_prevent_extrusion_velo_on_extension).  Number of interfaces adjusted: $i;  number of cells adjusted: $i", &
+               MPAS_LOG_WARN, intArgs=(/nInterfacesAdjustedGlobal, nCellsAdjustedGlobal/))
+         endif
+      endif
+
       ! convert from m/yr (used by external dycores) to m/s (used by MPAS)
       normalVelocity = normalVelocity / secondsInYear
       uReconstructX =  uReconstructX  / secondsInYear
@@ -700,20 +715,6 @@ contains
       do iEdge = 1, nEdges
          if (.not. li_mask_is_dynamic_ice(edgeMask(iEdge)) ) normalVelocity(:,iEdge) = 0.0e0_RKIND
       end do
-
-      ! Optionally remove vertical velocity inversions on the extended mesh.
-      ! The reductions are collective, so every task must reach this point.
-      if (config_prevent_extrusion_velo_on_extension) then
-         call li_velocity_external_prevent_extrusion(meshPool, geometryPool, velocityPool, &
-            nInterfacesAdjustedLocal, nEdgesAdjustedLocal)
-         call mpas_dmpar_sum_int(dminfo, nInterfacesAdjustedLocal, nInterfacesAdjustedGlobal)
-         call mpas_dmpar_sum_int(dminfo, nEdgesAdjustedLocal, nEdgesAdjustedGlobal)
-         if (nEdgesAdjustedGlobal > 0) then
-            call mpas_log_write("normalVelocity was adjusted to remove vertical velocity inversions on the extended mesh " // &
-               "(config_prevent_extrusion_velo_on_extension).  Number of interfaces adjusted: $i;  number of edges adjusted: $i", &
-               MPAS_LOG_WARN, intArgs=(/nInterfacesAdjustedGlobal, nEdgesAdjustedGlobal/))
-         endif
-      endif
 
 #if defined(USE_EXTERNAL_L1L2) || defined(USE_EXTERNAL_FIRSTORDER) || defined(USE_EXTERNAL_STOKES)
       call interface_reset_stdout()
@@ -733,72 +734,57 @@ contains
 !
 !  routine li_velocity_external_prevent_extrusion
 !
-!> \brief   Removes vertical inversions of normalVelocity near the extended mesh
+!> \brief   Removes extrusion flow from the velocity vector returned by an external solver
 !> \author  Matt Hoffman
 !> \date    October 2026
 !> \details
-!>  On edges adjacent to a cell that is Albany-active but not dynamic ice
-!>  (i.e. on or next to the extended mesh), search interfaces from the top down.
-!>  If an interface has a larger magnitude than the interface above it and is in
-!>  the same direction, reset it to the value of the interface above.  Because the
-!>  search proceeds downward using the already-adjusted values, a profile with speed
-!>  increasing monotonically with depth becomes plug flow at the surface speed.
-!>  Returns the local number of interfaces and edges adjusted.
+!>  Extrusion is defined as the bed speed exceeding the surface speed by more than
+!>  extrusionTolerance, where the bed speed is greater than extrusionMinSpeed.
+!>  Intermediate layers are ignored when detecting it.  In affected columns, the speed
+!>  at every interface is set to the surface speed, retaining the direction
+!>  of the velocity vector computed at that interface.
+!>  uReconstructX/Y are in m/yr (units of the external dycore) on input and output.
+!>  Returns the local number of interfaces and cells adjusted (owned cells only).
 !
 !-----------------------------------------------------------------------
 
-   subroutine li_velocity_external_prevent_extrusion(meshPool, geometryPool, velocityPool, &
-         nInterfacesAdjusted, nEdgesAdjusted)
+   subroutine li_velocity_external_prevent_extrusion(meshPool, uReconstructX, uReconstructY, &
+         nInterfacesAdjusted, nCellsAdjusted)
 
       type (mpas_pool_type), intent(in) :: meshPool
-      type (mpas_pool_type), intent(in) :: geometryPool
-      type (mpas_pool_type), intent(inout) :: velocityPool
-      integer, intent(out) :: nInterfacesAdjusted !< number of interfaces adjusted on this block
-      integer, intent(out) :: nEdgesAdjusted !< number of edges adjusted on this block
+      real (kind=RKIND), dimension(:,:), intent(inout) :: uReconstructX, uReconstructY !< m/yr
+      integer, intent(out) :: nInterfacesAdjusted !< number of interfaces adjusted on this task
+      integer, intent(out) :: nCellsAdjusted !< number of cells adjusted on this task
 
-      real (kind=RKIND), dimension(:,:), pointer :: normalVelocity
-      integer, dimension(:), pointer :: cellMask
-      integer, dimension(:,:), pointer :: cellsOnEdge
-      integer, pointer :: nEdgesSolve, nVertInterfaces
-      integer :: iEdge, k, iCell, j
-      logical :: onExtension
-      logical :: edgeAdjusted
-      real (kind=RKIND), parameter :: extrusionTolerance = 2.0_RKIND
-         !< interface must be more than 5% faster than the one above to count as extrusion
-      real (kind=RKIND), parameter :: extrusionMinSpeed = 10.0_RKIND / (365.0_RKIND * 24.0_RKIND * 3600.0_RKIND)
-         !< interfaces slower than 10 m/yr (in m/s) are not adjusted
+      integer, pointer :: nCells, nCellsSolve, nVertInterfaces
+      integer :: iCell, k
+      real (kind=RKIND) :: surfaceSpeed, bedSpeed, speed
+      real (kind=RKIND), parameter :: extrusionTolerance = 1.5_RKIND
+         !< bed speed must exceed this multiple of the surface speed to count as extrusion
+      real (kind=RKIND), parameter :: extrusionMinSpeed = 10.0_RKIND  ! m/yr
+         !< columns with bed speed below this are not adjusted
 
       nInterfacesAdjusted = 0
-      nEdgesAdjusted = 0
+      nCellsAdjusted = 0
 
-      call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+      call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
       call mpas_pool_get_dimension(meshPool, 'nVertInterfaces', nVertInterfaces)
-      call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
-      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
-      call mpas_pool_get_array(velocityPool, 'normalVelocity', normalVelocity)
 
-      do iEdge = 1, nEdgesSolve
-         onExtension = .false.
-         do j = 1, 2
-            iCell = cellsOnEdge(j, iEdge)
-            !if (li_mask_is_albany_active(cellMask(iCell)) .and. .not. li_mask_is_dynamic_ice(cellMask(iCell))) then
-            if (li_mask_is_dynamic_margin(cellMask(iCell))) then
-              onExtension = .true.
-            endif
-         enddo
-         if (.not. onExtension) cycle
-
-         edgeAdjusted = .false.
-         do k = 2, nVertInterfaces
-            if (normalVelocity(k, iEdge) * normalVelocity(k-1, iEdge) > 0.0_RKIND .and. &
-                abs(normalVelocity(k, iEdge)) > extrusionMinSpeed .and. &
-                abs(normalVelocity(k, iEdge)) > extrusionTolerance * abs(normalVelocity(k-1, iEdge))) then
-               normalVelocity(k, iEdge) = normalVelocity(k-1, iEdge)
-               nInterfacesAdjusted = nInterfacesAdjusted + 1
-               edgeAdjusted = .true.
-            endif
-         enddo
-         if (edgeAdjusted) nEdgesAdjusted = nEdgesAdjusted + 1
+      do iCell = 1, nCells
+         surfaceSpeed = sqrt(uReconstructX(1, iCell)**2 + uReconstructY(1, iCell)**2)
+         bedSpeed = sqrt(uReconstructX(nVertInterfaces, iCell)**2 + uReconstructY(nVertInterfaces, iCell)**2)
+         if (bedSpeed > extrusionMinSpeed .and. bedSpeed > extrusionTolerance * surfaceSpeed) then
+            do k = 2, nVertInterfaces
+               speed = sqrt(uReconstructX(k, iCell)**2 + uReconstructY(k, iCell)**2)
+               if (speed > 0.0_RKIND) then
+                  uReconstructX(k, iCell) = uReconstructX(k, iCell) * (surfaceSpeed / speed)
+                  uReconstructY(k, iCell) = uReconstructY(k, iCell) * (surfaceSpeed / speed)
+                  if (iCell <= nCellsSolve) nInterfacesAdjusted = nInterfacesAdjusted + 1
+               endif
+            enddo
+            if (iCell <= nCellsSolve) nCellsAdjusted = nCellsAdjusted + 1
+         endif
       enddo
 
    end subroutine li_velocity_external_prevent_extrusion
