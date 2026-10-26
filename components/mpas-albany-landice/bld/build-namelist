@@ -459,7 +459,7 @@ add_default($nl, 'config_beta_thawed_only');
 add_default($nl, 'config_unrealistic_velocity');
 add_default($nl, 'config_nonconvergence_error');
 add_default($nl, 'config_effective_pressure_max');
-add_default($nl, 'config_prevent_extrusion_velo_on_extension');
+add_default($nl, 'config_cap_extrusion_velocity');
 
 #############################
 # Namelist group: advection #

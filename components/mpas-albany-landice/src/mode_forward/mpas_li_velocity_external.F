@@ -477,7 +477,7 @@ contains
       logical, pointer :: config_always_compute_fem_grid
       logical, pointer :: config_output_external_velocity_solver_data
       logical, pointer :: config_nonconvergence_error
-      logical, pointer :: config_prevent_extrusion_velo_on_extension
+      logical, pointer :: config_cap_extrusion_velocity
       integer :: nInterfacesAdjustedLocal, nCellsAdjustedLocal
       integer :: nInterfacesAdjustedGlobal, nCellsAdjustedGlobal
       integer :: preventExtrusion
@@ -510,12 +510,12 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_output_external_velocity_solver_data', &
          config_output_external_velocity_solver_data)
       call mpas_pool_get_config(liConfigs, 'config_nonconvergence_error', config_nonconvergence_error)
-      call mpas_pool_get_config(liConfigs, 'config_prevent_extrusion_velo_on_extension', &
-         config_prevent_extrusion_velo_on_extension)
+      call mpas_pool_get_config(liConfigs, 'config_cap_extrusion_velocity', &
+         config_cap_extrusion_velocity)
       nInterfacesAdjustedLocal = 0
       nCellsAdjustedLocal = 0
       preventExtrusion = 0
-      if (config_prevent_extrusion_velo_on_extension) preventExtrusion = 1
+      if (config_cap_extrusion_velocity) preventExtrusion = 1
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_effective_pressure_max', config_effective_pressure_max)
 
@@ -698,12 +698,12 @@ contains
 
       ! Report extrusion flow removed by the velocity solver interface (see velocity_solver_solve_fo).
       ! The reductions are collective, so every task must reach this point.
-      if (config_prevent_extrusion_velo_on_extension) then
+      if (config_cap_extrusion_velocity) then
          call mpas_dmpar_sum_int(dminfo, nInterfacesAdjustedLocal, nInterfacesAdjustedGlobal)
          call mpas_dmpar_sum_int(dminfo, nCellsAdjustedLocal, nCellsAdjustedGlobal)
          if (nCellsAdjustedGlobal > 0) then
             call mpas_log_write("uReconstructX/Y and normalVelocity were adjusted to remove extrusion flow " // &
-               "(config_prevent_extrusion_velo_on_extension).  Number of interfaces adjusted: $i;  number of cells adjusted: $i", &
+               "(config_cap_extrusion_velocity).  Number of interfaces adjusted: $i;  number of cells adjusted: $i", &
                MPAS_LOG_WARN, intArgs=(/nInterfacesAdjustedGlobal, nCellsAdjustedGlobal/))
          endif
       endif

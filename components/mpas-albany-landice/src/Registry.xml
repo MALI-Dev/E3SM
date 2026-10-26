@@ -111,7 +111,7 @@
 		            description="An optional maximum limit on effective pressure passed to the velocity solver."
 		            possible_values="Any positive, real number."
 		/>
-		<nml_option name="config_prevent_extrusion_velo_on_extension" type="logical" default_value=".false." units="unitless"
+		<nml_option name="config_cap_extrusion_velocity" type="logical" default_value=".false." units="unitless"
 		            description="If true, extrusion flow is removed from the velocity vector (uReconstructX/Y) returned by an external (Albany) velocity solver.  A column has extrusion flow if its bed speed exceeds 1.2 times its surface speed and is greater than 10 m/yr.  In such columns, the speed at any interface exceeding 1.2 times the surface speed is capped at that value, retaining the direction computed at each interface.  A warning with the number of interfaces and cells modified is written to the log if any are modified."
 		            possible_values=".true. or .false."
 		/>

@@ -15,7 +15,7 @@
 <config_unrealistic_velocity>0.01592356685</config_unrealistic_velocity>
 <config_nonconvergence_error>.true.</config_nonconvergence_error>
 <config_effective_pressure_max>1.0e36</config_effective_pressure_max>
-<config_prevent_extrusion_velo_on_extension>.false.</config_prevent_extrusion_velo_on_extension>
+<config_cap_extrusion_velocity>.false.</config_cap_extrusion_velocity>
 
 <!-- advection -->
 <config_thickness_advection>'fo'</config_thickness_advection>
