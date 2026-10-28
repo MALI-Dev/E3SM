@@ -853,6 +853,7 @@ module li_core
       use li_statistics
       use li_advection
       use li_calving, only: li_calve_ice
+      use li_time_integration_fe_rk, only: calculate_layerThicknessEdge
       use mpas_io_streams, only: MPAS_STREAM_LATEST_BEFORE
 
       implicit none
@@ -887,6 +888,9 @@ module li_core
       character(len=StrKIND), pointer :: config_velocity_solver
       character(len=StrKIND), pointer :: config_calving
       character(len=StrKIND), pointer :: config_damage_calving_method
+      real(kind=RKIND), dimension(:,:), pointer :: normalVelocity, layerNormalVelocity
+      integer, dimension(:), pointer :: edgeMask
+      real(kind=RKIND) :: allowableDtACFL
       ! Variables needed for printing timestamps
       type (MPAS_Time_Type) :: currTime
       character(len=StrKIND) :: timeStamp
@@ -995,6 +999,24 @@ module li_core
       ! Calculate diagnostic vars
       call li_calculate_diagnostic_vars(domain, err=err_tmp)
       err = ior(err, err_tmp)
+
+      ! Analysis members (e.g., fluxGates) need these edge fields, which are otherwise first set during a timestep
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
+         call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
+         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_array(velocityPool, 'normalVelocity', normalVelocity)
+         call mpas_pool_get_array(velocityPool, 'layerNormalVelocity', layerNormalVelocity)
+         call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
+
+         call li_layer_normal_velocity(meshPool, normalVelocity, edgeMask, layerNormalVelocity, allowableDtACFL, err_tmp)
+         err = ior(err, err_tmp)
+         call calculate_layerThicknessEdge(meshPool, geometryPool, velocityPool, err_tmp)
+         err = ior(err, err_tmp)
+
+         block => block % next
+      end do
 
       call mpas_timer_stop("initial state calculation")
 

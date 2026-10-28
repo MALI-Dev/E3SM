@@ -56,7 +56,8 @@ module li_time_integration_fe_rk
    !
    !--------------------------------------------------------------------
 
-   public :: li_time_integrator_forwardeuler_rungekutta
+   public :: li_time_integrator_forwardeuler_rungekutta, &
+             calculate_layerThicknessEdge
 
    !--------------------------------------------------------------------
    !
