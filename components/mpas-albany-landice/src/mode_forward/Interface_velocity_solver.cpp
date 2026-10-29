@@ -59,6 +59,10 @@ int ice_present_bit_value;
 // importFields(): false => 'ismip6-era' (pre-ismip7-era scheme), true => 'ismip7-era'.
 // Set from the namelist option config_fem_extension_method via velocity_solver_set_parameters().
 bool useISMIP7Extension = false;
+// false => config_fem_extension_method='none': the FE mesh only contains triangles whose three
+// nodes are all dynamic (enforced by the Albany-active bit of vertexMask in li_calculate_mask),
+// so no fields are extended beyond the dynamic ice extent in importFields().
+bool useFEMExtension = true;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -121,7 +125,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* clausius_clapeyron_coeff,
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                         bool const* use_GLP_F, bool const* use_ISMIP7_extension_F) {
+                         bool const* use_GLP_F, bool const* use_ISMIP7_extension_F,
+                         bool const* use_FEM_extension_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -129,6 +134,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
   ice_present_bit_value = *li_mask_ValueIce;
   useISMIP7Extension = *use_ISMIP7_extension_F;
+  useFEMExtension = *use_FEM_extension_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, *use_GLP_F, *clausius_clapeyron_coeff);
 }
@@ -586,12 +592,33 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
       int fCell0 = cellsOnEdge_F[2 * fEdge] - 1;
       int fCell1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
       assert((fCell0<nCells_F) && (fCell1<nCells_F));
-      bool isCell0OnMargin = !(cellsMask_F[fCell0] & dynamic_ice_bit_value) &&
-          (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0);
-      bool isCell1OnMargin = !(cellsMask_F[fCell1] & dynamic_ice_bit_value) &&
-          (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0);
-      if(isCell0OnMargin || isCell1OnMargin)
-        iceMarginEdgesLIds.push_back(index);
+      if (useFEMExtension) {
+        bool isCell0OnMargin = !(cellsMask_F[fCell0] & dynamic_ice_bit_value) &&
+            (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0);
+        bool isCell1OnMargin = !(cellsMask_F[fCell1] & dynamic_ice_bit_value) &&
+            (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0);
+        if(isCell0OnMargin || isCell1OnMargin)
+          iceMarginEdgesLIds.push_back(index);
+      } else {
+        // Without the extension, both nodes of a boundary edge are dynamic, so the margin
+        // is identified from the triangle that was excluded from the FE mesh: the edge is on the
+        // ice margin if the third cell of that triangle is a valid, non-dynamic, non-Dirichlet cell.
+        // (If the third cell is outside the MPAS domain, this is a domain boundary edge instead.)
+        ID fVertex0 = verticesOnEdge_F[2 * fEdge] - 1;
+        ID fVertex1 = verticesOnEdge_F[2 * fEdge + 1] - 1;
+        ID excludedFVertex = (fVertexToTriangleID[fVertex0] == NotAnId) ? fVertex0 : fVertex1;
+        int thirdCell = nCells_F;
+        for (int j = 0; j < 3; j++) {
+          int iCell = cellsOnVertex_F[3 * excludedFVertex + j] - 1;
+          if ((iCell != fCell0) && (iCell != fCell1))
+            thirdCell = iCell;
+        }
+        bool isThirdCellOnMargin = (thirdCell >= 0) && (thirdCell < nCells_F) &&
+            !(cellsMask_F[thirdCell] & dynamic_ice_bit_value) &&
+            (dirichletCellsMask_F[(nLayers+1)*thirdCell] == 0);
+        if(isThirdCellOnMargin)
+          iceMarginEdgesLIds.push_back(index);
+      }
     }
   }
 
@@ -1206,6 +1233,11 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
 
   //extend thickness and elevation data to the border for marine vertices
   marineBdyExtensionMap.clear();
+
+  // With config_fem_extension_method='none', all FE vertices are dynamic ice, so there is nothing to extend.
+  if (!useFEMExtension)
+    return;
+
   marineBdyExtensionMap.reserve(nVertices);
 
   for (int iV = 0; iV < nVertices; iV++) {

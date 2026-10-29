@@ -290,6 +290,7 @@ contains
       integer, dimension(:), pointer :: indexToEdgeID
       integer, pointer :: anyDynamicVertexMaskChanged
       integer, pointer :: dirichletMaskChanged
+      character (len=StrKIND), pointer :: femExtensionMethod
       ! truly local variables
       integer :: cell1, cell2
       integer :: cell3, cell4, thisCell
@@ -407,10 +408,21 @@ contains
             ! TODO:  There may be some aspects of the mask that are ok change for external dycores,
             !        but for now just check the whole thing.
             call mpas_pool_get_array(geometryPool, 'vertexMask', vertexMaskOld, timeLevel=2)
-            if ( sum(li_mask_is_dynamic_ice_int(vertexMask) - li_mask_is_dynamic_ice_int(vertexMaskOld)) /= 0 ) then
-                blockDynamicVertexMaskChanged = 1
+            call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
+            if (trim(femExtensionMethod) == 'none') then
+               ! Without the FEM extension, the FE mesh is defined by the Albany-active bit of vertexMask,
+               ! which can change even if the dynamic-ice bit of vertexMask does not.
+               if ( any(iand(vertexMask, li_mask_ValueAlbanyActive) /= iand(vertexMaskOld, li_mask_ValueAlbanyActive)) ) then
+                   blockDynamicVertexMaskChanged = 1
+               else
+                   blockDynamicVertexMaskChanged = 0
+               endif
             else
-                blockDynamicVertexMaskChanged = 0
+               if ( sum(li_mask_is_dynamic_ice_int(vertexMask) - li_mask_is_dynamic_ice_int(vertexMaskOld)) /= 0 ) then
+                   blockDynamicVertexMaskChanged = 1
+               else
+                   blockDynamicVertexMaskChanged = 0
+               endif
             endif
             !print *, 'blockVertexMaskChanged ', blockVertexMaskChanged
             ! Determine if any blocks on this processor had a change to the vertex mask
