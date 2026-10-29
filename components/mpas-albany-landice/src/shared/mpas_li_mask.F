@@ -320,6 +320,9 @@ contains
       logical :: aCellOnVertexHasIce, aCellOnVertexHasNoIce, aCellOnVertexHasDynamicIce, aCellOnVertexHasNoDynamicIce, &
          aCellOnVertexIsFloating, aCellOnVertexIsFloatingAndDynamic, aCellOnVertexIsAlbanyActive, aCellOnVertexIsDomainBoundary
       logical :: aCellOnVertexIsGrounded
+      logical :: allCellsOnVertexAreAlbanyActive
+      character (len=StrKIND), pointer :: femExtensionMethod
+      logical :: useFEMExtension
       logical :: aCellOnEdgeHasIce, aCellOnEdgeHasNoIce, aCellOnEdgeHasDynamicIce, aCellOnEdgeHasNoDynamicIce, &
          aCellOnEdgeIsFloating, aCellOnEdgeIsFloatingAndDynamic, aCellOnEdgeIsDomainBoundary
       logical :: aCellOnEdgeIsGrounded
@@ -597,8 +600,15 @@ contains
       if ( (trim(config_velocity_solver) == 'L1L2') .or. &
            (trim(config_velocity_solver) == 'FO') .or. &
            (trim(config_velocity_solver) == 'Stokes') ) then
+         ! With config_fem_extension_method='none', a vertex (FE triangle) is only Albany active if
+         ! all of its cells are Albany active, so the FE mesh does not extend beyond the dynamic ice.
+         ! Otherwise, a vertex is Albany active if any of its cells are, and the interface extends
+         ! fields to the non-dynamic nodes of those triangles.
+         call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
+         useFEMExtension = (trim(femExtensionMethod) /= 'none')
          do i = 1,nVertices
             aCellOnVertexIsAlbanyActive = .false.
+            allCellsOnVertexAreAlbanyActive = .true.
             numCellsOnVertex = 0
             validVertex = .false.
             numDiriDynamicCells = 0
@@ -610,6 +620,8 @@ contains
                   numCellsOnVertex = numCellsOnVertex + 1
                endif
                aCellOnVertexIsAlbanyActive = (aCellOnVertexIsAlbanyActive .or. li_mask_is_albany_active(cellMask(iCell)))
+               allCellsOnVertexAreAlbanyActive = (allCellsOnVertexAreAlbanyActive .and. &
+                                                  li_mask_is_albany_active(cellMask(iCell)))
 
                !if (li_mask_is_dynamic_ice(cellMask(iCell)) .and. .not. li_mask_is_albany_active(cellMask(iCell))) then
                !!< this finds diri cells
@@ -625,12 +637,17 @@ contains
                endif
             end do
             if (numCellsOnVertex == vertexDegree) validVertex = .true.
-            if (aCellOnVertexIsAlbanyActive .and. validVertex)  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
-            if ( (numDiriDynamicCells == 1) .and. (numDiriNondynamicCells == 1) .and. &
-                 (numExtendedCells == 1) .and. validVertex) then
-               ! This is a special case needed for MISMIP
-               vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
-               vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyMarginNeighbor)
+            if (useFEMExtension) then
+               if (aCellOnVertexIsAlbanyActive .and. validVertex)  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+               if ( (numDiriDynamicCells == 1) .and. (numDiriNondynamicCells == 1) .and. &
+                    (numExtendedCells == 1) .and. validVertex) then
+                  ! This is a special case needed for MISMIP
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyMarginNeighbor)
+               endif
+            else
+               if (allCellsOnVertexAreAlbanyActive .and. validVertex) &
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
             endif
          end do  ! vertices loop
       endif  ! HO velocity solver

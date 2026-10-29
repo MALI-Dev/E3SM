@@ -62,7 +62,7 @@ module li_velocity
    ! Masks that the external dycore's FEM grid was last generated from.  These hold a single
    ! block's masks: external dycores support one block per task, which
    ! li_velocity_external_init enforces by requiring config_number_of_blocks = 0.
-   integer, dimension(:), allocatable :: femVertexDynamicMask, femCellDynamicMask
+   integer, dimension(:), allocatable :: femVertexDynamicMask, femCellDynamicMask, femVertexAlbanyActiveMask
    integer, dimension(:,:), allocatable :: femDirichletMask
 
 !***********************************************************************
@@ -296,6 +296,8 @@ contains
       integer, dimension(:), pointer :: indexToEdgeID
       integer, pointer :: anyDynamicVertexMaskChanged
       integer, pointer :: dirichletMaskChanged
+      character (len=StrKIND), pointer :: femExtensionMethod
+      logical :: vertexMaskDiffers
       ! truly local variables
       integer :: cell1, cell2
       integer :: cell3, cell4, thisCell
@@ -423,7 +425,15 @@ contains
                 blockDynamicVertexMaskChanged = 1
                 blockDirichletMaskChanged = 1
             else
-                if ( any(li_mask_is_dynamic_ice_int(vertexMask) /= femVertexDynamicMask) .or. &
+                call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
+                if (trim(femExtensionMethod) == 'none') then
+                   ! Without the FEM extension, the FE mesh is defined by the Albany-active bit of vertexMask,
+                   ! which can change even if the dynamic-ice bit of vertexMask does not.
+                   vertexMaskDiffers = any(iand(vertexMask, li_mask_ValueAlbanyActive) /= femVertexAlbanyActiveMask)
+                else
+                   vertexMaskDiffers = any(li_mask_is_dynamic_ice_int(vertexMask) /= femVertexDynamicMask)
+                endif
+                if ( vertexMaskDiffers .or. &
                      any(li_mask_is_dynamic_ice_int(cellMask) /= femCellDynamicMask) ) then
                     blockDynamicVertexMaskChanged = 1
                 else
@@ -779,7 +789,7 @@ contains
       end select
 
       if (allocated(femVertexDynamicMask)) then
-         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask)
+         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask, femVertexAlbanyActiveMask)
       endif
 
       ! === error check
@@ -1192,14 +1202,16 @@ contains
       integer, dimension(:,:), intent(in) :: dirichletVelocityMask
 
       if (allocated(femVertexDynamicMask)) then
-         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask)
+         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask, femVertexAlbanyActiveMask)
       endif
       allocate(femVertexDynamicMask(size(vertexMask)))
       allocate(femCellDynamicMask(size(cellMask)))
+      allocate(femVertexAlbanyActiveMask(size(vertexMask)))
       allocate(femDirichletMask(size(dirichletVelocityMask, 1), size(dirichletVelocityMask, 2)))
 
       femVertexDynamicMask(:) = li_mask_is_dynamic_ice_int(vertexMask)
       femCellDynamicMask(:) = li_mask_is_dynamic_ice_int(cellMask)
+      femVertexAlbanyActiveMask(:) = iand(vertexMask, li_mask_ValueAlbanyActive)
       femDirichletMask(:,:) = dirichletVelocityMask(:,:)
 
    !--------------------------------------------------------------------
