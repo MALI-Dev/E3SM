@@ -316,7 +316,7 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
   // before they are used to compute the normal velocities on edges, so both stay consistent.
   *nExtrusionInterfacesAdjusted = 0;
   *nExtrusionCellsAdjusted = 0;
-  if (*preventExtrusion && !isDomainEmpty) {
+  if (*preventExtrusion) {
     // Note: layers are in reversed order here: il = 0 is the bed and il = nLayers is the surface.
     for (int iCell = 0; iCell < nCells_F; ++iCell) {
       int base = iCell * (nLayers + 1);
