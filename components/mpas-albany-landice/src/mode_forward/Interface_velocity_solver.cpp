@@ -63,6 +63,16 @@ bool useISMIP7Extension = false;
 // nodes are all dynamic (enforced by the Albany-active bit of vertexMask in li_calculate_mask),
 // so no fields are extended beyond the dynamic ice extent in importFields().
 bool useFEMExtension = true;
+// Method used to extrapolate the solved velocity onto MPAS edges outside the FE mesh when useFEMExtension
+// is false.  Set from config_fem_velocity_extrapolation_method; codes must match mpas_li_velocity_external.F.
+const int extrapNearest = 0, extrapLinear = 1, extrapFlowline = 2;
+int velocityExtrapolationMethod = extrapNearest;
+// Set from config_fem_velocity_extrapolation_limiter ('relaxed' => true, 'none' => false).
+bool useVelocityExtrapolationLimiter = true;
+// isFENodeCell[iCell]: MPAS cell iCell is a node of at least one FE triangle (i.e., it has a solved velocity).
+// isFilledCell[iCell]: MPAS cell iCell is dynamic but not an FE node, and its velocity was filled from neighbors.
+// Both are only used when useFEMExtension is false.
+std::vector<bool> isFENodeCell, isFilledCell;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -126,7 +136,9 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
                          bool const* use_GLP_F, bool const* use_ISMIP7_extension_F,
-                         bool const* use_FEM_extension_F) {
+                         bool const* use_FEM_extension_F,
+                         int const* velocity_extrapolation_method_F,
+                         bool const* use_velocity_extrapolation_limiter_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -135,6 +147,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   ice_present_bit_value = *li_mask_ValueIce;
   useISMIP7Extension = *use_ISMIP7_extension_F;
   useFEMExtension = *use_FEM_extension_F;
+  velocityExtrapolationMethod = *velocity_extrapolation_method_F;
+  useVelocityExtrapolationLimiter = *use_velocity_extrapolation_limiter_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, *use_GLP_F, *clausius_clapeyron_coeff);
 }
@@ -316,6 +330,11 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
   mapVerticesToCells(velocityOnVertices, &velocityOnCells[0], 2, nLayers,
       Ordering);
 
+  // Without the FEM extension, dynamic cells that are not FE nodes get no velocity from the solver,
+  // so fill them from their neighbors.  This is called on all procs because it includes a halo exchange.
+  if (!useFEMExtension)
+    fillOrphanCellVelocities(dirichletVelocityXValue, dirichletVelocitYValue);
+
   //computing x, yVelocityOnCell
   for(int iCell=0; iCell<nCells_F; ++iCell)
     for(int il=0; il<nLayers + 1; ++il) {
@@ -480,6 +499,19 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
 #endif
   allToAll(fVertexToTriangleID, sendVerticesList_F, recvVerticesList_F);
   allToAll(fVertexToTriangle, sendVerticesList_F, recvVerticesList_F);
+
+  // Flag MPAS cells that are nodes of at least one FE triangle (owned or not).
+  // This is used to extrapolate velocity to edges outside the FE mesh when the FEM extension is disabled.
+  isFENodeCell.assign(nCells_F, false);
+  for (int iCell = 0; iCell < nCells_F; iCell++) {
+    for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+      ID fVertex = verticesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+      if ((fVertex < nVertices_F) && (fVertexToTriangleID[fVertex] != NotAnId)) {
+        isFENodeCell[iCell] = true;
+        break;
+      }
+    }
+  }
 
   //we define the vector of global triangles Ids and compute the stride between the largest and the smallest Id globally
   //This will be needed by the velocity solver to create the 3D FE mesh.
@@ -923,10 +955,22 @@ void get_prism_velocity_on_FEdges(double * uNormal,
     if((fVertex0 >= nVertices_F) || (fVertex1 >= nVertices_F))
       continue;
 
+    //computing midpoint of fortran edge
+    double e_mid[2];
+    e_mid[0] =  0.5*(xVertex_F[fVertex0] + xVertex_F[fVertex1]);
+    e_mid[1] =  0.5*(yVertex_F[fVertex0] + yVertex_F[fVertex1]);
+
     int iTria0 = fVertexToTriangleID[fVertex0];
     int iTria1 = fVertexToTriangleID[fVertex1];
-    if((iTria0 == NotAnId) && (iTria1 == NotAnId)) 
+    if((iTria0 == NotAnId) && (iTria1 == NotAnId)) {
+      // Neither triangle sharing this edge is part of the FE mesh.
+      // With the FEM extension, this edge is outside the ice and its velocity is left at zero.
+      // Without the FEM extension, this can be an edge on the external side of the dynamic ice extent
+      // (or between dynamic cells that are not connected by an FE triangle), so extrapolate the solved velocity.
+      if (!useFEMExtension)
+        extrapolateVelocityOnEdge(iEdge, iCell0, iCell1, nx, ny, e_mid, uNormal, velocityOnCells);
       continue;
+    }
 
     double t0[2*3], t1[2*3]; //t0[0] contains the x-coords of vertices of triangle 0 and t0[1] its y-coords.
     if(iTria0 != NotAnId) {
@@ -950,11 +994,6 @@ void get_prism_velocity_on_FEdges(double * uNormal,
     double bcoords[3];
 
     ID iCells[3]; //iCells[k] is the array of cells indexes of triangle k on iEdge
-
-    //computing midpoint of fortran edge
-    double e_mid[2];
-    e_mid[0] =  0.5*(xVertex_F[fVertex0] + xVertex_F[fVertex1]);
-    e_mid[1] =  0.5*(yVertex_F[fVertex0] + yVertex_F[fVertex1]);
 
     if((iTria0 != NotAnId) && belongToTria(e_mid, t0, bcoords)) {
         // triangle1 is in the mesh  AND midpoint is in triangle1
@@ -1015,6 +1054,270 @@ void get_prism_velocity_on_FEdges(double * uNormal,
       }
     } //end loop over layers
   } //loop over edges
+}
+
+// ===================================================
+//! Velocity extrapolation outside the FE mesh (used when useFEMExtension is false)
+// ===================================================
+
+// Below this speed [m/yr], the flow direction is considered undefined and 'flowline' extrapolation
+// falls back to using the cell center velocity.
+const double minSpeedForFlowDirection = 1e-6;
+
+// An FE triangle (MPAS vertex) used for extrapolating velocity: its three nodes (MPAS cells),
+// the gradients of its linear basis functions, and its area.
+struct FETriangleGradient {
+  int cells[3];
+  double dphidx[3], dphidy[3];
+  double area;
+};
+
+// Collect the FE triangles that have the MPAS cell iCell as a node.
+static void getFETrianglesOfCell(int iCell, std::vector<FETriangleGradient>& triangles) {
+  triangles.clear();
+  for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+    ID fVertex = verticesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+    if ((fVertex >= nVertices_F) || (fVertexToTriangleID[fVertex] == NotAnId))
+      continue;
+
+    FETriangleGradient tria;
+    double x[3], y[3];
+    bool validTria = true;
+    for (int k = 0; k < 3; k++) {
+      tria.cells[k] = cellsOnVertex_F[3 * fVertex + k] - 1;
+      if ((tria.cells[k] < 0) || (tria.cells[k] >= nCells_F)) {
+        validTria = false;
+        break;
+      }
+      x[k] = xCell_F[tria.cells[k]];
+      y[k] = yCell_F[tria.cells[k]];
+    }
+    if (!validTria)
+      continue;
+
+    double det = (x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]);
+    if (det == 0.0)
+      continue;
+    tria.dphidx[0] = (y[1] - y[2]) / det;  tria.dphidy[0] = (x[2] - x[1]) / det;
+    tria.dphidx[1] = (y[2] - y[0]) / det;  tria.dphidy[1] = (x[0] - x[2]) / det;
+    tria.dphidx[2] = (y[0] - y[1]) / det;  tria.dphidy[2] = (x[1] - x[0]) / det;
+    tria.area = 0.5 * std::abs(det);
+    triangles.push_back(tria);
+  }
+}
+
+// Extrapolate the velocity vector of layer il from the center of MPAS cell iCell to the point e_mid,
+// following velocityExtrapolationMethod and useVelocityExtrapolationLimiter.
+// triangles are the FE triangles having iCell as a node (empty if iCell is not an FE node).
+// Returns the extrapolated velocity vector in (ue, ve).
+static void extrapolateVelocityFromCell(int iCell, int il, const double* e_mid,
+    const std::vector<FETriangleGradient>& triangles, const std::vector<double>& velocityOnCells,
+    double& ue, double& ve) {
+
+  int nLevels = nLayers + 1;
+  int sizeVelOnCell = nCells_F * nLevels;
+  double uc = velocityOnCells[il + nLevels * iCell];
+  double vc = velocityOnCells[il + nLevels * iCell + sizeVelOnCell];
+
+  // 'nearest' (also used if there is no gradient information, e.g. for filled orphan cells)
+  ue = uc;
+  ve = vc;
+  if ((velocityExtrapolationMethod == extrapNearest) || triangles.empty())
+    return;
+
+  // offset from cell center to edge midpoint
+  double dx = e_mid[0] - xCell_F[iCell];
+  double dy = e_mid[1] - yCell_F[iCell];
+
+  // indices of the triangles whose gradients are used
+  std::vector<int> usedTriangles;
+
+  if (velocityExtrapolationMethod == extrapFlowline) {
+    // Only extrapolate the along-flow variation of velocity, so that across-flow gradients
+    // (e.g., from shear margins) are not extrapolated onto the edge.
+    double speed = std::sqrt(uc * uc + vc * vc);
+    if (speed < minSpeedForFlowDirection)
+      return;  // flow direction undefined; use cell center velocity
+    double sx = uc / speed, sy = vc / speed;
+    double d = dx * sx + dy * sy;  // along-flow distance from cell center to edge midpoint
+    if (d <= 0.0)
+      return;  // edge is beside or upstream of the cell; use cell center velocity
+
+    // Use the gradient from the FE triangle immediately upstream of the cell along the flow direction.
+    double delta = 0.5 * std::sqrt(dx * dx + dy * dy);
+    double p[2] = {xCell_F[iCell] - delta * sx, yCell_F[iCell] - delta * sy};
+    for (int t = 0; t < int(triangles.size()); t++) {
+      double tCoords[2*3], bcoords[3];
+      for (int k = 0; k < 3; k++) {
+        tCoords[0 + 2 * k] = xCell_F[triangles[t].cells[k]];
+        tCoords[1 + 2 * k] = yCell_F[triangles[t].cells[k]];
+      }
+      if (belongToTria(p, tCoords, bcoords)) {
+        usedTriangles.push_back(t);
+        break;
+      }
+    }
+
+    // only the along-flow component of the offset is used
+    dx = d * sx;
+    dy = d * sy;
+  }
+
+  // 'linear', or 'flowline' if no upstream triangle was found: use all triangles of the cell
+  if (usedTriangles.empty()) {
+    for (int t = 0; t < int(triangles.size()); t++)
+      usedTriangles.push_back(t);
+  }
+
+  // area-weighted average gradient of the FE solution, and range of nodal speeds for the limiter
+  double dudx = 0.0, dudy = 0.0, dvdx = 0.0, dvdy = 0.0, areaSum = 0.0;
+  double sMin = std::numeric_limits<double>::max(), sMax = 0.0;
+  for (int t : usedTriangles) {
+    const FETriangleGradient& tria = triangles[t];
+    for (int k = 0; k < 3; k++) {
+      int c = tria.cells[k];
+      double uk = velocityOnCells[il + nLevels * c];
+      double vk = velocityOnCells[il + nLevels * c + sizeVelOnCell];
+      dudx += tria.area * uk * tria.dphidx[k];
+      dudy += tria.area * uk * tria.dphidy[k];
+      dvdx += tria.area * vk * tria.dphidx[k];
+      dvdy += tria.area * vk * tria.dphidy[k];
+      double sk = std::sqrt(uk * uk + vk * vk);
+      sMin = std::min(sMin, sk);
+      sMax = std::max(sMax, sk);
+    }
+    areaSum += tria.area;
+  }
+  dudx /= areaSum;  dudy /= areaSum;
+  dvdx /= areaSum;  dvdy /= areaSum;
+
+  ue = uc + dudx * dx + dudy * dy;
+  ve = vc + dvdx * dx + dvdy * dy;
+
+  if (useVelocityExtrapolationLimiter) {
+    // 'relaxed' limiter on speed (independent of mesh/edge orientation): allow the extrapolated speed to
+    // exceed the range of nodal speeds by up to that range, then rescale the vector, preserving its direction.
+    double range = sMax - sMin;
+    double sLow = std::max(0.0, sMin - range);
+    double sHigh = sMax + range;
+    double se = std::sqrt(ue * ue + ve * ve);
+    double sLimited = std::min(std::max(se, sLow), sHigh);
+    if ((se > 0.0) && (sLimited != se)) {
+      ue *= sLimited / se;
+      ve *= sLimited / se;
+    }
+  }
+}
+
+// Compute the normal velocity on an owned MPAS edge for which neither adjacent triangle is part of
+// the FE mesh, by extrapolating the velocity from the adjacent cells that have a velocity
+// (FE nodes or filled orphan cells).  If only one of the two cells is dynamic, only outflow from
+// the dynamic cell is allowed.
+void extrapolateVelocityOnEdge(int iEdge, int iCell0, int iCell1, double nx, double ny,
+    const double* e_mid, double* uNormal, const std::vector<double>& velocityOnCells) {
+
+  int cells[2] = {iCell0, iCell1};
+  bool hasVelocity[2], isDynamic[2];
+  std::vector<FETriangleGradient> triangles[2];
+  int nSides = 0;
+  for (int k = 0; k < 2; k++) {
+    int c = cells[k];
+    hasVelocity[k] = isFENodeCell[c] || isFilledCell[c];
+    isDynamic[k] = (cellsMask_F[c] & dynamic_ice_bit_value) != 0;
+    if (hasVelocity[k]) {
+      nSides++;
+      if (isFENodeCell[c] && ((velocityExtrapolationMethod == extrapLinear) ||
+                              (velocityExtrapolationMethod == extrapFlowline)))
+        getFETrianglesOfCell(c, triangles[k]);
+    }
+  }
+
+  for (int il = 0; il < nLayers+1; il++) { //loop over layers
+    int ilReversed = nLayers - il;
+    int index = iEdge * (nLayers+1) + ilReversed;
+    uNormal[index] = 0;
+    if (nSides == 0)
+      continue;
+
+    // Extrapolate the full velocity vector from each side, then take the normal component.
+    double uNormalSum = 0;
+    for (int k = 0; k < 2; k++) {
+      if (!hasVelocity[k])
+        continue;
+      double ue, ve;
+      extrapolateVelocityFromCell(cells[k], il, e_mid, triangles[k], velocityOnCells, ue, ve);
+      uNormalSum += nx * ue + ny * ve;
+    }
+    double un = uNormalSum / nSides;
+
+    // Only allow outflow from dynamic ice onto non-dynamic cells (n points from iCell0 to iCell1).
+    if (isDynamic[0] && !isDynamic[1])
+      un = std::max(0.0, un);
+    else if (isDynamic[1] && !isDynamic[0])
+      un = std::min(0.0, un);
+
+    uNormal[index] = un;
+  } //end loop over layers
+}
+
+// Fill the velocity of owned dynamic cells that are not FE nodes (and thus get no velocity from the
+// solver, e.g. one-cell-wide tongues or isolated cells) with the Dirichlet velocity where specified,
+// otherwise with the average velocity of their neighboring FE node cells.  Also sets isFilledCell.
+// Must be called on all procs because it includes halo exchanges.
+void fillOrphanCellVelocities(double const* dirichletVelocityXValue, double const* dirichletVelocityYValue) {
+  int nLevels = nLayers + 1;
+  int sizeVelOnCell = nCells_F * nLevels;
+  std::vector<int> isFilled(nCells_F, 0);
+  std::vector<int> neighbors;
+  neighbors.reserve(maxNEdgesOnCell_F);
+
+  for (int iCell = 0; iCell < nCellsSolve_F; iCell++) {
+    if (isFENodeCell[iCell] || !(cellsMask_F[iCell] & dynamic_ice_bit_value))
+      continue;
+
+    // neighboring cells that are FE nodes
+    neighbors.clear();
+    for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+      int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+      if ((fEdge < 0) || (fEdge >= nEdges_F))
+        continue;
+      int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+      int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+      if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+        continue;
+      int c = (c0 == iCell) ? c1 : c0;
+      if (isFENodeCell[c])
+        neighbors.push_back(c);
+    }
+
+    for (int il = 0; il < nLevels; il++) {
+      int ilReversed = nLayers - il;
+      int indexReversed = iCell * nLevels + ilReversed;
+      int index = iCell * nLevels + il;
+      if (dirichletCellsMask_F[indexReversed] != 0) {
+        velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
+        velocityOnCells[index + sizeVelOnCell] = dirichletVelocityYValue[indexReversed];
+        isFilled[iCell] = 1;
+      } else if (!neighbors.empty()) {
+        double u = 0, v = 0;
+        for (int c : neighbors) {
+          u += velocityOnCells[c * nLevels + il];
+          v += velocityOnCells[c * nLevels + il + sizeVelOnCell];
+        }
+        velocityOnCells[index] = u / neighbors.size();
+        velocityOnCells[index + sizeVelOnCell] = v / neighbors.size();
+        isFilled[iCell] = 1;
+      }
+    }
+  }
+
+  for (int dim = 0; dim < 2; dim++)
+    allToAll(&velocityOnCells[dim * sizeVelOnCell], sendCellsList_F, recvCellsList_F, nLevels);
+  allToAll(isFilled, sendCellsList_F, recvCellsList_F);
+
+  isFilledCell.assign(nCells_F, false);
+  for (int iCell = 0; iCell < nCells_F; iCell++)
+    isFilledCell[iCell] = (isFilled[iCell] != 0);
 }
 
 void mapVerticesToCells(const std::vector<double>& velocityOnVertices,

@@ -66,17 +66,18 @@ module li_velocity_external
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
          li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, use_ismip7_fem_extension, &
-         use_fem_extension) &
+         use_fem_extension, velocity_extrapolation_method, use_velocity_extrapolation_limiter) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE, C_BOOL
 
-         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce
+         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, velocity_extrapolation_method
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
                            config_thermal_thickness
-         LOGICAL(C_BOOL) :: config_use_glp, use_ismip7_fem_extension, use_fem_extension
+         LOGICAL(C_BOOL) :: config_use_glp, use_ismip7_fem_extension, use_fem_extension, &
+                            use_velocity_extrapolation_limiter
       end subroutine velocity_solver_set_parameters
 
    end interface
@@ -269,6 +270,10 @@ contains
       character (len=StrKIND), pointer :: femExtensionMethod
       logical :: use_ismip7_fem_extension
       logical :: use_fem_extension
+      character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_method
+      character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_limiter
+      integer :: velocity_extrapolation_method
+      logical :: use_velocity_extrapolation_limiter
 
       ! halo exchange arrays
       integer, dimension(:), pointer :: sendCellsArray, &
@@ -372,6 +377,38 @@ contains
       end if
       use_ismip7_fem_extension = (trim(femExtensionMethod) == 'ismip7-era')
       use_fem_extension = (trim(femExtensionMethod) /= 'none')
+
+      ! Method for extrapolating the solved velocity to edges outside the FE mesh (only used without the FEM extension).
+      ! These integer codes must match those used in Interface_velocity_solver.cpp.
+      call mpas_pool_get_config(liConfigs, 'config_fem_velocity_extrapolation_method', &
+         config_fem_velocity_extrapolation_method)
+      call mpas_pool_get_config(liConfigs, 'config_fem_velocity_extrapolation_limiter', &
+         config_fem_velocity_extrapolation_limiter)
+      select case (trim(config_fem_velocity_extrapolation_method))
+      case ('nearest')
+         velocity_extrapolation_method = 0
+      case ('linear')
+         velocity_extrapolation_method = 1
+      case ('flowline')
+         velocity_extrapolation_method = 2
+      case default
+         call mpas_log_write(trim(config_fem_velocity_extrapolation_method) // &
+            ' is not a valid option for config_fem_velocity_extrapolation_method.', MPAS_LOG_ERR)
+         velocity_extrapolation_method = 0
+         err = 1
+      end select
+      if (trim(config_fem_velocity_extrapolation_limiter) /= 'none' .and. &
+          trim(config_fem_velocity_extrapolation_limiter) /= 'relaxed') then
+         call mpas_log_write(trim(config_fem_velocity_extrapolation_limiter) // &
+            ' is not a valid option for config_fem_velocity_extrapolation_limiter.', MPAS_LOG_ERR)
+         err = 1
+      end if
+      use_velocity_extrapolation_limiter = (trim(config_fem_velocity_extrapolation_limiter) == 'relaxed')
+      if (.not. use_fem_extension) then
+         call mpas_log_write("FEM extension is disabled; extrapolating velocity to edges outside the FE mesh using '" // &
+            trim(config_fem_velocity_extrapolation_method) // "' method with '" // &
+            trim(config_fem_velocity_extrapolation_limiter) // "' limiter.")
+      endif
 #if defined(USE_EXTERNAL_L1L2) || defined(USE_EXTERNAL_FIRSTORDER) || defined(USE_EXTERNAL_STOKES)
       call velocity_solver_set_parameters(gravity, config_ice_density, config_ocean_density, config_sea_level, &
          config_default_flowParamA, &
@@ -381,7 +418,9 @@ contains
          li_mask_ValueAlbanyActive, li_mask_ValueIce, &
          logical(config_use_glp, KIND=1), &
          logical(use_ismip7_fem_extension, KIND=1), &
-         logical(use_fem_extension, KIND=1) )
+         logical(use_fem_extension, KIND=1), &
+         velocity_extrapolation_method, &
+         logical(use_velocity_extrapolation_limiter, KIND=1) )
 
       call interface_reset_stdout()
 #endif
