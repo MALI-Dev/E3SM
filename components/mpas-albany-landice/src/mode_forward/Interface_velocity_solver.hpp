@@ -77,7 +77,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         double const* thermal_thickness_limit_F,
                         int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
                         int const* use_GLP_F, int const* use_ISMIP7_extension_F,
-                        int const* use_FEM_extension_F,
+                        int const* use_marine_extension_F, int const* use_terrestrial_extension_F,
                         int const* velocity_extrapolation_method_F,
                         int const* use_velocity_extrapolation_limiter_F);
 

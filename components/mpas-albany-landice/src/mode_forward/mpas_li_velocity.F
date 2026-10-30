@@ -426,7 +426,7 @@ contains
                 blockDirichletMaskChanged = 1
             else
                 call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
-                if (trim(femExtensionMethod) == 'none') then
+                if ( (trim(femExtensionMethod) == 'none') .or. (trim(femExtensionMethod) == 'terrestrial-only') ) then
                    ! Without the FEM extension, the FE mesh is defined by the Albany-active bit of vertexMask,
                    ! which can change even if the dynamic-ice bit of vertexMask does not.
                    vertexMaskDiffers = any(iand(vertexMask, li_mask_ValueAlbanyActive) /= femVertexAlbanyActiveMask)

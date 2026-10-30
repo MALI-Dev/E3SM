@@ -321,8 +321,8 @@ contains
          aCellOnVertexIsFloating, aCellOnVertexIsFloatingAndDynamic, aCellOnVertexIsAlbanyActive, aCellOnVertexIsDomainBoundary
       logical :: aCellOnVertexIsGrounded
       logical :: allCellsOnVertexAreAlbanyActive
+      logical :: aCellOnVertexIsInactiveMarine
       character (len=StrKIND), pointer :: femExtensionMethod
-      logical :: useFEMExtension
       logical :: aCellOnEdgeHasIce, aCellOnEdgeHasNoIce, aCellOnEdgeHasDynamicIce, aCellOnEdgeHasNoDynamicIce, &
          aCellOnEdgeIsFloating, aCellOnEdgeIsFloatingAndDynamic, aCellOnEdgeIsDomainBoundary
       logical :: aCellOnEdgeIsGrounded
@@ -602,13 +602,16 @@ contains
            (trim(config_velocity_solver) == 'Stokes') ) then
          ! With config_fem_extension_method='none', a vertex (FE triangle) is only Albany active if
          ! all of its cells are Albany active, so the FE mesh does not extend beyond the dynamic ice.
+         ! With 'terrestrial-only', a vertex is Albany active if any of its cells are, unless any of
+         ! its non-active cells is marine (bed < 0), so the FE mesh only extends onto terrestrial cells.
+         ! (This marine test must match the one in importFields in Interface_velocity_solver.cpp.)
          ! Otherwise, a vertex is Albany active if any of its cells are, and the interface extends
          ! fields to the non-dynamic nodes of those triangles.
          call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
-         useFEMExtension = (trim(femExtensionMethod) /= 'none')
          do i = 1,nVertices
             aCellOnVertexIsAlbanyActive = .false.
             allCellsOnVertexAreAlbanyActive = .true.
+            aCellOnVertexIsInactiveMarine = .false.
             numCellsOnVertex = 0
             validVertex = .false.
             numDiriDynamicCells = 0
@@ -618,6 +621,10 @@ contains
                iCell = cellsOnVertex(j,i)
                if (iCell < nCells+1) then
                   numCellsOnVertex = numCellsOnVertex + 1
+                  if ( (.not. li_mask_is_albany_active(cellMask(iCell))) .and. &
+                       (bedTopography(iCell) < 0.0_RKIND) ) then
+                     aCellOnVertexIsInactiveMarine = .true.
+                  endif
                endif
                aCellOnVertexIsAlbanyActive = (aCellOnVertexIsAlbanyActive .or. li_mask_is_albany_active(cellMask(iCell)))
                allCellsOnVertexAreAlbanyActive = (allCellsOnVertexAreAlbanyActive .and. &
@@ -637,7 +644,13 @@ contains
                endif
             end do
             if (numCellsOnVertex == vertexDegree) validVertex = .true.
-            if (useFEMExtension) then
+            if (trim(femExtensionMethod) == 'none') then
+               if (allCellsOnVertexAreAlbanyActive .and. validVertex) &
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+            elseif (trim(femExtensionMethod) == 'terrestrial-only') then
+               if (aCellOnVertexIsAlbanyActive .and. (.not. aCellOnVertexIsInactiveMarine) .and. validVertex) &
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+            else
                if (aCellOnVertexIsAlbanyActive .and. validVertex)  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
                if ( (numDiriDynamicCells == 1) .and. (numDiriNondynamicCells == 1) .and. &
                     (numExtendedCells == 1) .and. validVertex) then
@@ -645,9 +658,6 @@ contains
                   vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
                   vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyMarginNeighbor)
                endif
-            else
-               if (allCellsOnVertexAreAlbanyActive .and. validVertex) &
-                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
             endif
          end do  ! vertices loop
       endif  ! HO velocity solver
