@@ -78,6 +78,15 @@ bool useVelocityExtrapolationLimiter = true;
 // isFilledCell[iCell]: MPAS cell iCell is dynamic but not an FE node, and its velocity was filled from neighbors.
 // Both are only used when useMarineExtension is false.
 std::vector<bool> isFENodeCell, isFilledCell;
+// Velocity condition at extended (non-dynamic) terrestrial FE nodes, only used with 'terrestrial-only'.
+// Set from config_fem_terrestrial_node_velocity; codes must match mpas_li_velocity_external.F.
+//   free: no condition.  zeroAtJunctions: zero velocity at terrestrial nodes of an excluded triangle
+//   that has a dynamic node.  zero: zero velocity at all non-dynamic FE nodes.
+const int terrestrialNodeFree = 0, terrestrialNodeZeroAtJunctions = 1, terrestrialNodeZero = 2;
+int terrestrialNodeVelocity = terrestrialNodeFree;
+// isPinnedTerrestrialCell[iCell]: MPAS cell iCell is an FE node given a zero-velocity Dirichlet condition
+// following terrestrialNodeVelocity.  Set when the FE mesh is built.
+std::vector<bool> isPinnedTerrestrialCell;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -143,7 +152,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          bool const* use_GLP_F, bool const* use_ISMIP7_extension_F,
                          bool const* use_marine_extension_F, bool const* use_terrestrial_extension_F,
                          int const* velocity_extrapolation_method_F,
-                         bool const* use_velocity_extrapolation_limiter_F) {
+                         bool const* use_velocity_extrapolation_limiter_F,
+                         int const* terrestrial_node_velocity_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -155,6 +165,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   useTerrestrialExtension = *use_terrestrial_extension_F;
   velocityExtrapolationMethod = *velocity_extrapolation_method_F;
   useVelocityExtrapolationLimiter = *use_velocity_extrapolation_limiter_F;
+  terrestrialNodeVelocity = *terrestrial_node_velocity_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, *use_GLP_F, *clausius_clapeyron_coeff);
 }
@@ -289,6 +300,11 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
       if(dirichletCellsMask_F[indexReversed]!=0) {
         velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
         velocityOnCells[index+sizeVelOnCell] = dirichletVelocitYValue[indexReversed];
+      }
+      else if ((terrestrialNodeVelocity != terrestrialNodeFree) && isPinnedTerrestrialCell[iCell]) {
+        // zero-velocity Dirichlet condition at extended terrestrial FE nodes (see config_fem_terrestrial_node_velocity)
+        velocityOnCells[index] = 0.0;
+        velocityOnCells[index+sizeVelOnCell] = 0.0;
       }
       else {
         velocityOnCells[index] = xVelocityOnCell[indexReversed];
@@ -731,13 +747,51 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
   dirichletNodesIDs.clear();
   dirichletNodesIDs.reserve(nVertices); //need to improve storage efficiency
   isVertexBoundary.assign(nVertices, false);
+  isPinnedTerrestrialCell.assign(nCells_F, false);
+  int numPinnedTerrestrialNodes = 0;
   for (int index = 0; index < nVertices; index++) {
     int fCell = vertexToFCell[index];
+    bool hasDirichletMask = false;
     for(int il=0; il< nLayers+1; ++il)
     {
       int imask_F = il+(nLayers+1)*fCell;
-      if(dirichletCellsMask_F[imask_F]!=0)
+      if(dirichletCellsMask_F[imask_F]!=0) {
         dirichletNodesIDs.push_back((nLayers-il)*vertexColumnShift+indexToVertexID[index]*vertexLayerShift);
+        hasDirichletMask = true;
+      }
+    }
+
+    // With 'terrestrial-only', every non-dynamic FE node is an extended terrestrial node.  Optionally give it a
+    // zero-velocity Dirichlet condition (unless it already has one).  A junction node is one that belongs to a
+    // valid triangle that has a dynamic node but is excluded from the FE mesh, which under 'terrestrial-only'
+    // means the triangle also has an ice-free marine node, so the mesh boundary passes between this node and a
+    // dynamic node.  All data used here is valid in the halo cells needed, so no communication is required.
+    if ((terrestrialNodeVelocity != terrestrialNodeFree) && !hasDirichletMask &&
+        !(cellsMask_F[fCell] & dynamic_ice_bit_value)) {
+      bool pinNode = (terrestrialNodeVelocity == terrestrialNodeZero);
+      if (terrestrialNodeVelocity == terrestrialNodeZeroAtJunctions) {
+        for (int j = 0; (j < nEdgesOnCells_F[fCell]) && !pinNode; j++) {
+          ID fVertex = verticesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+          if ((fVertex >= nVertices_F) || (fVertexToTriangleID[fVertex] != NotAnId))
+            continue;
+          bool validTria = true, hasDynamicNode = false;
+          for (int k = 0; k < 3; k++) {
+            int iCell = cellsOnVertex_F[3 * fVertex + k] - 1;
+            if ((iCell < 0) || (iCell >= nCells_F)) {
+              validTria = false;
+              break;
+            }
+            hasDynamicNode = hasDynamicNode || (cellsMask_F[iCell] & dynamic_ice_bit_value);
+          }
+          pinNode = validTria && hasDynamicNode;
+        }
+      }
+      if (pinNode) {
+        isPinnedTerrestrialCell[fCell] = true;
+        numPinnedTerrestrialNodes++;
+        for(int il=0; il< nLayers+1; ++il)
+          dirichletNodesIDs.push_back((nLayers-il)*vertexColumnShift+indexToVertexID[index]*vertexLayerShift);
+      }
     }
 
     int nEdg = nEdgesOnCells_F[fCell];
@@ -750,6 +804,9 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
     } while ((j < nEdg) && (!isBoundary));
     isVertexBoundary[index] = isBoundary;
   }
+  if (terrestrialNodeVelocity != terrestrialNodeFree)
+    std::cout << "Number of extended terrestrial FE nodes (owned or shared by this proc) with zero-velocity "
+              << "Dirichlet condition: " << numPinnedTerrestrialNodes << std::endl;
 
   // because we change the ownership of some vertices, we need to first communicate back to the processors that used to own those vertices
   // the data of the newly owned vertices. We do this by defining "reversed" send and receive lists, communicate back using that list, and

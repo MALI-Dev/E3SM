@@ -79,7 +79,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         bool const* use_GLP_F, bool const* use_ISMIP7_extension_F,
                         bool const* use_marine_extension_F, bool const* use_terrestrial_extension_F,
                         int const* velocity_extrapolation_method_F,
-                        bool const* use_velocity_extrapolation_limiter_F);
+                        bool const* use_velocity_extrapolation_limiter_F,
+                        int const* terrestrial_node_velocity_F);
 
 void velocity_solver_init_l1l2(double const* levelsRatio);
 

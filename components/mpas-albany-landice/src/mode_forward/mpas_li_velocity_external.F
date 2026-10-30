@@ -67,12 +67,13 @@ module li_velocity_external
          config_thermal_thickness, &
          li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, use_ismip7_fem_extension, &
          use_marine_fem_extension, use_terrestrial_fem_extension, &
-         velocity_extrapolation_method, use_velocity_extrapolation_limiter) &
+         velocity_extrapolation_method, use_velocity_extrapolation_limiter, terrestrial_node_velocity) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE, C_BOOL
 
-         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, velocity_extrapolation_method
+         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, velocity_extrapolation_method, &
+                           terrestrial_node_velocity
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
@@ -275,6 +276,8 @@ contains
       character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_limiter
       integer :: velocity_extrapolation_method
       logical :: use_velocity_extrapolation_limiter
+      character (len=StrKIND), pointer :: config_fem_terrestrial_node_velocity
+      integer :: terrestrial_node_velocity
 
       ! halo exchange arrays
       integer, dimension(:), pointer :: sendCellsArray, &
@@ -415,6 +418,34 @@ contains
             trim(config_fem_velocity_extrapolation_method) // "' method with '" // &
             trim(config_fem_velocity_extrapolation_limiter) // "' limiter.")
       endif
+
+      ! Velocity condition at extended terrestrial FE nodes (only used with 'terrestrial-only').
+      ! These integer codes must match those used in Interface_velocity_solver.cpp.
+      call mpas_pool_get_config(liConfigs, 'config_fem_terrestrial_node_velocity', &
+         config_fem_terrestrial_node_velocity)
+      select case (trim(config_fem_terrestrial_node_velocity))
+      case ('free')
+         terrestrial_node_velocity = 0
+      case ('zero-at-junctions')
+         terrestrial_node_velocity = 1
+      case ('zero')
+         terrestrial_node_velocity = 2
+      case default
+         call mpas_log_write(trim(config_fem_terrestrial_node_velocity) // &
+            ' is not a valid option for config_fem_terrestrial_node_velocity.', MPAS_LOG_ERR)
+         terrestrial_node_velocity = 0
+         err = 1
+      end select
+      if (terrestrial_node_velocity /= 0) then
+         if (trim(femExtensionMethod) /= 'terrestrial-only') then
+            call mpas_log_write("config_fem_terrestrial_node_velocity='" // trim(config_fem_terrestrial_node_velocity) // &
+               "' requires config_fem_extension_method='terrestrial-only'.", MPAS_LOG_ERR)
+            err = 1
+         else
+            call mpas_log_write("Applying zero-velocity condition at extended terrestrial FE nodes: '" // &
+               trim(config_fem_terrestrial_node_velocity) // "'.")
+         endif
+      endif
 #if defined(USE_EXTERNAL_L1L2) || defined(USE_EXTERNAL_FIRSTORDER) || defined(USE_EXTERNAL_STOKES)
       call velocity_solver_set_parameters(gravity, config_ice_density, config_ocean_density, config_sea_level, &
          config_default_flowParamA, &
@@ -427,7 +458,8 @@ contains
          logical(use_marine_fem_extension, KIND=1), &
          logical(use_terrestrial_fem_extension, KIND=1), &
          velocity_extrapolation_method, &
-         logical(use_velocity_extrapolation_limiter, KIND=1) )
+         logical(use_velocity_extrapolation_limiter, KIND=1), &
+         terrestrial_node_velocity )
 
       call interface_reset_stdout()
 #endif
