@@ -76,7 +76,11 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         double const* clausius_clapeyron_coeff,
                         double const* thermal_thickness_limit_F,
                         int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                        bool const* use_GLP_F, bool const* use_ISMIP7_extension_F);
+                        bool const* use_GLP_F, bool const* use_ISMIP7_extension_F,
+                        bool const* use_marine_extension_F, bool const* use_terrestrial_extension_F,
+                        int const* velocity_extrapolation_method_F,
+                        bool const* use_velocity_extrapolation_limiter_F,
+                        int const* terrestrial_node_velocity_F);
 
 void velocity_solver_init_l1l2(double const* levelsRatio);
 
@@ -241,6 +245,11 @@ void exportEffectivePressure(double * effecPress_F);
 void get_prism_velocity_on_FEdges(double* uNormal,
     const std::vector<double>& velocityOnCells,
     const std::vector<int>& edgeToFEdge);
+
+void extrapolateVelocityOnEdge(int iEdge, int iCell0, int iCell1, double nx, double ny,
+    const double* e_mid, double* uNormal, const std::vector<double>& velocityOnCells);
+
+void fillOrphanCellVelocities(double const* dirichletVelocityXValue, double const* dirichletVelocityYValue);
 
 int initialize_iceProblem(int nTriangles);
 
