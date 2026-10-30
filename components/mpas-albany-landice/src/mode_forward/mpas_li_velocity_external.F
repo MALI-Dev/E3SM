@@ -66,7 +66,8 @@ module li_velocity_external
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
          li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, use_ismip7_fem_extension, &
-         use_fem_extension, velocity_extrapolation_method, use_velocity_extrapolation_limiter) &
+         use_marine_fem_extension, use_terrestrial_fem_extension, &
+         velocity_extrapolation_method, use_velocity_extrapolation_limiter) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE, C_BOOL
@@ -76,8 +77,8 @@ module li_velocity_external
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
                            config_thermal_thickness
-         LOGICAL(C_BOOL) :: config_use_glp, use_ismip7_fem_extension, use_fem_extension, &
-                            use_velocity_extrapolation_limiter
+         LOGICAL(C_BOOL) :: config_use_glp, use_ismip7_fem_extension, use_marine_fem_extension, &
+                            use_terrestrial_fem_extension, use_velocity_extrapolation_limiter
       end subroutine velocity_solver_set_parameters
 
    end interface
@@ -269,7 +270,7 @@ contains
       logical, pointer :: config_use_glp
       character (len=StrKIND), pointer :: femExtensionMethod
       logical :: use_ismip7_fem_extension
-      logical :: use_fem_extension
+      logical :: use_marine_fem_extension, use_terrestrial_fem_extension
       character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_method
       character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_limiter
       integer :: velocity_extrapolation_method
@@ -370,15 +371,20 @@ contains
       ! runs, and stored per-block in meshPool rather than read from configs directly.
       call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
       if (trim(femExtensionMethod) /= 'ismip6-era' .and. trim(femExtensionMethod) /= 'ismip7-era' .and. &
-          trim(femExtensionMethod) /= 'none') then
+          trim(femExtensionMethod) /= 'none' .and. trim(femExtensionMethod) /= 'terrestrial-only') then
          call mpas_log_write(trim(femExtensionMethod) // ' is not a valid land ice fem extension method option.', &
             MPAS_LOG_ERR)
          err = 1
       end if
-      use_ismip7_fem_extension = (trim(femExtensionMethod) == 'ismip7-era')
-      use_fem_extension = (trim(femExtensionMethod) /= 'none')
+      ! 'terrestrial-only' uses the 'ismip7-era' extension at terrestrial margins and no extension at marine margins.
+      use_ismip7_fem_extension = (trim(femExtensionMethod) == 'ismip7-era') .or. &
+                                 (trim(femExtensionMethod) == 'terrestrial-only')
+      use_marine_fem_extension = (trim(femExtensionMethod) == 'ismip6-era') .or. &
+                                 (trim(femExtensionMethod) == 'ismip7-era')
+      use_terrestrial_fem_extension = (trim(femExtensionMethod) /= 'none')
 
-      ! Method for extrapolating the solved velocity to edges outside the FE mesh (only used without the FEM extension).
+      ! Method for extrapolating the solved velocity to edges outside the FE mesh (only used without the marine
+      ! FEM extension, i.e. 'none' or 'terrestrial-only').
       ! These integer codes must match those used in Interface_velocity_solver.cpp.
       call mpas_pool_get_config(liConfigs, 'config_fem_velocity_extrapolation_method', &
          config_fem_velocity_extrapolation_method)
@@ -404,8 +410,8 @@ contains
          err = 1
       end if
       use_velocity_extrapolation_limiter = (trim(config_fem_velocity_extrapolation_limiter) == 'relaxed')
-      if (.not. use_fem_extension) then
-         call mpas_log_write("FEM extension is disabled; extrapolating velocity to edges outside the FE mesh using '" // &
+      if (.not. use_marine_fem_extension) then
+         call mpas_log_write("Marine FEM extension is disabled; extrapolating velocity to edges outside the FE mesh using '" // &
             trim(config_fem_velocity_extrapolation_method) // "' method with '" // &
             trim(config_fem_velocity_extrapolation_limiter) // "' limiter.")
       endif
@@ -418,7 +424,8 @@ contains
          li_mask_ValueAlbanyActive, li_mask_ValueIce, &
          logical(config_use_glp, KIND=1), &
          logical(use_ismip7_fem_extension, KIND=1), &
-         logical(use_fem_extension, KIND=1), &
+         logical(use_marine_fem_extension, KIND=1), &
+         logical(use_terrestrial_fem_extension, KIND=1), &
          velocity_extrapolation_method, &
          logical(use_velocity_extrapolation_limiter, KIND=1) )
 

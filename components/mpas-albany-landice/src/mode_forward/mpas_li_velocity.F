@@ -409,8 +409,8 @@ contains
             !        but for now just check the whole thing.
             call mpas_pool_get_array(geometryPool, 'vertexMask', vertexMaskOld, timeLevel=2)
             call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
-            if (trim(femExtensionMethod) == 'none') then
-               ! Without the FEM extension, the FE mesh is defined by the Albany-active bit of vertexMask,
+            if ( (trim(femExtensionMethod) == 'none') .or. (trim(femExtensionMethod) == 'terrestrial-only') ) then
+               ! Without the (marine) FEM extension, the FE mesh is defined by the Albany-active bit of vertexMask,
                ! which can change even if the dynamic-ice bit of vertexMask does not.
                if ( any(iand(vertexMask, li_mask_ValueAlbanyActive) /= iand(vertexMaskOld, li_mask_ValueAlbanyActive)) ) then
                    blockDynamicVertexMaskChanged = 1

@@ -59,11 +59,16 @@ int ice_present_bit_value;
 // importFields(): false => 'ismip6-era' (pre-ismip7-era scheme), true => 'ismip7-era'.
 // Set from the namelist option config_fem_extension_method via velocity_solver_set_parameters().
 bool useISMIP7Extension = false;
-// false => config_fem_extension_method='none': the FE mesh only contains triangles whose three
-// nodes are all dynamic (enforced by the Albany-active bit of vertexMask in li_calculate_mask),
-// so no fields are extended beyond the dynamic ice extent in importFields().
-bool useFEMExtension = true;
-// Method used to extrapolate the solved velocity onto MPAS edges outside the FE mesh when useFEMExtension
+// Whether fields are extended onto non-dynamic marine / terrestrial FE nodes in importFields().
+// The FE mesh is defined by the Albany-active bit of vertexMask in li_calculate_mask, consistent with these:
+//   'ismip6-era', 'ismip7-era': both true.  A triangle is in the FE mesh if any of its nodes is dynamic.
+//   'terrestrial-only': useMarineExtension is false.  A triangle is in the FE mesh if any of its nodes is dynamic
+//                       and none of its non-dynamic nodes is marine (bed < 0), so only terrestrial nodes are extended.
+//   'none': both false.  A triangle is in the FE mesh only if all three of its nodes are dynamic.
+// Without the marine extension, the solved velocity is extrapolated onto MPAS edges outside the FE mesh.
+bool useMarineExtension = true;
+bool useTerrestrialExtension = true;
+// Method used to extrapolate the solved velocity onto MPAS edges outside the FE mesh when useMarineExtension
 // is false.  Set from config_fem_velocity_extrapolation_method; codes must match mpas_li_velocity_external.F.
 const int extrapNearest = 0, extrapLinear = 1, extrapFlowline = 2;
 int velocityExtrapolationMethod = extrapNearest;
@@ -71,7 +76,7 @@ int velocityExtrapolationMethod = extrapNearest;
 bool useVelocityExtrapolationLimiter = true;
 // isFENodeCell[iCell]: MPAS cell iCell is a node of at least one FE triangle (i.e., it has a solved velocity).
 // isFilledCell[iCell]: MPAS cell iCell is dynamic but not an FE node, and its velocity was filled from neighbors.
-// Both are only used when useFEMExtension is false.
+// Both are only used when useMarineExtension is false.
 std::vector<bool> isFENodeCell, isFilledCell;
 
 // global variables used for handling logging
@@ -136,7 +141,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
                          bool const* use_GLP_F, bool const* use_ISMIP7_extension_F,
-                         bool const* use_FEM_extension_F,
+                         bool const* use_marine_extension_F, bool const* use_terrestrial_extension_F,
                          int const* velocity_extrapolation_method_F,
                          bool const* use_velocity_extrapolation_limiter_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
@@ -146,7 +151,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
   ice_present_bit_value = *li_mask_ValueIce;
   useISMIP7Extension = *use_ISMIP7_extension_F;
-  useFEMExtension = *use_FEM_extension_F;
+  useMarineExtension = *use_marine_extension_F;
+  useTerrestrialExtension = *use_terrestrial_extension_F;
   velocityExtrapolationMethod = *velocity_extrapolation_method_F;
   useVelocityExtrapolationLimiter = *use_velocity_extrapolation_limiter_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
@@ -330,9 +336,9 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
   mapVerticesToCells(velocityOnVertices, &velocityOnCells[0], 2, nLayers,
       Ordering);
 
-  // Without the FEM extension, dynamic cells that are not FE nodes get no velocity from the solver,
+  // Without the marine FEM extension, dynamic cells that are not FE nodes get no velocity from the solver,
   // so fill them from their neighbors.  This is called on all procs because it includes a halo exchange.
-  if (!useFEMExtension)
+  if (!useMarineExtension)
     fillOrphanCellVelocities(dirichletVelocityXValue, dirichletVelocitYValue);
 
   //computing x, yVelocityOnCell
@@ -624,16 +630,15 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
       int fCell0 = cellsOnEdge_F[2 * fEdge] - 1;
       int fCell1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
       assert((fCell0<nCells_F) && (fCell1<nCells_F));
-      if (useFEMExtension) {
-        bool isCell0OnMargin = !(cellsMask_F[fCell0] & dynamic_ice_bit_value) &&
-            (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0);
-        bool isCell1OnMargin = !(cellsMask_F[fCell1] & dynamic_ice_bit_value) &&
-            (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0);
-        if(isCell0OnMargin || isCell1OnMargin)
-          iceMarginEdgesLIds.push_back(index);
-      } else {
-        // Without the extension, both nodes of a boundary edge are dynamic, so the margin
-        // is identified from the triangle that was excluded from the FE mesh: the edge is on the
+      bool isCell0OnMargin = !(cellsMask_F[fCell0] & dynamic_ice_bit_value) &&
+          (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0);
+      bool isCell1OnMargin = !(cellsMask_F[fCell1] & dynamic_ice_bit_value) &&
+          (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0);
+      if(isCell0OnMargin || isCell1OnMargin) {
+        iceMarginEdgesLIds.push_back(index);
+      } else if (!useMarineExtension) {
+        // Without the marine extension, both nodes of a boundary edge can be dynamic (always, under 'none'),
+        // so the margin is also identified from the triangle that was excluded from the FE mesh: the edge is on the
         // ice margin if the third cell of that triangle is a valid, non-dynamic, non-Dirichlet cell.
         // (If the third cell is outside the MPAS domain, this is a domain boundary edge instead.)
         ID fVertex0 = verticesOnEdge_F[2 * fEdge] - 1;
@@ -964,10 +969,10 @@ void get_prism_velocity_on_FEdges(double * uNormal,
     int iTria1 = fVertexToTriangleID[fVertex1];
     if((iTria0 == NotAnId) && (iTria1 == NotAnId)) {
       // Neither triangle sharing this edge is part of the FE mesh.
-      // With the FEM extension, this edge is outside the ice and its velocity is left at zero.
-      // Without the FEM extension, this can be an edge on the external side of the dynamic ice extent
+      // With the marine FEM extension, this edge is outside the ice and its velocity is left at zero.
+      // Without the marine FEM extension, this can be an edge on the external side of the dynamic ice extent
       // (or between dynamic cells that are not connected by an FE triangle), so extrapolate the solved velocity.
-      if (!useFEMExtension)
+      if (!useMarineExtension)
         extrapolateVelocityOnEdge(iEdge, iCell0, iCell1, nx, ny, e_mid, uNormal, velocityOnCells);
       continue;
     }
@@ -1057,7 +1062,7 @@ void get_prism_velocity_on_FEdges(double * uNormal,
 }
 
 // ===================================================
-//! Velocity extrapolation outside the FE mesh (used when useFEMExtension is false)
+//! Velocity extrapolation outside the FE mesh (used when useMarineExtension is false)
 // ===================================================
 
 // Below this speed [m/yr], the flow direction is considered undefined and 'flowline' extrapolation
@@ -1210,9 +1215,10 @@ static void extrapolateVelocityFromCell(int iCell, int il, const double* e_mid,
 }
 
 // Compute the normal velocity on an owned MPAS edge for which neither adjacent triangle is part of
-// the FE mesh, by extrapolating the velocity from the adjacent cells that have a velocity
-// (FE nodes or filled orphan cells).  If only one of the two cells is dynamic, only outflow from
-// the dynamic cell is allowed.
+// the FE mesh, by extrapolating the velocity from the adjacent dynamic cells that have a velocity
+// (FE nodes or filled orphan cells).  Non-dynamic FE nodes (extended terrestrial nodes under
+// 'terrestrial-only') are not extrapolated from.  If only one of the two cells is dynamic, only
+// outflow from the dynamic cell is allowed.
 void extrapolateVelocityOnEdge(int iEdge, int iCell0, int iCell1, double nx, double ny,
     const double* e_mid, double* uNormal, const std::vector<double>& velocityOnCells) {
 
@@ -1222,8 +1228,8 @@ void extrapolateVelocityOnEdge(int iEdge, int iCell0, int iCell1, double nx, dou
   int nSides = 0;
   for (int k = 0; k < 2; k++) {
     int c = cells[k];
-    hasVelocity[k] = isFENodeCell[c] || isFilledCell[c];
     isDynamic[k] = (cellsMask_F[c] & dynamic_ice_bit_value) != 0;
+    hasVelocity[k] = isDynamic[k] && (isFENodeCell[c] || isFilledCell[c]);
     if (hasVelocity[k]) {
       nSides++;
       if (isFENodeCell[c] && ((velocityExtrapolationMethod == extrapLinear) ||
@@ -1262,7 +1268,7 @@ void extrapolateVelocityOnEdge(int iEdge, int iCell0, int iCell1, double nx, dou
 
 // Fill the velocity of owned dynamic cells that are not FE nodes (and thus get no velocity from the
 // solver, e.g. one-cell-wide tongues or isolated cells) with the Dirichlet velocity where specified,
-// otherwise with the average velocity of their neighboring FE node cells.  Also sets isFilledCell.
+// otherwise with the average velocity of their neighboring dynamic FE node cells.  Also sets isFilledCell.
 // Must be called on all procs because it includes halo exchanges.
 void fillOrphanCellVelocities(double const* dirichletVelocityXValue, double const* dirichletVelocityYValue) {
   int nLevels = nLayers + 1;
@@ -1275,7 +1281,7 @@ void fillOrphanCellVelocities(double const* dirichletVelocityXValue, double cons
     if (isFENodeCell[iCell] || !(cellsMask_F[iCell] & dynamic_ice_bit_value))
       continue;
 
-    // neighboring cells that are FE nodes
+    // neighboring cells that are dynamic FE nodes (not extended terrestrial nodes under 'terrestrial-only')
     neighbors.clear();
     for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
       int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
@@ -1286,7 +1292,7 @@ void fillOrphanCellVelocities(double const* dirichletVelocityXValue, double cons
       if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
         continue;
       int c = (c0 == iCell) ? c1 : c0;
-      if (isFENodeCell[c])
+      if (isFENodeCell[c] && (cellsMask_F[c] & dynamic_ice_bit_value))
         neighbors.push_back(c);
     }
 
@@ -1538,7 +1544,9 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
   marineBdyExtensionMap.clear();
 
   // With config_fem_extension_method='none', all FE vertices are dynamic ice, so there is nothing to extend.
-  if (!useFEMExtension)
+  // With 'terrestrial-only', no non-dynamic marine (bed < 0) cell is an FE vertex (see li_calculate_mask),
+  // so only the terrestrial branch below is used and marineBdyExtensionMap stays empty.
+  if (!useTerrestrialExtension)
     return;
 
   marineBdyExtensionMap.reserve(nVertices);
