@@ -4194,9 +4194,7 @@ module li_calving
          ! Do nothing. This was already retrieved above.
       elseif (trim(config_crevasse_water_depth_source) == "scaled_smb") then
          where (sfcMassBalApplied < 0.0_RKIND)
-             crevasseWaterDepth = crevasseWaterDepth + &
-                 (-1.0_RKIND * config_smb_fraction_to_water_depth * &
-                 sfcMassBalApplied / config_ice_density * deltat)
+             crevasseWaterDepth = config_smb_fraction_to_water_depth * -1.0_RKIND * sfcMassBalApplied
          elsewhere
              crevasseWaterDepth = 0.0_RKIND
          endwhere

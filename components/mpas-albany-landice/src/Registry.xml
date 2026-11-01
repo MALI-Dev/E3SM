@@ -355,8 +355,8 @@
                             description="Water depth in crevasses for Nick et al. (2010) crevasse depth calving law."
                             possible_values="any non-negative real value"
                 />
-                <nml_option name="config_smb_fraction_to_water_depth" type="real" default_value="1.0" units="unitless"
-                            description="Fraction of surface mass balance to convert to retain as water depth in crevasses for Nick et al. (2010) crevasse depth calving law."
+                <nml_option name="config_smb_fraction_to_water_depth" type="real" default_value="19350" units="m^3 s kg^-1"
+                        description="Scaling factor to convert surface mass balance to crevasse water depth.  Negative SMB is assumed to be runoff.  Runoff is scaled by this factor to define instanteous crevasse water depth.  Thus, this option is only appropriate when SMB is temporally averaged over long enough timescales that water depth may be assumed to be proportional to runoff production rate.  This was implemented to be used with ISMIP7 monthly SMB forcing, and should be used with careful evaluation for any other applications.  Only applies to Nick et al. (2010) crevasse depth calving law.  Default value comes from scaling the mean RACMO2.3p2-ERA5 July monthly runoff for GIS locations within 3 km of 2007 calving fronts and setting a target mean water depth of 24 m from Amaral et al. (2020) https://doi.org/10.1029/2019JF005444"
                             possible_values="any non-negative real value"
                 />
                 <nml_option name="config_ismip6_retreat_k" type="real" default_value="-170.0" units="m (m^3 s^-1)^-0.4 deg. C^-1"
