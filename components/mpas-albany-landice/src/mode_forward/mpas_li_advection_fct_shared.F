@@ -110,7 +110,7 @@ module li_tracer_advection_fct_shared
       integer, dimension(:), allocatable :: &
          cellIndx       ! cell indices gathered from neighbors 
 
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMask, edgeMask
 
       integer, dimension(:,:), allocatable :: &
          cellIndxSorted ! nbr cell indices sorted
@@ -125,6 +125,7 @@ module li_tracer_advection_fct_shared
       ! Begin code
 
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+      call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
 
       err = 0 ! initialize error code
 
@@ -395,6 +396,10 @@ module li_tracer_advection_fct_shared
          advMaskHighOrder(:,:) = 0.0_RKIND
       endif
 
+      if (config_print_thickness_advection_info) then
+         call print_debug_cell_masks(cellMask, edgeMask)
+      endif
+
       ! Copy module variables to device
       !$acc enter data copyin(nAdvCellsForEdge, advCellsForEdge, &
       !$acc                   advCellIsDynamic, advCoefs, advCoefs3rd, &
@@ -432,6 +437,51 @@ module li_tracer_advection_fct_shared
                   advMask2ndOrder)
 
    end subroutine li_tracer_advection_fct_shared_finalize !}}}
+
+!***********************************************************************
+!
+!  routine print_debug_cell_masks
+!
+!> \brief Print fct masks around the debug cell
+!> \details
+!>  For the owned cell with global ID config_stats_cell_ID, write the
+!>  cell and edge masks, boundaryCell, fct correction masks, and the
+!>  high-order stencil for each edge of the cell.
+!
+!-----------------------------------------------------------------------
+
+   subroutine print_debug_cell_masks(cellMask, edgeMask)!{{{
+
+      integer, dimension(:), intent(in) :: cellMask, edgeMask
+
+      integer :: iCell, iEdgeOnCell, iEdge, cell1, cell2, i
+
+      do iCell = 1, nCellsSolve
+         if (indexToCellID(iCell) /= config_stats_cell_ID) cycle
+
+         call mpas_log_write('FCT masks around cell (local=$i, global=$i), cellMask=$i, boundaryCell=$i, isDynamic=$i', &
+              intArgs=(/iCell, indexToCellID(iCell), cellMask(iCell), boundaryCell(iCell), advCellIsDynamic(iCell)/))
+         call mpas_log_write('  edge(global), cell1(global), cell2(global), edgeMask, cellMask1, cellMask2, ' // &
+              'boundaryCell1, boundaryCell2, isDynamic1, isDynamic2, advMaskHighOrder, advMask2ndOrder')
+         do iEdgeOnCell = 1, nEdgesOnCell(iCell)
+            iEdge = edgesOnCell(iEdgeOnCell, iCell)
+            cell1 = cellsOnEdge(1, iEdge)
+            cell2 = cellsOnEdge(2, iEdge)
+            call mpas_log_write('  $i $i $i $i $i $i $i $i $i $i $r $r', &
+                 intArgs=(/indexToEdgeID(iEdge), indexToCellID(cell1), indexToCellID(cell2), &
+                           edgeMask(iEdge), cellMask(cell1), cellMask(cell2), &
+                           boundaryCell(cell1), boundaryCell(cell2), &
+                           advCellIsDynamic(cell1), advCellIsDynamic(cell2)/), &
+                 realArgs=(/advMaskHighOrder(1,iEdge), advMask2ndOrder(1,iEdge)/))
+            do i = 1, nAdvCellsForEdge(iEdge)
+               call mpas_log_write('    stencil cell $i (global=$i), cellMask=$i, isDynamic=$i', &
+                    intArgs=(/i, indexToCellID(advCellsForEdge(i,iEdge)), &
+                              cellMask(advCellsForEdge(i,iEdge)), advCellIsDynamic(advCellsForEdge(i,iEdge))/))
+            enddo
+         enddo
+      enddo
+
+   end subroutine print_debug_cell_masks !}}}
 
 !***********************************************************************
 !

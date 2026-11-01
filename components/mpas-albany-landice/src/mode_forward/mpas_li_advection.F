@@ -201,7 +201,8 @@ module li_advection
            thermalCellMaskField
 
       ! Allocatable arrays need for flux-corrected transport advection
-      real (kind=RKIND), dimension(:,:,:), allocatable :: tend
+      real (kind=RKIND), dimension(:,:,:), allocatable :: tend, &
+           tendLowOrder  ! low-order part of fct thickness tendency, for diagnostics
 
       integer, dimension(:), pointer :: &
            cellMask,              & ! integer bitmask for cells
@@ -505,14 +506,23 @@ module li_advection
          elseif (trim(config_thickness_advection) .eq. 'fct') then
              ! Call fct routine for thickness first, and use layerThicknessEdgeFlux
              ! returned by that call as normalThicknessFlux for call to tracer fct
+             allocate(tendLowOrder(1,nVertLevels,nCells+1))
+             tendLowOrder(:,:,:) = 0.0_RKIND
              call li_tracer_advection_fct_tend(&
                   tend(nTracers:,:,:), advectedTracers(nTracers:,:,:), layerThicknessOld * 0.0_RKIND + 1.0_RKIND, &
                   layerNormalVelocity, 0.0_RKIND * normalVelocity, dt,    &
-                  1, layerThicknessEdgeFlux, computeBudgets=.false.)
+                  1, layerThicknessEdgeFlux, computeBudgets=.false., &
+                  tendLowOrder=tendLowOrder, thicknessAdvection=.true.)
              ! layerThickness is last tracer. However, for some reason
              ! this: layerThickness(:,:) = advectedTracers(nTracers,:,:) does not conserve mass!
              ! This does conserve mass:
              layerThickness(:,:) = layerThickness(:,:) + tend(nTracers,:,:) * dt
+
+             if (config_check_tracer_monotonicity) then
+                call check_fct_thickness_bounds(domain, dt, layerThicknessOld, layerThickness, &
+                                                tendLowOrder(1,:,:))
+             endif
+             deallocate(tendLowOrder)
 
              call mpas_timer_start("halo updates")
              call mpas_dmpar_field_halo_exch(domain, 'layerThicknessEdgeFlux')
@@ -1900,6 +1910,119 @@ module li_advection
    !--------------------------------------------------------------------
 
     end subroutine advect_thickness_tracers_upwind
+
+!***********************************************************************
+!
+!  subroutine check_fct_thickness_bounds
+!
+!> \brief   Check final fct layer thickness against local bounds
+!> \details
+!>  Debug check for fct thickness advection, applied to the final
+!>  (conserved) layer thickness rather than to the fct tracer proxy.
+!>  For each owned cell and layer, the old thickness range over the cell
+!>  and its neighbors is extended to include the low-order (upwind) result.
+!>  A value outside that range was created by the anti-diffusive correction
+!>  rather than by low-order flux convergence.  Counts are reported for
+!>  bounds from all neighbors and, for dynamic cells, from dynamic
+!>  neighbors only.  The worst violation (using dynamic-neighbor bounds)
+!>  and the change in total volume are also reported.
+!>  Must be called by all tasks.
+!-----------------------------------------------------------------------
+
+    subroutine check_fct_thickness_bounds(domain, dt, layerThicknessOld, layerThicknessNew, tendLowOrder)
+
+      use mpas_dmpar
+      use li_tracer_advection_fct_shared, only: advCellIsDynamic
+
+      type (domain_type), intent(in) :: domain  !< Input: domain object
+      real (kind=RKIND), intent(in) :: dt       !< Input: time step (s)
+      real (kind=RKIND), dimension(:,:), intent(in) :: &
+           layerThicknessOld, &  !< Input: layer thickness before advection
+           layerThicknessNew, &  !< Input: layer thickness after fct advection
+           tendLowOrder          !< Input: low-order (upwind) layer thickness tendency
+
+      integer :: iCell, iNeighbor, jCell, k
+      integer, dimension(5) :: localCounts, globalCounts
+      real (kind=RKIND) :: hMinAll, hMaxAll, hMinDyn, hMaxDyn, hLowOrder, excess, maxExcess
+      real (kind=RKIND), dimension(2) :: localVolume, globalVolume
+      real (kind=RKIND), dimension(8) :: localAttributes, globalAttributes
+      real (kind=RKIND), parameter :: eps = 1.0e-10_RKIND
+
+      ! localCounts:
+      ! 1: H_new > max of old H over all neighbors
+      ! 2: correction-created maximum, all-neighbor bounds
+      ! 3: correction-created minimum, all-neighbor bounds
+      ! 4: correction-created maximum, dynamic-neighbor bounds
+      ! 5: correction-created minimum, dynamic-neighbor bounds
+      localCounts(:) = 0
+      localVolume(:) = 0.0_RKIND
+      localAttributes(:) = 0.0_RKIND
+      maxExcess = 0.0_RKIND
+
+      do iCell = 1, nCellsSolve
+         localVolume(1) = localVolume(1) + areaCell(iCell) * sum(layerThicknessOld(:,iCell))
+         localVolume(2) = localVolume(2) + areaCell(iCell) * sum(layerThicknessNew(:,iCell))
+
+         do k = 1, nVertLevels
+            hMinAll = layerThicknessOld(k,iCell)
+            hMaxAll = layerThicknessOld(k,iCell)
+            hMinDyn = layerThicknessOld(k,iCell)
+            hMaxDyn = layerThicknessOld(k,iCell)
+            do iNeighbor = 1, nEdgesOnCell(iCell)
+               jCell = cellsOnCell(iNeighbor, iCell)
+               hMinAll = min(hMinAll, layerThicknessOld(k,jCell))
+               hMaxAll = max(hMaxAll, layerThicknessOld(k,jCell))
+               if ( (advCellIsDynamic(iCell) == 0) .or. (advCellIsDynamic(jCell) == 1) ) then
+                  hMinDyn = min(hMinDyn, layerThicknessOld(k,jCell))
+                  hMaxDyn = max(hMaxDyn, layerThicknessOld(k,jCell))
+               endif
+            enddo
+
+            hLowOrder = layerThicknessOld(k,iCell) + dt * tendLowOrder(k,iCell)
+
+            if (layerThicknessNew(k,iCell) > hMaxAll + eps) localCounts(1) = localCounts(1) + 1
+            if (layerThicknessNew(k,iCell) > max(hMaxAll, hLowOrder) + eps) localCounts(2) = localCounts(2) + 1
+            if (layerThicknessNew(k,iCell) < min(hMinAll, hLowOrder) - eps) localCounts(3) = localCounts(3) + 1
+            if (layerThicknessNew(k,iCell) > max(hMaxDyn, hLowOrder) + eps) localCounts(4) = localCounts(4) + 1
+            if (layerThicknessNew(k,iCell) < min(hMinDyn, hLowOrder) - eps) localCounts(5) = localCounts(5) + 1
+
+            excess = max(layerThicknessNew(k,iCell) - max(hMaxDyn, hLowOrder), &
+                         min(hMinDyn, hLowOrder) - layerThicknessNew(k,iCell))
+            if (excess > maxExcess) then
+               maxExcess = excess
+               localAttributes = (/ real(indexToCellID(iCell), RKIND), real(k, RKIND), &
+                                    layerThicknessOld(k,iCell), layerThicknessNew(k,iCell), hLowOrder, &
+                                    hMinDyn, hMaxDyn, real(advCellIsDynamic(iCell), RKIND) /)
+            endif
+         enddo
+      enddo
+
+      call mpas_dmpar_sum_int_array(domain % dminfo, size(localCounts), localCounts, globalCounts)
+      call mpas_dmpar_sum_real_array(domain % dminfo, size(localVolume), localVolume, globalVolume)
+      call mpas_dmpar_maxattributes_real(domain % dminfo, maxExcess, localAttributes, globalAttributes)
+      call mpas_dmpar_max_real(domain % dminfo, maxExcess, excess)
+
+      call mpas_log_write('FCT thickness bounds check (layers outside [min(Hmin,H_LO), max(Hmax,H_LO)]): ' // &
+           'all-neighbor bounds: $i above max, $i below min; dynamic-neighbor bounds: $i above max, $i below min. ' // &
+           '($i layers above raw all-neighbor max)', &
+           intArgs=(/globalCounts(2), globalCounts(3), globalCounts(4), globalCounts(5), globalCounts(1)/), &
+           masterOnly=.true.)
+      if (excess > eps) then
+         call mpas_log_write('  Worst (dynamic-neighbor bounds): excess=$r m at cell $i, layer $i, isDynamic=$i: ' // &
+              'H_old=$r, H_new=$r, H_LO=$r, Hmin=$r, Hmax=$r', &
+              intArgs=(/nint(globalAttributes(1)), nint(globalAttributes(2)), nint(globalAttributes(8))/), &
+              realArgs=(/excess, globalAttributes(3), globalAttributes(4), globalAttributes(5), &
+                         globalAttributes(6), globalAttributes(7)/), &
+              masterOnly=.true.)
+      endif
+      if (globalVolume(1) > 0.0_RKIND) then
+         call mpas_log_write('  FCT thickness advection volume (m^3): before=$r, after=$r, difference=$r, relative=$r', &
+              realArgs=(/globalVolume(1), globalVolume(2), globalVolume(2) - globalVolume(1), &
+                         (globalVolume(2) - globalVolume(1)) / globalVolume(1)/), &
+              masterOnly=.true.)
+      endif
+
+    end subroutine check_fct_thickness_bounds
 
 !***********************************************************************
 

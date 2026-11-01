@@ -66,7 +66,9 @@ module li_tracer_advection_fct
                                         normalThicknessFlux, w, dt,    &
                                         nTracers, &
                                         layerThicknessEdgeFlux, &
-                                        computeBudgets)!{{{
+                                        computeBudgets, &
+                                        tendLowOrder, &
+                                        thicknessAdvection)!{{{
       use li_mesh
       !-----------------------------------------------------------------
       ! Input/Output parameters
@@ -76,6 +78,8 @@ module li_tracer_advection_fct
          tend    !< [inout] Tracer tendency to which advection added
       real (kind=RKIND), dimension(:,:), intent(inout), optional :: &
          layerThicknessEdgeFlux  !< [inout] used to compute higher order normalThicknessFlux
+      real (kind=RKIND), dimension(:,:,:), intent(inout), optional :: &
+         tendLowOrder  !< [inout] Low-order (upwind) tracer tendency to which advection added
       !-----------------------------------------------------------------
       ! Input parameters
       !-----------------------------------------------------------------
@@ -95,6 +99,9 @@ module li_tracer_advection_fct
 
       logical, intent(in) :: &
          computeBudgets    !< [in] Flag to compute active tracer budgets
+
+      logical, intent(in), optional :: &
+         thicknessAdvection !< [in] True if this call advects thickness (enables debug output)
       !-----------------------------------------------------------------
       ! Local variables
       !-----------------------------------------------------------------
@@ -104,7 +111,21 @@ module li_tracer_advection_fct
          cell1, cell2,    &! neighbor cell indices
          k,kmin, kmax, &! vert index variants
          kmin1, kmax1,    &! vert index variants
-         iTracer           ! tracer index
+         iTracer,         &! tracer index
+         iStencil,        &! index into advCellsForEdge
+         debugCell         ! local index of owned debug cell (0 if none)
+
+      logical :: &
+         printDebug        ! write debug output for debugCell
+
+      real (kind=RKIND), dimension(:,:), allocatable :: &
+         debugRawFlx         ! unlimited correction flux on edges of debugCell
+
+      real (kind=RKIND), dimension(:), allocatable :: &
+         debugUpwindNew,    &! tracerUpwindNew for debugCell
+         debugScaleIn,      &! limiter factor for incoming correction for debugCell
+         debugScaleOut,     &! limiter factor for outgoing correction for debugCell
+         debugTendLowOrder   ! low-order tendency for debugCell
 
       real (kind=RKIND) ::  &
          signedFactor,      &! temp factor including flux sign
@@ -173,6 +194,33 @@ module li_tracer_advection_fct
       workTend(:,:) = 0.0_RKIND
       lowOrderFlx(:,:) = 0.0_RKIND
       highOrderFlx(:,:) = 0.0_RKIND
+
+      ! Find the debug cell if debug output was requested for thickness
+      debugCell = 0
+      printDebug = .false.
+      if (present(thicknessAdvection)) then
+         if (thicknessAdvection .and. config_print_thickness_advection_info) then
+            do iCell = 1, nCellsSolve
+               if (indexToCellID(iCell) == config_stats_cell_ID) then
+                  debugCell = iCell
+                  printDebug = .true.
+                  exit
+               endif
+            enddo
+         endif
+      endif
+      if (printDebug) then
+         allocate(debugRawFlx      (nVertLevels, maxEdges), &
+                  debugUpwindNew   (nVertLevels), &
+                  debugScaleIn     (nVertLevels), &
+                  debugScaleOut    (nVertLevels), &
+                  debugTendLowOrder(nVertLevels))
+         debugRawFlx(:,:) = 0.0_RKIND
+         debugUpwindNew(:) = 0.0_RKIND
+         debugScaleIn(:) = 0.0_RKIND
+         debugScaleOut(:) = 0.0_RKIND
+         debugTendLowOrder(:) = 0.0_RKIND
+      endif
 
 #ifdef _ADV_TIMERS
       call mpas_timer_stop('allocates')
@@ -399,8 +447,32 @@ module li_tracer_advection_fct
                             (tracerUpwindNew - tracerMinNew + eps)
               flxOut(k,iCell) = min(1.0_RKIND, &
                                 max(0.0_RKIND, scaleFactor))
+
+              if (printDebug .and. (iCell == debugCell)) then
+                 debugUpwindNew(k) = tracerUpwindNew
+                 debugTendLowOrder(k) = workTend(k,iCell)
+                 debugScaleIn(k) = flxIn(k,iCell)
+                 debugScaleOut(k) = flxOut(k,iCell)
+              endif
            end do ! k loop
+
+           if (present(tendLowOrder) .and. (iCell <= nCellsSolve)) then
+              do k = 1, nVertLevels
+                 tendLowOrder(iTracer,k,iCell) = tendLowOrder(iTracer,k,iCell) &
+                                               + workTend(k,iCell)
+              end do
+           endif
         end do ! iCell loop
+
+        if (printDebug) then
+           ! save unlimited correction flux on edges of debug cell
+           do i = 1, nEdgesOnCell(debugCell)
+              iEdge = edgesOnCell(i, debugCell)
+              do k = 1, nVertLevels
+                 debugRawFlx(k,i) = highOrderFlx(k,iEdge)
+              end do
+           end do
+        endif
 
 #ifdef _ADV_TIMERS
         call mpas_timer_stop('scale factor build')
@@ -455,6 +527,48 @@ module li_tracer_advection_fct
            end do
 
         end do ! iCell loop
+
+        if (printDebug) then
+           ! Note: tracers still holds the old values here; tracerCur holds the new values.
+           ! For thickness advection layerThickness=1, so the conserved new
+           ! thickness is H_old + dt*tend, and tracerCur is H_new/hProv.
+           iCell = debugCell
+           call mpas_log_write('FCT thickness debug, cell (local=$i, global=$i), dt=$r', &
+                intArgs=(/iCell, indexToCellID(iCell)/), realArgs=(/dt/))
+           call mpas_log_write('  k, H_old, hProv, tracerMin, tracerMax, tracerUpwindNew, ' // &
+                'scaleIn, scaleOut, tendLowOrder, tendTotal, H_lowOrder, H_new, H_new/hProv')
+           do k = 1, nVertLevels
+              call mpas_log_write('  $i $r $r $r $r $r $r $r $r $r $r $r $r', intArgs=(/k/), &
+                   realArgs=(/tracers(iTracer,k,iCell), hProv(k,iCell), &
+                              tracerMin(k,iCell), tracerMax(k,iCell), debugUpwindNew(k), &
+                              debugScaleIn(k), debugScaleOut(k), &
+                              debugTendLowOrder(k), workTend(k,iCell), &
+                              tracers(iTracer,k,iCell) + dt*debugTendLowOrder(k), &
+                              tracers(iTracer,k,iCell) + dt*workTend(k,iCell), &
+                              tracerCur(k,iCell)/))
+           end do
+           call mpas_log_write('  Edge fluxes (layer 1; flux > 0 is from cell1 to cell2; ' // &
+                'correction terms are single edge values):')
+           call mpas_log_write('  edge(global), cell1(global), cell2(global), H1_old, H2_old, normalThicknessFlux, ' // &
+                'lowOrderFlx, rawCorrection, limitedCorrection, finalFlux, scaleOut1, scaleIn1, scaleOut2, scaleIn2')
+           do i = 1, nEdgesOnCell(iCell)
+              iEdge = edgesOnCell(i, iCell)
+              cell1 = cellsOnEdge(1, iEdge)
+              cell2 = cellsOnEdge(2, iEdge)
+              call mpas_log_write('  $i $i $i $r $r $r $r $r $r $r $r $r $r $r', &
+                   intArgs=(/indexToEdgeID(iEdge), indexToCellID(cell1), indexToCellID(cell2)/), &
+                   realArgs=(/tracers(iTracer,1,cell1), tracers(iTracer,1,cell2), &
+                              normalThicknessFlux(1,iEdge), lowOrderFlx(1,iEdge), &
+                              debugRawFlx(1,i), highOrderFlx(1,iEdge), &
+                              lowOrderFlx(1,iEdge) + highOrderFlx(1,iEdge), &
+                              flxOut(1,cell1), flxIn(1,cell1), flxOut(1,cell2), flxIn(1,cell2)/))
+              do iStencil = 1, nAdvCellsForEdge(iEdge)
+                 call mpas_log_write('    stencil cell (global=$i), H_old(layer 1)=$r', &
+                      intArgs=(/indexToCellID(advCellsForEdge(iStencil,iEdge))/), &
+                      realArgs=(/tracers(iTracer,1,advCellsForEdge(iStencil,iEdge))/))
+              end do
+           end do
+        endif
 
 #ifdef _ADV_TIMERS
         call mpas_timer_stop('flux accumulate')
@@ -537,6 +651,14 @@ module li_tracer_advection_fct
                  workTend,     &
                  lowOrderFlx,  &
                  highOrderFlx)
+
+      if (printDebug) then
+         deallocate(debugRawFlx,       &
+                    debugUpwindNew,    &
+                    debugScaleIn,      &
+                    debugScaleOut,     &
+                    debugTendLowOrder)
+      endif
 
 #ifdef _ADV_TIMERS
       call mpas_timer_stop('deallocates')
