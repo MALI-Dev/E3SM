@@ -48,6 +48,9 @@ module li_tracer_advection_fct_shared
    integer, public, dimension(:,:), allocatable :: &
       advCellsForEdge ! index of cells contributing to advection at edge
 
+   integer, public, dimension(:), allocatable :: &
+      advCellIsDynamic ! 1 if cell has dynamic ice, 0 otherwise
+
    real (kind=RKIND), public, dimension(:,:), allocatable :: &
       advCoefs,       &! common advection coefficients
       advCoefs3rd,    &! common advection coeffs for high order
@@ -141,6 +144,7 @@ module li_tracer_advection_fct_shared
       ! Allocate common variables
       allocate( nAdvCellsForEdge (            nEdges), &
                 advCellsForEdge (nAdvCellsMax,nEdges), &
+                advCellIsDynamic(nCells+1),            &
                 advCoefs        (nAdvCellsMax,nEdges), &
                 advCoefs3rd     (nAdvCellsMax,nEdges), &
                 advMaskHighOrder(nVertLevels, nEdges), &
@@ -150,6 +154,7 @@ module li_tracer_advection_fct_shared
       ! Initialize all these allocatable arrays
       nAdvCellsForEdge(:) = 0
       advCellsForEdge(:,:) = 0
+      advCellIsDynamic(:) = 0
       advCoefs(:,:) = 0.0_RKIND
       advCoefs3rd(:,:) = 0.0_RKIND
       advMaskHighOrder(:,:) = 0.0_RKIND
@@ -187,6 +192,14 @@ module li_tracer_advection_fct_shared
 
       call mpas_log_write('Marked $i boundary cells out of $i cells belonging to this processor', &
                  intArgs=(/sum(boundaryCell(1:nCellsSolve)), nCellsSolve/))
+
+      ! Store dynamic-ice state for use by the limiter.
+      ! advCellIsDynamic(nCells+1) stays 0.
+      do iCell = 1, nCells
+         if (li_mask_is_dynamic_ice(cellMask(iCell))) then
+            advCellIsDynamic(iCell) = 1
+         endif
+      enddo
 
       ! Compute masks and coefficients
       do iEdge = 1, nEdges
@@ -375,7 +388,7 @@ module li_tracer_advection_fct_shared
 
       ! Copy module variables to device
       !$acc enter data copyin(nAdvCellsForEdge, advCellsForEdge, &
-      !$acc                   advCoefs, advCoefs3rd, &
+      !$acc                   advCellIsDynamic, advCoefs, advCoefs3rd, &
       !$acc                   advMaskHighOrder, advMask2ndOrder)
 
    !--------------------------------------------------------------------
@@ -398,11 +411,12 @@ module li_tracer_advection_fct_shared
       if (.not. allocated(advMaskHighOrder)) return
 
       !$acc exit data delete(nAdvCellsForEdge, advCellsForEdge, &
-      !$acc                  advCoefs, advCoefs3rd, &
+      !$acc                  advCellIsDynamic, advCoefs, advCoefs3rd, &
       !$acc                  advMaskHighOrder, advMask2ndOrder)
 
       deallocate( nAdvCellsForEdge, &
                   advCellsForEdge, &
+                  advCellIsDynamic, &
                   advCoefs, &
                   advCoefs3rd, &
                   advMaskHighOrder, &

@@ -254,6 +254,12 @@ module li_tracer_advection_fct
            ! TODO: Determine how/if this translates to MALI
            do i = 1, nEdgesOnCell(iCell)
               cell2 = cellsOnCell(i,iCell)
+              ! Optionally exclude non-dynamic neighbors from the bounds of dynamic cells,
+              ! analogous to excluding land cells via minLevelCell/maxLevelCell in MPAS-Ocean
+              if (config_fct_limiter_dynamic_neighbors_only) then
+                 if ( (advCellIsDynamic(iCell) == 1) .and. &
+                      (advCellIsDynamic(cell2) == 0) ) cycle
+              endif
               !kmin1 = max(kmin, minLevelCell(cell2))
               !kmax1 = min(kmax, maxLevelCell(cell2))
               do k=kmin, kmax !kmin1,kmax1

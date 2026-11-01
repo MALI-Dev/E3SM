@@ -131,6 +131,10 @@
 					description="Reconstruction of 3rd-order reconstruction to blend with 4th-order reconstuction. Equivalent to beta in Skamarock and Gassmann (2011) eq. 7. 0 is fully 4th order, 1 is fully 3rd order."
 					possible_values="any real between 0 and 1"
 		/>
+		<nml_option name="config_fct_limiter_dynamic_neighbors_only" type="logical" default_value=".false." units="unitless"
+			    description="If true, the FCT limiter bounds (local min and max) for a cell with dynamic ice are computed only from that cell and its neighbors that also have dynamic ice; non-dynamic and ice-free neighbors are excluded.  The low-order (upwind) update is unaffected; only the anti-diffusive correction is limited more strictly.  Experimental option."
+			    possible_values=".true. or .false."
+		/>
 		<nml_option name="config_restore_thickness_after_advection" type="logical" default_value=".false." units="unitless"
 			    description="If true, reset thickness to values at previous timestep after advection occurs. This is used for spinning up tracer fields such as damage.  When this is true, geometry changes from surface and basal mass balance (grounded or floating) and facemelting are not retained, but changes from calving are."
 			    possible_values=".true. or .false."
