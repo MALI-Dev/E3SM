@@ -167,6 +167,14 @@ Valid values: any real between 0 and 1
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_fct_margin_fo_buffer" type="logical"
+	category="advection" group="advection">
+If true, disable the FCT anti-diffusive correction (both 2nd-order and high-order) on any edge that touches a dynamic margin cell, so that transport there is first-order upwind. This creates a one-cell first-order buffer at the dynamic ice margin.  Experimental option.
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
 <entry id="config_fct_limiter_dynamic_neighbors_only" type="logical"
 	category="advection" group="advection">
 If true, the FCT limiter bounds (local min and max) for a cell with dynamic ice are computed only from that cell and its neighbors that also have dynamic ice; non-dynamic and ice-free neighbors are excluded.  The low-order (upwind) update is unaffected; only the anti-diffusive correction is limited more strictly.  Experimental option.

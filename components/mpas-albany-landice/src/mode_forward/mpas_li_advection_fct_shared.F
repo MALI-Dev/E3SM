@@ -222,6 +222,15 @@ module li_tracer_advection_fct_shared
              advMask2ndOrder(:,iEdge) = 0.0_RKIND
          end if
 
+         ! optionally use first-order upwind on all edges touching a boundary cell
+         ! (high-order mask is already zero on these edges)
+         if (config_fct_margin_fo_buffer) then
+            if (boundaryCell(cell1) == 1 .or. &
+                boundaryCell(cell2) == 1) then
+               advMask2ndOrder(:,iEdge) = 0.0_RKIND
+            end if
+         end if
+
          ! do only if this edge flux is needed to update owned cells
          if (cell1 <= nCells .and. cell2 <= nCells) then
             ! Insert cellsOnEdge to list of advection cells

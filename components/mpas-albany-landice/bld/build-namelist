@@ -473,6 +473,7 @@ if ($MALI_PROGNOSTIC_MODE eq 'PROGNOSTIC') {
 }
 add_default($nl, 'config_horiz_tracer_adv_order');
 add_default($nl, 'config_advection_coef_3rd_order');
+add_default($nl, 'config_fct_margin_fo_buffer');
 add_default($nl, 'config_fct_limiter_dynamic_neighbors_only');
 add_default($nl, 'config_restore_thickness_after_advection');
 if ($GLC_TWO_WAY_COUPLING eq 'True') {
