@@ -593,12 +593,7 @@ module li_time_integration_fe_rk
       ! Deallocate arrays for fct
       if ( (trim(config_thickness_advection) .eq. 'fct') .or. &
            (trim(config_tracer_advection) .eq. 'fct') ) then
-         deallocate( nAdvCellsForEdge, &
-                     advCellsForEdge, &
-                     advCoefs, &
-                     advCoefs3rd, &
-                     advMaskHighOrder, &
-                     advMask2ndOrder)
+         call li_tracer_advection_fct_shared_finalize()
       endif
 
 ! Reset time step to full length after RK loop

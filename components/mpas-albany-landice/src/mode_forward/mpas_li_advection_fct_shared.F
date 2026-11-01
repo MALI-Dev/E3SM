@@ -58,7 +58,8 @@ module li_tracer_advection_fct_shared
    ! Public member functions 
    !-------------------------------------------------------------------- 
 
-   public :: li_tracer_advection_fct_shared_init
+   public :: li_tracer_advection_fct_shared_init, &
+             li_tracer_advection_fct_shared_finalize
 
 !***********************************************************************
 
@@ -123,6 +124,16 @@ module li_tracer_advection_fct_shared
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
       err = 0 ! initialize error code
+
+      ! Module arrays are allocated here and deallocated in
+      ! li_tracer_advection_fct_shared_finalize at the end of each time step
+      if (allocated(advMaskHighOrder)) then
+         call mpas_log_write( &
+            'li_tracer_advection_fct_shared_init called while fct arrays are still allocated', &
+            MPAS_LOG_ERR)
+         err = 1
+         return
+      endif
 
       ! define max number of advection cells as max number of edges*2
       nAdvCellsMax = maxEdges2
@@ -355,18 +366,49 @@ module li_tracer_advection_fct_shared
                  derivTwo)
 
       ! If 2nd order advection, disable high-order terms by
-      ! setting mask to zero.
-      if (config_horiz_tracer_adv_order == 2) then
+      ! setting mask to zero.  Invalid orders also default to 2nd order
+      ! (see li_tracer_advection_fct_init).
+      if ( (config_horiz_tracer_adv_order /= 3) .and. &
+           (config_horiz_tracer_adv_order /= 4) ) then
          advMaskHighOrder(:,:) = 0.0_RKIND
       endif
 
       ! Copy module variables to device
       !$acc enter data copyin(nAdvCellsForEdge, advCellsForEdge, &
-      !$acc                   advCoefs, advCoefs3rd, advMaskHighOrder)
+      !$acc                   advCoefs, advCoefs3rd, &
+      !$acc                   advMaskHighOrder, advMask2ndOrder)
 
    !--------------------------------------------------------------------
 
    end subroutine li_tracer_advection_fct_shared_init !}}}
+
+!***********************************************************************
+!
+!  routine li_tracer_advection_fct_shared_finalize
+!
+!> \brief Deallocate shared fct advection arrays
+!> \details
+!>  This routine deallocates the module arrays allocated by
+!>  li_tracer_advection_fct_shared_init, on host and device.
+!
+!-----------------------------------------------------------------------
+
+   subroutine li_tracer_advection_fct_shared_finalize()!{{{
+
+      if (.not. allocated(advMaskHighOrder)) return
+
+      !$acc exit data delete(nAdvCellsForEdge, advCellsForEdge, &
+      !$acc                  advCoefs, advCoefs3rd, &
+      !$acc                  advMaskHighOrder, advMask2ndOrder)
+
+      deallocate( nAdvCellsForEdge, &
+                  advCellsForEdge, &
+                  advCoefs, &
+                  advCoefs3rd, &
+                  advMaskHighOrder, &
+                  advMask2ndOrder)
+
+   end subroutine li_tracer_advection_fct_shared_finalize !}}}
 
 !***********************************************************************
 !
