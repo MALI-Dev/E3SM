@@ -389,10 +389,8 @@ module li_tracer_advection_fct_shared
                  derivTwo)
 
       ! If 2nd order advection, disable high-order terms by
-      ! setting mask to zero.  Invalid orders also default to 2nd order
-      ! (see li_tracer_advection_fct_init).
-      if ( (config_horiz_tracer_adv_order /= 3) .and. &
-           (config_horiz_tracer_adv_order /= 4) ) then
+      ! setting mask to zero.
+      if (config_horiz_tracer_adv_order == 2) then
          advMaskHighOrder(:,:) = 0.0_RKIND
       endif
 

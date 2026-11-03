@@ -424,7 +424,9 @@ module li_advection
                  advectedTracers,   &
                  surfaceTracers,    &
                  basalTracers,      &
-                 nTracers)
+                 nTracers,          &
+                 err_tmp)
+            err = ior(err, err_tmp)
 
          else   ! no tracer advection; pass a tracer array full of zeroes
 
@@ -479,7 +481,8 @@ module li_advection
                   edgeMask,                &
                   layerThickness,          &
                   advectedTracers,         &
-                  err)
+                  err_tmp)
+             err = ior(err, err_tmp)
          elseif ((trim(config_thickness_advection) .eq. 'fo') .and. &
                   trim(config_tracer_advection) .eq. 'fct') then
              call advect_thickness_tracers_upwind(&
@@ -493,7 +496,8 @@ module li_advection
                   edgeMask,                &
                   layerThickness,          &
                   advectedTracers,         &
-                  err)
+                  err_tmp)
+             err = ior(err, err_tmp)
              ! Reset tracers after fo advection for fct advection
              advectedTracers(:,:,:) = advectedTracersOld(:,:,:)
 
@@ -538,12 +542,12 @@ module li_advection
              elseif (trim(config_tracer_advection) .eq. 'none') then
                 ! do nothing
              else
-                err_tmp = 1
+                err = ior(err, 1)
                 call mpas_log_write(trim(config_tracer_advection) // &
                                     ' tracer advection is not currently supported with fct thickness advection.', MPAS_LOG_ERR)
              endif
          else
-            err_tmp = 1
+            err = ior(err, 1)
             call mpas_log_write("config_thickness_advection = " // trim(config_thickness_advection) // &
                                 ", config_tracer_advection = " // trim(config_tracer_advection) // &
                                 " is not a supported combination.", MPAS_LOG_ERR)
@@ -1208,7 +1212,8 @@ module li_advection
          advectedTracers,  &
          surfaceTracers,   &
          basalTracers,     &
-         nTracers)
+         nTracers,         &
+         err)
 
       use li_thermal, only: li_temperature_to_enthalpy_kelvin
       use li_tracer_advection_fct
@@ -1243,6 +1248,9 @@ module li_advection
                              ! dimension 1 = maxTracers, 2 = nCells
 
       integer, intent(out)  :: nTracers
+
+      integer, intent(out)  :: err
+
       !-----------------------------------------------------------------
       !
       ! local variables
@@ -1285,9 +1293,10 @@ module li_advection
       real (kind=RKIND), pointer ::  &
            config_ice_density         ! ice density
 
-      integer :: iCell, iTracer, k, err
+      integer :: iCell, iTracer, k, err_tmp
 
-      err  = 0
+      err = 0
+      err_tmp = 0
 
       ! get dimensions
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
@@ -1416,9 +1425,10 @@ module li_advection
       !       May need to increase maxTracers in the Registry.
       if ( (trim(config_tracer_advection) == 'fct') .or. &
            (trim(config_thickness_advection) == 'fct') ) then
-         call li_tracer_advection_fct_init(err)
+         call li_tracer_advection_fct_init(err_tmp)
+         err = ior(err, err_tmp)
 
-         if (err /= 0) then
+         if (err_tmp /= 0) then
             call mpas_log_write(                                 &
                'Error encountered during fct tracer advection init', &
                MPAS_LOG_ERR)

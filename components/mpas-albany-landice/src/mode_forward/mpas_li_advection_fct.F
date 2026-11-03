@@ -696,8 +696,9 @@ module li_tracer_advection_fct
       if (config_num_halos < 3) then
          call mpas_log_write( &
             'Monotonic advection cannot be used with less than 3 halos.', &
-            MPAS_LOG_CRIT)
-         err = -1
+            MPAS_LOG_ERR)
+         err = 1
+         return
       end if
 
       ! Set blending coefficient if 3rd order horizontal advection chosen
@@ -709,10 +710,10 @@ module li_tracer_advection_fct
       case (4)
          coef3rdOrder = 0.0_RKIND
       case default
-         coef3rdOrder = 0.0_RKIND
          call mpas_log_write( &
-            'Invalid value for horizontal advection order, defaulting to 2',&
-            MPAS_LOG_WARN)
+            'Invalid value for config_horiz_tracer_adv_order: $i', &
+            MPAS_LOG_ERR, intArgs=(/config_horiz_tracer_adv_order/))
+         err = 1
       end select ! horizontal advection order
 
       ! Set flag for checking monotonicity
