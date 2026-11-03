@@ -21,8 +21,8 @@
 <config_tracer_advection>'fo'</config_tracer_advection>
 <config_horiz_tracer_adv_order>3</config_horiz_tracer_adv_order>
 <config_advection_coef_3rd_order>0.25</config_advection_coef_3rd_order>
-<config_fct_margin_fo_buffer>.false.</config_fct_margin_fo_buffer>
-<config_fct_limiter_dynamic_neighbors_only>.false.</config_fct_limiter_dynamic_neighbors_only>
+<config_fct_margin_fo_buffer>.true.</config_fct_margin_fo_buffer>
+<config_fct_limiter_dynamic_neighbors_only>.true.</config_fct_limiter_dynamic_neighbors_only>
 <config_restore_thickness_after_advection>.false.</config_restore_thickness_after_advection>
 <config_smb_source>'coupler'</config_smb_source>
 <config_zero_sfcMassBalApplied_over_bare_land>.true.</config_zero_sfcMassBalApplied_over_bare_land>
