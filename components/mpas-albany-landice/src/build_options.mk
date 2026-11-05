@@ -21,6 +21,11 @@ endif # LIFEV IF
 ifeq "$(ALBANY)" "true"
     EXTERNAL_DYCORE_FLAG += -DUSE_EXTERNAL_FIRSTORDER
     EXTERNAL_DYCORE_FLAG += -DMPAS_LI_BUILD_INTERFACE
+# On by default; needs Albany with sandialabs/Albany#1241.
+# Build with ALBANY_ADDITIONAL_PHYS_PARAMS=false for an older Albany.
+ifneq "$(ALBANY_ADDITIONAL_PHYS_PARAMS)" "false"
+    EXTERNAL_DYCORE_FLAG += -DMPAS_LI_ALBANY_ADDITIONAL_PHYS_PARAMS
+endif
 endif # ALBANY IF
 
 # Currently LifeV AND Albany is not allowed

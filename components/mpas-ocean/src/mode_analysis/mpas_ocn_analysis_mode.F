@@ -125,6 +125,10 @@ module ocn_analysis_mode
       ! Set up ocean constants
       call ocn_constants_init(domain%configs, domain%packages)
 
+      ! Resolve negative land-ice densities to the shared values; this must
+      ! come before ocn_config_init, which copies the namelist options
+      call ocn_constants_resolve_land_ice_densities(domain)
+
       ! Setup ocean config pool
       call ocn_config_init(domain%configs)
 

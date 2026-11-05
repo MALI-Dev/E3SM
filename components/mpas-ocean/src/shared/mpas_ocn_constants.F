@@ -32,7 +32,8 @@ module ocn_constants
    private
    save
 
-   public :: ocn_constants_init
+   public :: ocn_constants_init, &
+             ocn_constants_resolve_land_ice_densities
 
    type (mpas_pool_type), public, pointer :: ocnConfigs
    type (mpas_pool_type), public, pointer :: ocnPackages
@@ -44,7 +45,8 @@ module ocn_constants
       rho_air               ,&! ambient air density (kg/m^3)
       rho_fw                ,&! density of fresh water (kg/m^3)
       rho_sw                ,&! density of salt water (kg/m^3)
-      rho_ice               ,&! density of sea ice (kg/m^3)
+      rho_ice               ,&! density of ice (kg/m^3)
+      rho_sw_iceshelf       ,&! density of sea water at the base of ice shelves (kg/m^3)
       cp_sw                 ,&! specific heat salt water (J/kg/K)
       cp_air                ,&! heat capacity of air (J/kg/K)
       sound                 ,&! speed of sound (m/s)
@@ -123,6 +125,7 @@ contains
        rho_sw    = config_density0            ! density of salt water (kg/m^3)
        rho_fw    = 1.0e3_RKIND                ! avg. water density (kg/m^3)
        rho_ice   = 0.917e3_RKIND              ! density of ice (kg/m^3)
+       rho_sw_iceshelf = 1.028e3_RKIND        ! sea water density at ice-shelf base (kg/m^3)
        cp_sw     = 3.996e3_RKIND              ! specific heat salt water
        cp_air    = 1005.0_RKIND               ! heat capacity of air (J/kg/K)
        sound     = 1.5e2_RKIND                ! speed of sound (m/s)
@@ -168,6 +171,7 @@ contains
        rho_sw                 = SHR_CONST_RHOSW         ! kg/m^3
        rho_fw                 = SHR_CONST_RHOFW         ! kg/m^3
        rho_ice                = SHR_CONST_RHOICE        ! kg/m^3
+       rho_sw_iceshelf        = SHR_CONST_RHOSW_ICESHELF ! kg/m^3
        vonkar                 = SHR_CONST_KARMAN
        stefan_boltzmann       = SHR_CONST_STEBOL        ! W/m^2/K^4
        latent_heat_vapor_mks  = SHR_CONST_LATVAP        ! J/kg
@@ -277,6 +281,64 @@ contains
        mmol_to_kg_O2 = molecular_weight_O2 * 1.e-6_RKIND
 
    end subroutine ocn_constants_init!}}}
+
+!***********************************************************************
+!
+!  routine ocn_constants_resolve_land_ice_densities
+!
+!> \brief   Replace negative land-ice density options with shared values
+!> \details
+!>  A negative config_land_ice_flux_rho_ice means "use rho_ice", and a
+!>  negative config_land_ice_rho_ocean means "use rho_sw_iceshelf";
+!>  positive values are kept. Call after ocn_constants_init and before
+!>  ocn_config_init, which copies the options.
+!
+!-----------------------------------------------------------------------
+   subroutine ocn_constants_resolve_land_ice_densities(domain)!{{{
+
+      type (domain_type), intent(inout) :: domain
+
+      call resolve_shared_density(domain, 'config_land_ice_flux_rho_ice', rho_ice)
+      call resolve_shared_density(domain, 'config_land_ice_rho_ocean', rho_sw_iceshelf)
+
+   end subroutine ocn_constants_resolve_land_ice_densities!}}}
+
+!***********************************************************************
+!
+!  routine resolve_shared_density
+!
+!> \brief   Replace a negative density namelist option with a shared value
+!> \details
+!>  The option is updated in the configs pool and in the stream
+!>  attributes: add_stream_attributes copied the namelist values into
+!>  them before core init, so output files would otherwise record the
+!>  negative value.
+!
+!-----------------------------------------------------------------------
+   subroutine resolve_shared_density(domain, configName, sharedValue)!{{{
+
+      use mpas_stream_manager, only: MPAS_stream_mgr_add_att
+      use mpas_log, only: mpas_log_write
+
+      type (domain_type), intent(inout) :: domain
+      character (len=*), intent(in) :: configName
+      real (kind=RKIND), intent(in) :: sharedValue
+
+      real (kind=RKIND), pointer :: configValue
+      integer :: attErr
+
+      call mpas_pool_get_config(domain % configs, configName, configValue)
+      if (configValue >= 0.0_RKIND) return
+
+      configValue = sharedValue
+      call mpas_log_write(trim(configName) // ' < 0: using the shared value, $r kg m^-3', &
+           realArgs=(/ configValue /))
+
+      ! Default attributes (for streams created later), then every existing stream
+      call MPAS_stream_mgr_add_att(domain % streamManager, configName, configValue, ierr=attErr)
+      call MPAS_stream_mgr_add_att(domain % streamManager, configName, configValue, streamID='.*', ierr=attErr)
+
+   end subroutine resolve_shared_density!}}}
 
 !***********************************************************************
 
