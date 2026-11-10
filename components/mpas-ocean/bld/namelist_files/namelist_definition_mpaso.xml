@@ -1752,7 +1752,7 @@ Default: Defined in namelist_defaults.xml
 	category="land_ice" group="land_ice">
 ocean density used to calculate landIceDraft at floatation (assumed constant and uniform). Should be consistent with MALI's config_ocean_density when used to determine grounding line location. This is an alternative to the coupler variable effectiveDensityInLandIce which is not currently used.
 
-Valid values: Any positive real number
+Valid values: Any positive real number, or a negative value to use the shared ice-shelf sea water density
 Default: Defined in namelist_defaults.xml
 </entry>
 
@@ -1819,7 +1819,7 @@ Default: Defined in namelist_defaults.xml
 	category="land_ice_fluxes" group="land_ice_fluxes">
 The density of land ice.
 
-Valid values: Any positive real number
+Valid values: Any positive real number, or a negative value to use the shared ice density
 Default: Defined in namelist_defaults.xml
 </entry>
 
