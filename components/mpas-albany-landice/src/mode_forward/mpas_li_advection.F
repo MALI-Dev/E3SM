@@ -211,7 +211,7 @@ module li_advection
 
       integer, dimension(:,:), pointer :: cellsOnEdge
 
-      real (kind=RKIND), dimension(:), pointer :: dvEdge
+      real (kind=RKIND), dimension(:), pointer :: dvEdge, areaCell
 
       character (len=StrKIND), pointer :: &
            config_thickness_advection   ! method for advecting thickness and tracers
@@ -337,6 +337,7 @@ module li_advection
       call mpas_pool_get_config(liConfigs, 'config_stats_cell_ID', config_stats_cell_ID)
       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(meshPool, 'dvEdge', dvEdge)
+      call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
 
       ! get fields from the scratch pool
       ! Note: The advectedTracers field is a scratch field containing only the tracers that need to be advected.
@@ -677,15 +678,13 @@ module li_advection
                      fluxAcrossGroundingLine(iEdge) = fluxAcrossGroundingLine(iEdge) + GLfluxSign * layerThicknessEdgeFlux(k,iEdge)
                   enddo
                endif
-               ! assign to grounded cell in fluxAcrossGroundingLineOnCells
-               if (thickness(theGroundedCell) <= 0.0_RKIND) then
-                  ! This should never be the case, but checking to avoid possible divide by zero
-                  call mpas_log_write("thickness at a grounding line is unexepectedly <=0", MPAS_LOG_ERR)
-                  err = ior(err, 1)
-                  return
-               endif
+               ! Assign to grounded cell in fluxAcrossGroundingLineOnCells.
+               ! Convert the flux per unit width (m^2/s) to a mass flux per unit horizontal
+               ! area of the grounded cell (kg m^-2 s^-1) by multiplying by the edge length
+               ! and ice density and dividing by the cell area.  Multiple grounding line
+               ! edges of one cell accumulate.
                fluxAcrossGroundingLineOnCells(theGroundedCell) = fluxAcrossGroundingLineOnCells(theGroundedCell) + &
-                       fluxAcrossGroundingLine(iEdge) / thickness(theGroundedCell) * config_ice_density  ! adjust to correct units
+                       fluxAcrossGroundingLine(iEdge) * dvEdge(iEdge) * config_ice_density / areaCell(theGroundedCell)
             endif
          enddo ! edges
 
