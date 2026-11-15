@@ -2241,8 +2241,8 @@ bool belongToTria(double const* x, double const* t, double bcoords[3], double ep
 
        for (int index = 0; index < nVertices; index++) { //coordinates lines
           int iCell = vertexToFCell[index];
-          //setting boundary vertices labels, 2 for dirichlet nodes, 1 otherwise
-          bool isDirichletVertex = dirichletCellsMask_F[(nLayers+1)*iCell] != 0;
+          //setting boundary vertices labels, 3 for dirichlet nodes (including pinned terrestrial nodes), 1 otherwise
+          bool isDirichletVertex = (dirichletCellsMask_F[(nLayers+1)*iCell] != 0) || isPinnedTerrestrialCell[iCell];
           int vertexLabel = (!isVertexBoundary[index]) ? 0 :
                             isDirichletVertex ? 3 : 1;
 
