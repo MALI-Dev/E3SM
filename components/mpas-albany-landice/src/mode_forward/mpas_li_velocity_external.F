@@ -67,14 +67,15 @@ module li_velocity_external
          config_thermal_thickness, &
          li_mask_ValueDynamicIce, li_mask_ValueIce, li_mask_ValueFloating, config_use_glp, use_ismip7_fem_extension, &
          use_marine_fem_extension, use_terrestrial_fem_extension, &
-         velocity_extrapolation_method, use_velocity_extrapolation_limiter, terrestrial_node_velocity) &
+         velocity_extrapolation_method, use_velocity_extrapolation_limiter, terrestrial_node_velocity, &
+         velocity_extrapolation_target) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
 
          INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, li_mask_ValueFloating, &
                            velocity_extrapolation_method, &
-                           terrestrial_node_velocity
+                           terrestrial_node_velocity, velocity_extrapolation_target
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
@@ -276,7 +277,9 @@ contains
       logical :: use_marine_fem_extension, use_terrestrial_fem_extension
       character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_method
       character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_limiter
+      character (len=StrKIND), pointer :: config_fem_velocity_extrapolation_target
       integer :: velocity_extrapolation_method
+      integer :: velocity_extrapolation_target
       logical :: use_velocity_extrapolation_limiter
       character (len=StrKIND), pointer :: config_fem_terrestrial_node_velocity
       integer :: terrestrial_node_velocity
@@ -395,6 +398,19 @@ contains
          config_fem_velocity_extrapolation_method)
       call mpas_pool_get_config(liConfigs, 'config_fem_velocity_extrapolation_limiter', &
          config_fem_velocity_extrapolation_limiter)
+      call mpas_pool_get_config(liConfigs, 'config_fem_velocity_extrapolation_target', &
+         config_fem_velocity_extrapolation_target)
+      select case (trim(config_fem_velocity_extrapolation_target))
+      case ('edges')
+         velocity_extrapolation_target = 0
+      case ('cells')
+         velocity_extrapolation_target = 1
+      case default
+         call mpas_log_write(trim(config_fem_velocity_extrapolation_target) // &
+            ' is not a valid option for config_fem_velocity_extrapolation_target.', MPAS_LOG_ERR)
+         velocity_extrapolation_target = 0
+         err = 1
+      end select
       select case (trim(config_fem_velocity_extrapolation_method))
       case ('nearest')
          velocity_extrapolation_method = 0
@@ -416,8 +432,9 @@ contains
       end if
       use_velocity_extrapolation_limiter = (trim(config_fem_velocity_extrapolation_limiter) == 'relaxed')
       if (.not. use_marine_fem_extension) then
-         call mpas_log_write("Marine FEM extension is disabled; extrapolating velocity to edges outside the FE mesh using '" // &
-            trim(config_fem_velocity_extrapolation_method) // "' method with '" // &
+         call mpas_log_write("Marine FEM extension is disabled; extrapolating velocity outside the FE mesh using '" // &
+            trim(config_fem_velocity_extrapolation_method) // "' method onto " // &
+            trim(config_fem_velocity_extrapolation_target) // " with '" // &
             trim(config_fem_velocity_extrapolation_limiter) // "' limiter.")
       endif
 
@@ -461,7 +478,8 @@ contains
          merge(1_C_INT, 0_C_INT, use_terrestrial_fem_extension), &
          velocity_extrapolation_method, &
          merge(1_C_INT, 0_C_INT, use_velocity_extrapolation_limiter), &
-         terrestrial_node_velocity )
+         terrestrial_node_velocity, &
+         velocity_extrapolation_target )
 
       call interface_reset_stdout()
 #endif
