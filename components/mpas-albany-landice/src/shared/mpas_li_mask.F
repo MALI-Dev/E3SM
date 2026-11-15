@@ -225,6 +225,8 @@ contains
       real(KIND=RKIND), dimension(:), pointer :: thickness
       logical, pointer :: config_do_restart
       integer, pointer :: config_num_halos, config_number_of_blocks
+      logical, pointer :: config_mask_floating_dynamic_persistence
+      character (len=StrKIND), pointer :: config_calving
       integer :: err_tmp
 
       err = 0
@@ -240,6 +242,20 @@ contains
       if (config_num_halos < 3) then
          call mpas_log_write("MALI requires that config_num_halos >= 3.  (edgeMask calculations require it.)", MPAS_LOG_ERR)
          err_tmp = 1
+      endif
+      err = ior(err,err_tmp)
+
+      ! Persistence of dynamic floating cells would prevent rate-based calving laws from working properly
+      call mpas_pool_get_config(liConfigs, 'config_mask_floating_dynamic_persistence', config_mask_floating_dynamic_persistence)
+      call mpas_pool_get_config(liConfigs, 'config_calving', config_calving)
+      if (config_mask_floating_dynamic_persistence) then
+         select case (trim(config_calving))
+         case ('eigencalving', 'specified_calving_velocity', 'specified_retreat_velocity', 'von_Mises_stress', &
+               'damagecalving', 'ismip6_retreat')
+            call mpas_log_write("config_mask_floating_dynamic_persistence=.true. is not compatible with the rate-based " // &
+               "calving law config_calving='" // trim(config_calving) // "'.", MPAS_LOG_ERR)
+            err_tmp = 1
+         end select
       endif
       err = ior(err,err_tmp)
 
@@ -333,6 +349,9 @@ contains
       real (kind=RKIND) :: thinnestNeighborHeight
       integer :: iCellNeighbor
       logical :: openOceanNeighbor
+      logical, pointer :: config_mask_floating_dynamic_persistence
+      logical, dimension(:), allocatable :: wasDynamic
+      logical :: keepDynamic
 
       call mpas_timer_start('calculate mask')
 
@@ -371,6 +390,17 @@ contains
       ! ====
       !call mpas_log_write("Updating masks")  ! Disabled to avoid excessive logging from shared routine
       !call mpas_timer_start('calculate mask cell')
+      call mpas_pool_get_config(liConfigs, 'config_mask_floating_dynamic_persistence', config_mask_floating_dynamic_persistence)
+      if (config_mask_floating_dynamic_persistence) then
+         ! Save the dynamic bit as it exists on input (from a previous time step or intermediate stage),
+         ! because the mask is reset below.
+         allocate(wasDynamic(nCells+1))
+         wasDynamic(:) = .false.
+         do i = 1, nCells
+            wasDynamic(i) = li_mask_is_dynamic_ice(cellMask(i))
+         enddo
+      endif
+
       ! Set mask to 0 everywhere, but need to preserve bits the initial ice extent bit
       do i=1, nCells
         cellMask(i) = iand(cellMask(i), li_mask_ValueInitialIceExtent)
@@ -423,15 +453,20 @@ contains
                     openOceanNeighbor = .true.
                  endif
               enddo
-              if ((openOceanNeighbor) .and. (thickness(i) < 0.95_RKIND * thinnestNeighborHeight)) then
+              keepDynamic = .false.
+              if (config_mask_floating_dynamic_persistence) keepDynamic = wasDynamic(i)
+              if ((openOceanNeighbor) .and. (thickness(i) < 0.95_RKIND * thinnestNeighborHeight) .and. &
+                  .not. keepDynamic) then
                  ! Consider this NOT dynamic if the ice shelf margin is not almost as tall as it's inland neighbors.
                  ! Only do this for a non-dynamic cell adjacent to open ocean.
                  ! (if the floating cell was marked as a margin because it is adjacent to ice-free land,
                  !  we want to still consider it as dynamic)
+                 ! With config_mask_floating_dynamic_persistence, a cell that was already dynamic stays dynamic.
                  cellMask(i) = iand(cellMask(i), not(li_mask_ValueDynamicIce))  ! (turn off this bit)
               endif
           endif
       enddo
+      if (allocated(wasDynamic)) deallocate(wasDynamic)
 
       ! Identify cells that Albany would consider as active
       if ( (trim(config_velocity_solver) == 'L1L2') .or. &
