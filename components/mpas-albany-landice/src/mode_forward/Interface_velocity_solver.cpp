@@ -55,6 +55,7 @@ double rho_ocean;
 //unsigned char ice_present_bit_value;
 int dynamic_ice_bit_value;
 int ice_present_bit_value;
+int floating_ice_bit_value;
 // Selects the version of the margin (thickness/elevation) extension logic used in
 // importFields(): false => 'ismip6-era' (pre-ismip7-era scheme), true => 'ismip7-era'.
 // Set from the namelist option config_fem_extension_method via velocity_solver_set_parameters().
@@ -149,6 +150,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* clausius_clapeyron_coeff,
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
+                         int const* li_mask_ValueFloating,
                          int const* use_GLP_F, int const* use_ISMIP7_extension_F,
                          int const* use_marine_extension_F, int const* use_terrestrial_extension_F,
                          int const* velocity_extrapolation_method_F,
@@ -160,6 +162,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   thermal_thickness_limit = *thermal_thickness_limit_F / unit_length; // Import with Albany scaling
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
   ice_present_bit_value = *li_mask_ValueIce;
+  floating_ice_bit_value = *li_mask_ValueFloating;
   useISMIP7Extension = (*use_ISMIP7_extension_F != 0);
   useMarineExtension = (*use_marine_extension_F != 0);
   useTerrestrialExtension = (*use_terrestrial_extension_F != 0);
@@ -406,12 +409,95 @@ void velocity_solver_finalize() {
  *
  */
 
+// Copy of the vertex mask from which unanchored FE triangles have been removed (see pruneUnanchoredTriangles).
+std::vector<int> prunedVerticesMask;
+
+// Without the marine extension, the FE mesh can contain patches of triangles (e.g., a floating ice tongue) that share
+// only a node, not an edge, with the rest of the mesh.  A patch with no grounded ice or Dirichlet node has no
+// resistance to rigid-body motion (only ocean pressure acts on it), so the FE problem is singular and the velocity
+// is unbounded.  Here we remove from the FE mesh every triangle that cannot be reached through shared edges from an
+// "anchored" triangle, i.e., a triangle with at least one node that is grounded ice, has a Dirichlet condition (or
+// is a zero-velocity terrestrial node), or is outside the local MPAS domain (conservatively kept).
+// Removed triangles lose the dynamic bit in prunedVerticesMask, and verticesMask_F is pointed at that copy.
+// Cells that lose all their triangles get their velocity from the extrapolation done for non-FE dynamic cells.
+void pruneUnanchoredTriangles() {
+  int me;
+  MPI_Comm_rank(comm, &me);
+  std::vector<int> reached(nVertices_F, 0);
+  int numActive = 0;
+  for (int i = 0; i < nVertices_F; i++) {
+    if (!(verticesMask_F[i] & dynamic_ice_bit_value))
+      continue;
+    numActive++;
+    bool anchored = false;
+    for (int k = 0; k < 3; k++) {
+      int iCell = cellsOnVertex_F[3 * i + k] - 1;
+      if ((iCell < 0) || (iCell >= nCells_F)) {
+        anchored = true;
+        break;
+      }
+      bool isIce = cellsMask_F[iCell] & ice_present_bit_value;
+      bool isFloating = cellsMask_F[iCell] & floating_ice_bit_value;
+      if ((dirichletCellsMask_F[(nLayers+1)*iCell] != 0) || (isIce && !isFloating) ||
+          (!isIce && (terrestrialNodeVelocity == terrestrialNodeZero))) {
+        anchored = true;
+        break;
+      }
+    }
+    reached[i] = anchored;
+  }
+  allToAll(reached, sendVerticesList_F, recvVerticesList_F);
+
+  // Propagate "reached" through edges shared by two FE triangles.  Only owned triangles are updated, and the halo
+  // is refreshed after each sweep, so that all procs agree.
+  while (true) {
+    int changed = 0;
+    for (int iEdge = 0; iEdge < nEdges_F; iEdge++) {
+      ID v1 = verticesOnEdge_F[2 * iEdge] - 1;
+      ID v2 = verticesOnEdge_F[2 * iEdge + 1] - 1;
+      if ((v1 >= nVertices_F) || (v2 >= nVertices_F))
+        continue;
+      if (!(verticesMask_F[v1] & dynamic_ice_bit_value) || !(verticesMask_F[v2] & dynamic_ice_bit_value))
+        continue;
+      if (reached[v1] && !reached[v2] && (v2 < nVerticesSolve_F)) {
+        reached[v2] = 1;
+        changed = 1;
+      } else if (reached[v2] && !reached[v1] && (v1 < nVerticesSolve_F)) {
+        reached[v1] = 1;
+        changed = 1;
+      }
+    }
+    int globalChanged;
+    MPI_Allreduce(&changed, &globalChanged, 1, MPI_INT, MPI_MAX, comm);
+    if (!globalChanged)
+      break;
+    allToAll(reached, sendVerticesList_F, recvVerticesList_F);
+  }
+
+  prunedVerticesMask.assign(verticesMask_F, verticesMask_F + nVertices_F);
+  int numPruned = 0;
+  for (int i = 0; i < nVertices_F; i++) {
+    if ((verticesMask_F[i] & dynamic_ice_bit_value) && !reached[i]) {
+      prunedVerticesMask[i] &= ~dynamic_ice_bit_value;
+      if (i < nVerticesSolve_F)
+        numPruned++;
+    }
+  }
+  int globalNumPruned;
+  MPI_Allreduce(&numPruned, &globalNumPruned, 1, MPI_INT, MPI_SUM, comm);
+  if ((me == 0) && (globalNumPruned > 0))
+    std::cout << "Removed " << globalNumPruned << " FE triangles that were not connected by an edge to any anchored"
+              << " (grounded or Dirichlet) triangle." << std::endl;
+  verticesMask_F = prunedVerticesMask.data();
+}
+
 void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F) {
   int numProcs, me;
   verticesMask_F = _verticesMask_F;
   cellsMask_F = _cellsMask_F;
-  verticesMask_F = _verticesMask_F;
   dirichletCellsMask_F = _dirichletCellsMask_F;
+  if (!useMarineExtension)
+    pruneUnanchoredTriangles();
 
   MPI_Comm_size(comm, &numProcs);
   MPI_Comm_rank(comm, &me);

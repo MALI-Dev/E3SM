@@ -65,14 +65,15 @@ module li_velocity_external
          config_default_flowParamA, &
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
-         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, use_ismip7_fem_extension, &
+         li_mask_ValueDynamicIce, li_mask_ValueIce, li_mask_ValueFloating, config_use_glp, use_ismip7_fem_extension, &
          use_marine_fem_extension, use_terrestrial_fem_extension, &
          velocity_extrapolation_method, use_velocity_extrapolation_limiter, terrestrial_node_velocity) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
 
-         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, velocity_extrapolation_method, &
+         INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, li_mask_ValueFloating, &
+                           velocity_extrapolation_method, &
                            terrestrial_node_velocity
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
@@ -453,7 +454,7 @@ contains
          config_flowLawExponent, config_dynamic_thickness, &
          iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
-         li_mask_ValueAlbanyActive, li_mask_ValueIce, &
+         li_mask_ValueAlbanyActive, li_mask_ValueIce, li_mask_ValueFloating, &
          merge(1_C_INT, 0_C_INT, config_use_glp), &
          merge(1_C_INT, 0_C_INT, use_ismip7_fem_extension), &
          merge(1_C_INT, 0_C_INT, use_marine_fem_extension), &
