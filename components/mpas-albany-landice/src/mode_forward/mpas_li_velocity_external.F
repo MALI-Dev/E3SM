@@ -73,6 +73,9 @@ module li_velocity_external
 
          use iso_c_binding, only: C_INT, C_DOUBLE
 
+         ! config_use_glp and the use_*_extension flags are passed as 0 or 1,
+         ! not as LOGICAL(C_BOOL): some compilers (e.g. Intel's ifx) give
+         ! .true. the value -1, which is not a valid C++ bool
          INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, li_mask_ValueFloating, &
                            velocity_extrapolation_method, &
                            terrestrial_node_velocity, velocity_extrapolation_target
