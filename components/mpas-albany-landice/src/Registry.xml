@@ -1430,7 +1430,7 @@ is the value of that variable from the *previous* time level!
                      description="bitmask indicating various properties about the ice sheet on cells.  cellMask is a restart field to keep the mask of initial ice extent and the dynamic state of floating ice, which depends on its state at the previous mask calculation."
                 />
                 <var name="referenceThickness" type="real" dimensions="nCells Time" units="m"
-                     description="reference thickness used to determine the dynamic state of floating ice.  For grounded cells and dynamic floating cells, it equals thickness.  For non-dynamic floating cells, it is the thickness of the thinnest dynamic cell in the nearest ring of neighbors containing dynamic ice (floating dynamic cells are preferred over grounded dynamic cells), searching up to min(4, config_num_halos) rings outward through cells with ice.  It is 0 for cells without ice and for non-dynamic floating cells for which the search found no dynamic ice.  Recalculated on every mask update."
+                     description="reference thickness used to determine the dynamic state of floating ice.  Equals thickness for grounded and dynamic floating cells.  For non-dynamic floating cells, it is the thickness of the thinnest dynamic cell (floating preferred over grounded) in the nearest ring of neighbors containing dynamic ice, searching up to min(4, config_num_halos) rings.  0 if no ice or no dynamic ice found."
                 />
                 <var name="edgeMask" type="integer" dimensions="nEdges Time"
                      description="bitmask indicating various properties about the ice sheet on edges."
