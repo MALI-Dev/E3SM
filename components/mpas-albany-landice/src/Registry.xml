@@ -112,7 +112,7 @@
 		            possible_values="Any positive, real number."
 		/>
 		<nml_option name="config_floating_ice_activation_reference_thickness_fraction" type="real" default_value="0.95" units="unitless"
-		            description="A non-dynamic floating cell becomes dynamic when its thickness exceeds the larger of config_dynamic_thickness and this fraction times its referenceThickness.  referenceThickness is the thickness of the thinnest dynamic cell (floating dynamic cells are preferred over grounded dynamic cells) in the nearest ring of neighbors containing dynamic ice, searching up to min(4, config_num_halos) rings outward through cells with ice.  Must be greater than or equal to config_floating_ice_deactivation_reference_thickness_fraction and no larger than 1."
+		            description="A non-dynamic floating cell becomes dynamic when its thickness exceeds the larger of config_dynamic_thickness and this fraction times its referenceThickness.  referenceThickness is the thickness of the thinnest dynamic cell in the nearest ring of neighbors containing dynamic ice, preferring floating cells not at the ice margin, then floating margin cells, then grounded cells, searching up to min(4, config_num_halos) rings outward through cells with ice.  Must be greater than or equal to config_floating_ice_deactivation_reference_thickness_fraction and no larger than 1."
 		            possible_values="Any real value between 0 and 1."
 		/>
 		<nml_option name="config_floating_ice_deactivation_reference_thickness_fraction" type="real" default_value="0.85" units="unitless"
@@ -1430,7 +1430,7 @@ is the value of that variable from the *previous* time level!
                      description="bitmask indicating various properties about the ice sheet on cells.  cellMask is a restart field to keep the mask of initial ice extent and the dynamic state of floating ice, which depends on its state at the previous mask calculation."
                 />
                 <var name="referenceThickness" type="real" dimensions="nCells Time" units="m"
-                     description="reference thickness used to determine the dynamic state of floating ice.  Equals thickness for grounded and dynamic floating cells.  For non-dynamic floating cells, it is the thickness of the thinnest dynamic cell (floating preferred over grounded) in the nearest ring of neighbors containing dynamic ice, searching up to min(4, config_num_halos) rings.  0 if no ice or no dynamic ice found."
+                     description="reference thickness used to determine the dynamic state of floating ice.  Equals thickness for grounded and dynamic floating cells.  For non-dynamic floating cells, it is the thickness of the thinnest dynamic cell in the nearest ring with dynamic ice (preferring floating non-margin, then floating margin, then grounded cells), searching up to min(4, config_num_halos) rings.  0 if no ice or no dynamic ice found."
                 />
                 <var name="edgeMask" type="integer" dimensions="nEdges Time"
                      description="bitmask indicating various properties about the ice sheet on edges."

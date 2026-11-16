@@ -1161,7 +1161,8 @@ contains
 !>    thickness > max(config_dynamic_thickness,
 !>                    config_floating_ice_activation_reference_thickness_fraction * reference thickness).
 !>  The reference thickness of a floating cell is the thickness of the thinnest dynamic cell
-!>  in the nearest ring of neighbors containing dynamic ice (see calculate_reference_thickness_cell).
+!>  in the nearest ring of neighbors containing dynamic ice, preferring floating non-margin cells,
+!>  then floating margin cells, then grounded cells (see calculate_reference_thickness_cell).
 !>  Deactivation and then activation are each iterated, with halo updates between passes,
 !>  until no more cells change, so that the result does not depend on how many times
 !>  the mask is calculated for a given geometry or on the domain decomposition.
@@ -1388,8 +1389,15 @@ contains
 !>  This function searches outward from cell iCell, one ring of neighbors at a time,
 !>  following only cells thicker than li_mask_refThkSearchMinThickness.
 !>  In the first ring containing dynamic ice, it returns the thickness of the thinnest
-!>  floating dynamic cell, or, if there are no floating dynamic cells in that ring,
-!>  the thickness of the thinnest grounded dynamic cell.
+!>  dynamic cell in the highest-priority category present in that ring:
+!>  1. floating cells not at the ice margin,
+!>  2. floating cells at the ice margin,
+!>  3. grounded cells.
+!>  Floating margin cells are given lower priority so that the reference for a cell at
+!>  the front is the ice behind the front rather than adjacent front cells that are
+!>  thinning at a similar rate (which would prevent deactivation).  They remain a fallback
+!>  so that narrow floating features in which all floating cells are at the margin still
+!>  use floating ice, rather than grounded ice, as the reference.
 !>  It returns 0 if a ring has no cells with ice or no dynamic ice is found within nRings rings.
 !>  visitedBy is a work array that marks cells visited by the search with searchID,
 !>  which must be unique for each call, so that visitedBy never needs to be reset.
@@ -1413,7 +1421,7 @@ contains
       real(KIND=RKIND) :: refThk
 
       integer :: iRing, n, j, jCell, kCell, nCurrent, nNext
-      real(KIND=RKIND) :: minFloating, minGrounded
+      real(KIND=RKIND) :: minFloating, minFloatingMargin, minGrounded
       real(KIND=RKIND), parameter :: noValue = huge(1.0_RKIND)
 
       refThk = 0.0_RKIND
@@ -1424,6 +1432,7 @@ contains
       do iRing = 1, nRings
          nNext = 0
          minFloating = noValue
+         minFloatingMargin = noValue
          minGrounded = noValue
          do n = 1, nCurrent
             jCell = currentRing(n)
@@ -1437,7 +1446,11 @@ contains
                nextRing(nNext) = kCell
                if (li_mask_is_dynamic_ice(cellMask(kCell))) then
                   if (li_mask_is_floating_ice(cellMask(kCell))) then
-                     minFloating = min(minFloating, thickness(kCell))
+                     if (li_mask_is_margin(cellMask(kCell))) then
+                        minFloatingMargin = min(minFloatingMargin, thickness(kCell))
+                     else
+                        minFloating = min(minFloating, thickness(kCell))
+                     endif
                   else
                      minGrounded = min(minGrounded, thickness(kCell))
                   endif
@@ -1448,6 +1461,9 @@ contains
          if (nNext == 0) exit  ! no more ice to search through
          if (minFloating < noValue) then
             refThk = minFloating
+            exit
+         elseif (minFloatingMargin < noValue) then
+            refThk = minFloatingMargin
             exit
          elseif (minGrounded < noValue) then
             refThk = minGrounded
