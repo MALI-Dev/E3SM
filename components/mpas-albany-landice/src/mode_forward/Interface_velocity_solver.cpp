@@ -327,6 +327,7 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
   }
   mapCellsToVertices(velocityOnCells, velocityOnVertices, 2, nLayers, Ordering);
 
+  int localError = 0;
   if (!isDomainEmpty) {
 
     std::vector<std::pair<int, int> > marineBdyExtensionMap;
@@ -350,8 +351,14 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
         stiffnessFactorData, effecPressData, muFrictionData, bedRoughnessData, bulkFrictionData, basalDebrisData,
         temperatureDataOnPrisms, bodyForceOnBasalCell, dissipationHeatOnPrisms, velocityOnVertices,
         albany_error, dt);
-    *error=albany_error;
+    localError = albany_error;
   }
+
+  // Procs with no ice (isDomainEmpty) do not run Albany and would report 0 (e.g., rank 0 with no ice),
+  // so share any failure with all procs.
+  int globalError = 0;
+  MPI_Allreduce(&localError, &globalError, 1, MPI_INT, MPI_MAX, comm);
+  *error = globalError;
 
   exportDissipationHeat(dissipation_heat_F);
 
