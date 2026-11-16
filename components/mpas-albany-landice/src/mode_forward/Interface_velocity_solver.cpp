@@ -431,8 +431,10 @@ std::vector<int> prunedVerticesMask;
 // only a node, not an edge, with the rest of the mesh.  A patch with no grounded ice or Dirichlet node has no
 // resistance to rigid-body motion (only ocean pressure acts on it), so the FE problem is singular and the velocity
 // is unbounded.  Here we remove from the FE mesh every triangle that cannot be reached through shared edges from an
-// "anchored" triangle, i.e., a triangle with at least one node that is grounded ice, has a Dirichlet condition (or
-// is a zero-velocity terrestrial node), or is outside the local MPAS domain (conservatively kept).
+// "anchored" triangle, i.e., a triangle with at least two nodes that are grounded ice (so an edge of the triangle is
+// on grounded ice), or a node that has a Dirichlet condition (or is a zero-velocity terrestrial node), or a node
+// outside the local MPAS domain (conservatively kept).  A single grounded node is not enough: a floating patch
+// joined to grounded ice only through one node (a "hinge") can still rotate about that node and is not constrained.
 // Removed triangles lose the dynamic bit in prunedVerticesMask, and verticesMask_F is pointed at that copy.
 // Cells that lose all their triangles get their velocity from the extrapolation done for non-FE dynamic cells.
 void pruneUnanchoredTriangles() {
@@ -445,6 +447,7 @@ void pruneUnanchoredTriangles() {
       continue;
     numActive++;
     bool anchored = false;
+    int numGrounded = 0;
     for (int k = 0; k < 3; k++) {
       int iCell = cellsOnVertex_F[3 * i + k] - 1;
       if ((iCell < 0) || (iCell >= nCells_F)) {
@@ -453,13 +456,15 @@ void pruneUnanchoredTriangles() {
       }
       bool isIce = cellsMask_F[iCell] & ice_present_bit_value;
       bool isFloating = cellsMask_F[iCell] & floating_ice_bit_value;
-      if ((dirichletCellsMask_F[(nLayers+1)*iCell] != 0) || (isIce && !isFloating) ||
+      if (isIce && !isFloating)
+        numGrounded++;
+      if ((dirichletCellsMask_F[(nLayers+1)*iCell] != 0) ||
           (!isIce && (terrestrialNodeVelocity == terrestrialNodeZero))) {
         anchored = true;
         break;
       }
     }
-    reached[i] = anchored;
+    reached[i] = anchored || (numGrounded >= 2);
   }
   allToAll(reached, sendVerticesList_F, recvVerticesList_F);
 
