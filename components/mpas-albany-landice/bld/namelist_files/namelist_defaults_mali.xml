@@ -190,6 +190,7 @@
 <config_print_thickness_advection_info>.false.</config_print_thickness_advection_info>
 <config_print_calving_info>.false.</config_print_calving_info>
 <config_print_thermal_info>.false.</config_print_thermal_info>
+<config_print_floating_dynamic_info>.false.</config_print_floating_dynamic_info>
 <config_always_compute_fem_grid>.false.</config_always_compute_fem_grid>
 <config_print_velocity_cleanup_details>.false.</config_print_velocity_cleanup_details>
 <config_check_tracer_monotonicity>.false.</config_check_tracer_monotonicity>

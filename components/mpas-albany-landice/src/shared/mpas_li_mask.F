@@ -178,12 +178,13 @@ module li_mask
    end interface
 
    private :: calculate_cell_ice_floating_margin, calculate_cell_dynamic_state, &
-              calculate_reference_thickness_cell
+              calculate_reference_thickness_cell, log_floating_dynamic_cell
 !--------------------------------------------------------------------
    !
    ! Private module variables
    !
    !--------------------------------------------------------------------
+   integer, save :: floatingDynamicCallCount = 0  !< number of calls to calculate_cell_dynamic_state (for diagnostics)
 
 
 
@@ -1211,6 +1212,10 @@ contains
       real (kind=RKIND), pointer :: config_floating_ice_deactivation_reference_thickness_fraction
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density, config_sea_level
       integer, pointer :: config_num_halos
+      logical, pointer :: config_print_floating_dynamic_info
+      integer, pointer :: config_stats_cell_ID
+      integer, dimension(:), pointer :: indexToCellID
+      integer :: statsCell  ! local index of config_stats_cell_ID if owned, else 0
 
       real(KIND=RKIND) :: freeboardFraction
       integer :: iCell, iPass, nRings, searchID
@@ -1247,6 +1252,21 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
       call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
+      call mpas_pool_get_config(liConfigs, 'config_print_floating_dynamic_info', config_print_floating_dynamic_info)
+      call mpas_pool_get_config(liConfigs, 'config_stats_cell_ID', config_stats_cell_ID)
+
+      ! Find diagnostic cell, if requested and owned by this processor
+      floatingDynamicCallCount = floatingDynamicCallCount + 1
+      statsCell = 0
+      if (config_print_floating_dynamic_info) then
+         call mpas_pool_get_array(meshPool, 'indexToCellID', indexToCellID)
+         do iCell = 1, nCellsSolve
+            if (indexToCellID(iCell) == config_stats_cell_ID) then
+               statsCell = iCell
+               exit
+            endif
+         enddo
+      endif
 
       ! Fraction of the thickness of floating ice that is above sea level
       freeboardFraction = 1.0_RKIND - config_ice_density / config_ocean_density
@@ -1273,6 +1293,11 @@ contains
             cellMask(iCell) = ior(cellMask(iCell), li_mask_ValueDynamicIce)
          endif
       enddo
+
+      if (statsCell > 0) then
+         call log_floating_dynamic_cell('start', floatingDynamicCallCount, 0, statsCell, nCells, &
+            indexToCellID, nEdgesOnCell, cellsOnCell, thickness, bedTopography, cellMask, wasDynamic(statsCell), 0.0_RKIND)
+      endif
 
       ! Deactivate dynamic floating ice-margin cells that are too thin relative to their reference thickness.
       ! The dynamic set only shrinks, so this converges.
@@ -1306,6 +1331,11 @@ contains
                   lockedOff(iCell) = .true.
                endif
             enddo
+            if (statsCell > 0) then
+               call log_floating_dynamic_cell('deactivation pass', floatingDynamicCallCount, iPass, statsCell, nCells, &
+                  indexToCellID, nEdgesOnCell, cellsOnCell, thickness, bedTopography, cellMask, changeCell(statsCell), &
+                  refThk(statsCell))
+            endif
 
             call mpas_dmpar_max_int(dminfo, changedLocal, changedGlobal)
             if (changedGlobal == 0) then
@@ -1350,6 +1380,11 @@ contains
                cellMask(iCell) = ior(cellMask(iCell), li_mask_ValueDynamicIce)
             endif
          enddo
+         if (statsCell > 0) then
+            call log_floating_dynamic_cell('activation pass', floatingDynamicCallCount, iPass, statsCell, nCells, &
+               indexToCellID, nEdgesOnCell, cellsOnCell, thickness, bedTopography, cellMask, changeCell(statsCell), &
+               refThk(statsCell))
+         endif
 
          call mpas_dmpar_max_int(dminfo, changedLocal, changedGlobal)
          if (changedGlobal == 0) then
@@ -1497,6 +1532,56 @@ contains
       enddo
 
    end function calculate_reference_thickness_cell
+
+
+!***********************************************************************
+!
+!  routine log_floating_dynamic_cell
+!
+!> \brief   Writes diagnostics about the dynamic state of one cell to the log
+!> \author  Matt Hoffman
+!> \date    November 2026
+!> \details
+!>  Diagnostic output for config_print_floating_dynamic_info.  Writes the state
+!>  of cell iCell and its neighbors at a stage of calculate_cell_dynamic_state.
+!>  Uses MPAS_LOG_WARN so that output also appears in the error log of the
+!>  owning processor if it is not the master task.
+!
+!-----------------------------------------------------------------------
+
+   subroutine log_floating_dynamic_cell(stage, callCount, iPass, iCell, nCells, indexToCellID, nEdgesOnCell, cellsOnCell, &
+                                        thickness, bedTopography, cellMask, flag, refThk)
+
+      character (len=*), intent(in) :: stage
+      integer, intent(in) :: callCount, iPass, iCell, nCells
+      integer, dimension(:), intent(in) :: indexToCellID, nEdgesOnCell
+      integer, dimension(:,:), intent(in) :: cellsOnCell
+      real(KIND=RKIND), dimension(:), intent(in) :: thickness, bedTopography
+      integer, dimension(:), intent(in) :: cellMask
+      logical, intent(in) :: flag  !< wasDynamic for stage 'start', otherwise whether the cell changed on this pass
+      real(KIND=RKIND), intent(in) :: refThk  !< reference thickness calculated on this pass (0 if not calculated)
+
+      integer :: j, jCell
+
+      call mpas_log_write("floating dynamic: call $i, " // trim(stage) // " $i, cell $i: H=$r, bed=$r, sfc=$r, " // &
+         "refThk=$r, flag(wasDynamic|changed)=$l, floating=$l, margin=$l, dynamic=$l", MPAS_LOG_WARN, &
+         intArgs=(/callCount, iPass, indexToCellID(iCell)/), &
+         realArgs=(/thickness(iCell), bedTopography(iCell), bedTopography(iCell) + thickness(iCell), refThk/), &
+         logicArgs=(/flag, li_mask_is_floating_ice(cellMask(iCell)), li_mask_is_margin(cellMask(iCell)), &
+                     li_mask_is_dynamic_ice(cellMask(iCell))/))
+      if (trim(stage) /= 'start') return
+      do j = 1, nEdgesOnCell(iCell)
+         jCell = cellsOnCell(j, iCell)
+         if (jCell > nCells) cycle
+         call mpas_log_write("floating dynamic:    neighbor $i: H=$r, bed=$r, sfc=$r, " // &
+            "floating=$l, margin=$l, dynamic=$l", MPAS_LOG_WARN, &
+            intArgs=(/indexToCellID(jCell)/), &
+            realArgs=(/thickness(jCell), bedTopography(jCell), bedTopography(jCell) + thickness(jCell)/), &
+            logicArgs=(/li_mask_is_floating_ice(cellMask(jCell)), li_mask_is_margin(cellMask(jCell)), &
+                        li_mask_is_dynamic_ice(cellMask(jCell))/))
+      enddo
+
+   end subroutine log_floating_dynamic_cell
 
 
 end module li_mask
