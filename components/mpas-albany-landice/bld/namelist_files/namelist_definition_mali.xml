@@ -1396,7 +1396,7 @@ Default: Defined in namelist_defaults.xml
 
 <entry id="config_print_floating_dynamic_info" type="logical"
 	category="debug" group="debug">
-If true, write diagnostics to the log about the determination of the dynamic state of floating ice for the cell selected by config_stats_cell_ID, on every mask calculation.  Output is written as warnings so that it appears in the error log of the processor owning the cell.
+If true, write diagnostics to the log about the determination of the dynamic state of floating ice for the cell selected by config_stats_cell_ID, on every mask calculation.  Output is written by the processor owning the cell, so in optimized builds (in which only the master task writes a log file) it appears only if the master task owns the cell or the run uses one processor.
 
 Valid values: .true. or .false.
 Default: Defined in namelist_defaults.xml

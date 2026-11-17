@@ -804,7 +804,7 @@
 		            possible_values=".true. or .false."
 		/>
 		<nml_option name="config_print_floating_dynamic_info" type="logical" default_value=".false." units="unitless"
-		            description="If true, write diagnostics to the log about the determination of the dynamic state of floating ice for the cell selected by config_stats_cell_ID, on every mask calculation.  Output is written as warnings so that it appears in the error log of the processor owning the cell."
+		            description="If true, write diagnostics to the log about the determination of the dynamic state of floating ice for the cell selected by config_stats_cell_ID, on every mask calculation.  Output is written by the processor owning the cell, so in optimized builds (in which only the master task writes a log file) it appears only if the master task owns the cell or the run uses one processor."
 		            possible_values=".true. or .false."
 		/>
 		<nml_option name="config_print_velocity_cleanup_details" type="logical" default_value=".false." units="unitless"

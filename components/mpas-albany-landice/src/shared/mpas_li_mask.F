@@ -1593,8 +1593,9 @@ contains
 !> \details
 !>  Diagnostic output for config_print_floating_dynamic_info.  Writes the state
 !>  of cell iCell and its neighbors at a stage of calculate_cell_dynamic_state.
-!>  Uses MPAS_LOG_WARN so that output also appears in the error log of the
-!>  owning processor if it is not the master task.
+!>  Output is written by the processor owning the cell.  In optimized builds, only the
+!>  master task writes a log file, so the cell must be owned by the master task
+!>  (or a debug build must be used) for output to appear.
 !
 !-----------------------------------------------------------------------
 
