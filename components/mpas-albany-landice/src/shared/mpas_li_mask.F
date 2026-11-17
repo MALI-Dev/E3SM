@@ -47,6 +47,9 @@ module li_mask
       !< This is grounded cell that has a floating neighbor, or vertex/edge on that boundary
    integer, parameter :: li_mask_ValueDomainBoundary        = 512
    integer, parameter :: li_mask_ValueGroundedFloatingFringe= 1024  ! Floating non-dynamic cells adjacent to grounded ice, only for cells
+   integer, parameter :: li_mask_ValueThinIceMargin         = 2048
+      !< Cells with ice adjacent to a cell with thickness <= config_dynamic_thickness (ice-free or too thin to be dynamic).
+      !< Used as the definition of the margin when determining the dynamic state of floating ice.
 
    ! Parameters for determining the dynamic state of floating ice
    integer, parameter :: li_mask_refThkSearchMaxRings = 4
@@ -177,6 +180,11 @@ module li_mask
       module procedure li_mask_is_grounded_floating_fringe_logout_0d
    end interface
 
+   interface li_mask_is_thin_ice_margin
+      module procedure li_mask_is_thin_ice_margin_logout_1d
+      module procedure li_mask_is_thin_ice_margin_logout_0d
+   end interface
+
    private :: calculate_cell_ice_floating_margin, calculate_cell_dynamic_state, &
               calculate_reference_thickness_cell, log_floating_dynamic_cell
 !--------------------------------------------------------------------
@@ -204,8 +212,9 @@ contains
 !> \details
 !>  This routine Calculates masks for land ice for info needed from initial condition only.
 !>  On a cold start, it also initializes the dynamic state of the ice:
-!>  grounded ice and floating ice not at the ice margin are dynamic if thicker
-!>  than config_dynamic_thickness, and floating ice at the ice margin is non-dynamic.
+!>  grounded ice and floating ice not at the thin ice margin are dynamic if thicker
+!>  than config_dynamic_thickness, and floating ice at the thin ice margin
+!>  (adjacent to a cell with thickness <= config_dynamic_thickness) is non-dynamic.
 !>  (Margin cells that are thick enough relative to their dynamic neighbors
 !>  are activated by the first call to li_calculate_mask.)
 !>  On a restart, the dynamic state is taken from the cellMask in the restart file.
@@ -331,7 +340,7 @@ contains
          call calculate_cell_ice_floating_margin(nCells, nEdgesOnCell, cellsOnCell, thickness, bedTopography, cellMask)
          do iCell = 1, nCells
             if ( (thickness(iCell) > config_dynamic_thickness) .and. &
-                 (li_mask_is_grounded_ice(cellMask(iCell)) .or. (.not. li_mask_is_margin(cellMask(iCell)))) ) then
+                 (li_mask_is_grounded_ice(cellMask(iCell)) .or. (.not. li_mask_is_thin_ice_margin(cellMask(iCell)))) ) then
                cellMask(iCell) = ior(cellMask(iCell), li_mask_ValueDynamicIce)
             endif
          enddo
@@ -1062,6 +1071,21 @@ contains
 
       li_mask_is_grounded_floating_fringe_logout_0d = ( iand(mask, li_mask_ValueGroundedFloatingFringe) == li_mask_ValueGroundedFloatingFringe )
    end function li_mask_is_grounded_floating_fringe_logout_0d
+
+   ! -- Functions that check for presence of thin ice margin --
+   function li_mask_is_thin_ice_margin_logout_1d(mask)
+      integer, dimension(:), intent(in) :: mask
+      logical, dimension(size(mask)) :: li_mask_is_thin_ice_margin_logout_1d
+
+      li_mask_is_thin_ice_margin_logout_1d = ( iand(mask, li_mask_ValueThinIceMargin) == li_mask_ValueThinIceMargin )
+   end function li_mask_is_thin_ice_margin_logout_1d
+
+   function li_mask_is_thin_ice_margin_logout_0d(mask)
+      integer, intent(in) :: mask
+      logical :: li_mask_is_thin_ice_margin_logout_0d
+
+      li_mask_is_thin_ice_margin_logout_0d = ( iand(mask, li_mask_ValueThinIceMargin) == li_mask_ValueThinIceMargin )
+   end function li_mask_is_thin_ice_margin_logout_0d
 !***********************************************************************
 ! Private subroutines:
 !***********************************************************************
@@ -1075,7 +1099,10 @@ contains
 !> \date    November 2026
 !> \details
 !>  This routine resets cellMask, preserving only the initial ice extent bit,
-!>  and then sets the bits for cells with ice, floating ice, and the ice margin.
+!>  and then sets the bits for cells with ice, floating ice, the ice margin,
+!>  and the thin ice margin (cells with ice adjacent to a cell with thickness
+!>  <= config_dynamic_thickness).  The margin bits of the outermost halo cells
+!>  may be incorrect until cellMask is updated with a halo update.
 !
 !-----------------------------------------------------------------------
 
@@ -1098,9 +1125,11 @@ contains
       ! local variables
       !-----------------------------------------------------------------
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density, config_sea_level
+      real (kind=RKIND), pointer :: config_dynamic_thickness
       integer :: i, j
-      logical :: isMargin
+      logical :: isMargin, isThinIceMargin
 
+      call mpas_pool_get_config(liConfigs, 'config_dynamic_thickness', config_dynamic_thickness)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
       call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
@@ -1139,6 +1168,24 @@ contains
           endif
       enddo
 
+      ! Identify the thin ice margin
+      ! This is a cell with ice for which at least one neighbor is ice-free or too thin to be dynamic.
+      ! It is used instead of the margin for the dynamic state of floating ice so that slivers of thin ice
+      ! in front of a calving front do not hide the front.
+      do i=1,nCells
+          if (li_mask_is_ice(cellMask(i))) then
+              isThinIceMargin = .false.
+              do j=1,nEdgesOnCell(i)
+                  if (cellsOnCell(j,i) <= nCells) then
+                     isThinIceMargin = ( isThinIceMargin .or. (thickness(cellsOnCell(j,i)) <= config_dynamic_thickness) )
+                  endif
+              enddo
+              if (isThinIceMargin) then
+                 cellMask(i) = ior(cellMask(i), li_mask_ValueThinIceMargin)
+              endif
+          endif
+      enddo
+
    end subroutine calculate_cell_ice_floating_margin
 
 
@@ -1151,19 +1198,20 @@ contains
 !> \date    November 2026
 !> \details
 !>  This routine sets the dynamic bit of cellMask and calculates referenceThickness.
-!>  It requires that the ice, floating, and margin bits of cellMask have been set.
+!>  It requires that the ice, floating, margin, and thin ice margin bits of cellMask have been set.
 !>  The rules are:
 !>  * Grounded ice is dynamic if thicker than config_dynamic_thickness.
 !>  * Floating ice that was dynamic at the previous mask calculation (wasDynamic)
 !>    remains dynamic while thicker than config_dynamic_thickness, except that
-!>    a dynamic floating cell at the ice margin becomes non-dynamic if
+!>    a dynamic floating cell at the thin ice margin (adjacent to a cell with
+!>    thickness <= config_dynamic_thickness) becomes non-dynamic if
 !>    thickness < config_floating_ice_deactivation_reference_thickness_fraction * reference thickness.
 !>  * A non-dynamic floating cell becomes dynamic if
 !>    thickness > max(config_dynamic_thickness,
 !>                    config_floating_ice_activation_reference_thickness_fraction * reference thickness).
 !>  The reference thickness of a floating cell is determined from the nearest ring of neighbors
-!>  containing dynamic ice, preferring floating non-margin cells, then floating margin cells,
-!>  then grounded cells (see calculate_reference_thickness_cell).
+!>  containing dynamic ice, preferring floating cells not at the thin ice margin, then floating
+!>  thin-ice-margin cells, then grounded cells (see calculate_reference_thickness_cell).
 !>  Deactivation and then activation are each iterated, with halo updates between passes,
 !>  until no more cells change, so that the result does not depend on how many times
 !>  the mask is calculated for a given geometry or on the domain decomposition.
@@ -1299,7 +1347,7 @@ contains
             indexToCellID, nEdgesOnCell, cellsOnCell, thickness, bedTopography, cellMask, wasDynamic(statsCell), 0.0_RKIND)
       endif
 
-      ! Deactivate dynamic floating ice-margin cells that are too thin relative to their reference thickness.
+      ! Deactivate dynamic floating thin-ice-margin cells that are too thin relative to their reference thickness.
       ! The dynamic set only shrinks, so this converges.
       if (config_floating_ice_deactivation_reference_thickness_fraction > 0.0_RKIND) then
          converged = .false.
@@ -1313,7 +1361,7 @@ contains
             changedLocal = 0
             do iCell = 1, nCellsSolve
                if ( li_mask_is_floating_ice(cellMask(iCell)) .and. li_mask_is_dynamic_ice(cellMask(iCell)) .and. &
-                    li_mask_is_margin(cellMask(iCell)) ) then
+                    li_mask_is_thin_ice_margin(cellMask(iCell)) ) then
                   searchID = searchID + 1
                   refThk(iCell) = calculate_reference_thickness_cell(iCell, searchID, nRings, nCells, nEdgesOnCell, &
                      cellsOnCell, thickness, bedTopography, config_sea_level, freeboardFraction, cellMask, &
@@ -1436,8 +1484,8 @@ contains
 !>  following only cells thicker than li_mask_refThkSearchMinThickness.
 !>  In the first ring containing dynamic ice, it returns a value from the highest-priority
 !>  category of dynamic cells present in that ring:
-!>  1. floating cells not at the ice margin: the thickness of the thinnest such cell,
-!>  2. floating cells at the ice margin: the thickness of the thinnest such cell,
+!>  1. floating cells not at the thin ice margin: the thickness of the thinnest such cell,
+!>  2. floating cells at the thin ice margin: the thickness of the thinnest such cell,
 !>  3. grounded cells: the thickness floating ice would need for its upper surface to reach
 !>     the lowest upper surface of those grounded cells.  (Comparing thicknesses of floating
 !>     cells is equivalent to comparing their upper surfaces, but grounded thickness says
@@ -1445,6 +1493,7 @@ contains
 !>     floating ice from activating next to steep grounded ice.  This value is at least the
 !>     thickness of the grounded cell, with equality if it is at flotation.  It may exceed the
 !>     flotation thickness of iCell, in which case iCell will ground before it activates.)
+!>  The thin ice margin is cells adjacent to a cell with thickness <= config_dynamic_thickness.
 !>  Floating margin cells are given lower priority so that the reference for a cell at
 !>  the front is the ice behind the front rather than adjacent front cells that are
 !>  thinning at a similar rate (which would prevent deactivation).  They remain a fallback
@@ -1502,7 +1551,7 @@ contains
                nextRing(nNext) = kCell
                if (li_mask_is_dynamic_ice(cellMask(kCell))) then
                   if (li_mask_is_floating_ice(cellMask(kCell))) then
-                     if (li_mask_is_margin(cellMask(kCell))) then
+                     if (li_mask_is_thin_ice_margin(cellMask(kCell))) then
                         minFloatingMargin = min(minFloatingMargin, thickness(kCell))
                      else
                         minFloating = min(minFloating, thickness(kCell))
@@ -1564,21 +1613,21 @@ contains
       integer :: j, jCell
 
       call mpas_log_write("floating dynamic: call $i, " // trim(stage) // " $i, cell $i: H=$r, bed=$r, sfc=$r, " // &
-         "refThk=$r, flag(wasDynamic|changed)=$l, floating=$l, margin=$l, dynamic=$l", MPAS_LOG_WARN, &
+         "refThk=$r, flag(wasDynamic|changed)=$l, floating=$l, margin=$l, thinIceMargin=$l, dynamic=$l", MPAS_LOG_WARN, &
          intArgs=(/callCount, iPass, indexToCellID(iCell)/), &
          realArgs=(/thickness(iCell), bedTopography(iCell), bedTopography(iCell) + thickness(iCell), refThk/), &
          logicArgs=(/flag, li_mask_is_floating_ice(cellMask(iCell)), li_mask_is_margin(cellMask(iCell)), &
-                     li_mask_is_dynamic_ice(cellMask(iCell))/))
+                     li_mask_is_thin_ice_margin(cellMask(iCell)), li_mask_is_dynamic_ice(cellMask(iCell))/))
       if (trim(stage) /= 'start') return
       do j = 1, nEdgesOnCell(iCell)
          jCell = cellsOnCell(j, iCell)
          if (jCell > nCells) cycle
          call mpas_log_write("floating dynamic:    neighbor $i: H=$r, bed=$r, sfc=$r, " // &
-            "floating=$l, margin=$l, dynamic=$l", MPAS_LOG_WARN, &
+            "floating=$l, margin=$l, thinIceMargin=$l, dynamic=$l", MPAS_LOG_WARN, &
             intArgs=(/indexToCellID(jCell)/), &
             realArgs=(/thickness(jCell), bedTopography(jCell), bedTopography(jCell) + thickness(jCell)/), &
             logicArgs=(/li_mask_is_floating_ice(cellMask(jCell)), li_mask_is_margin(cellMask(jCell)), &
-                        li_mask_is_dynamic_ice(cellMask(jCell))/))
+                        li_mask_is_thin_ice_margin(cellMask(jCell)), li_mask_is_dynamic_ice(cellMask(jCell))/))
       enddo
 
    end subroutine log_floating_dynamic_cell
