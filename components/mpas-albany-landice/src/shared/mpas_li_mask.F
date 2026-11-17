@@ -1160,9 +1160,9 @@ contains
 !>  * A non-dynamic floating cell becomes dynamic if
 !>    thickness > max(config_dynamic_thickness,
 !>                    config_floating_ice_activation_reference_thickness_fraction * reference thickness).
-!>  The reference thickness of a floating cell is the thickness of the thinnest dynamic cell
-!>  in the nearest ring of neighbors containing dynamic ice, preferring floating non-margin cells,
-!>  then floating margin cells, then grounded cells (see calculate_reference_thickness_cell).
+!>  The reference thickness of a floating cell is determined from the nearest ring of neighbors
+!>  containing dynamic ice, preferring floating non-margin cells, then floating margin cells,
+!>  then grounded cells (see calculate_reference_thickness_cell).
 !>  Deactivation and then activation are each iterated, with halo updates between passes,
 !>  until no more cells change, so that the result does not depend on how many times
 !>  the mask is calculated for a given geometry or on the domain decomposition.
@@ -1202,15 +1202,17 @@ contains
       integer, dimension(:), pointer :: nEdgesOnCell
       integer, dimension(:,:), pointer :: cellsOnCell
       integer, dimension(:), pointer :: cellMask
-      real(KIND=RKIND), dimension(:), pointer :: thickness, referenceThickness
+      real(KIND=RKIND), dimension(:), pointer :: thickness, referenceThickness, bedTopography
       type (field1DInteger), pointer :: cellMaskField
       type (field1DReal), pointer :: thicknessField, referenceThicknessField
       type (dm_info), pointer :: dminfo
       real (kind=RKIND), pointer :: config_dynamic_thickness
       real (kind=RKIND), pointer :: config_floating_ice_activation_reference_thickness_fraction
       real (kind=RKIND), pointer :: config_floating_ice_deactivation_reference_thickness_fraction
+      real (kind=RKIND), pointer :: config_ice_density, config_ocean_density, config_sea_level
       integer, pointer :: config_num_halos
 
+      real(KIND=RKIND) :: freeboardFraction
       integer :: iCell, iPass, nRings, searchID
       integer :: changedLocal, changedGlobal
       logical :: converged
@@ -1234,6 +1236,7 @@ contains
       thickness => thicknessField % array
       referenceThickness => referenceThicknessField % array
       dminfo => cellMaskField % block % domain % dminfo
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
 
       call mpas_pool_get_config(liConfigs, 'config_dynamic_thickness', config_dynamic_thickness)
       call mpas_pool_get_config(liConfigs, 'config_floating_ice_activation_reference_thickness_fraction', &
@@ -1241,6 +1244,12 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_floating_ice_deactivation_reference_thickness_fraction', &
               config_floating_ice_deactivation_reference_thickness_fraction)
       call mpas_pool_get_config(liConfigs, 'config_num_halos', config_num_halos)
+      call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
+      call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
+      call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
+
+      ! Fraction of the thickness of floating ice that is above sea level
+      freeboardFraction = 1.0_RKIND - config_ice_density / config_ocean_density
 
       ! Limit the search to the halo so that it gives the same result for any decomposition
       nRings = min(li_mask_refThkSearchMaxRings, config_num_halos)
@@ -1252,8 +1261,8 @@ contains
       lockedOff(:) = .false.
       refThk(:) = 0.0_RKIND
 
-      ! Note: The search uses the thickness of halo cells, so results are independent of the
-      ! decomposition only if thickness halos are up to date when li_calculate_mask is called.
+      ! Note: The search uses the thickness and bedTopography of halo cells, so results are independent of
+      ! the decomposition only if their halos are up to date when li_calculate_mask is called.
       ! The dynamic bit of halo cells is updated by halo updates of cellMask below.
 
       ! Provisional state: grounded ice and ice that was previously dynamic are dynamic if
@@ -1282,7 +1291,8 @@ contains
                     li_mask_is_margin(cellMask(iCell)) ) then
                   searchID = searchID + 1
                   refThk(iCell) = calculate_reference_thickness_cell(iCell, searchID, nRings, nCells, nEdgesOnCell, &
-                     cellsOnCell, thickness, cellMask, visitedBy, currentRing, nextRing)
+                     cellsOnCell, thickness, bedTopography, config_sea_level, freeboardFraction, cellMask, &
+                     visitedBy, currentRing, nextRing)
                   if ( (refThk(iCell) > 0.0_RKIND) .and. &
                        (thickness(iCell) < config_floating_ice_deactivation_reference_thickness_fraction * refThk(iCell)) ) then
                      changeCell(iCell) = .true.
@@ -1325,7 +1335,8 @@ contains
                ! Calculate for locked-off cells too, because referenceThickness is needed for them
                searchID = searchID + 1
                refThk(iCell) = calculate_reference_thickness_cell(iCell, searchID, nRings, nCells, nEdgesOnCell, &
-                  cellsOnCell, thickness, cellMask, visitedBy, currentRing, nextRing)
+                  cellsOnCell, thickness, bedTopography, config_sea_level, freeboardFraction, cellMask, &
+                  visitedBy, currentRing, nextRing)
                if ( (.not. lockedOff(iCell)) .and. (refThk(iCell) > 0.0_RKIND) .and. &
                     (thickness(iCell) > max(config_dynamic_thickness, &
                        config_floating_ice_activation_reference_thickness_fraction * refThk(iCell))) ) then
@@ -1388,11 +1399,17 @@ contains
 !> \details
 !>  This function searches outward from cell iCell, one ring of neighbors at a time,
 !>  following only cells thicker than li_mask_refThkSearchMinThickness.
-!>  In the first ring containing dynamic ice, it returns the thickness of the thinnest
-!>  dynamic cell in the highest-priority category present in that ring:
-!>  1. floating cells not at the ice margin,
-!>  2. floating cells at the ice margin,
-!>  3. grounded cells.
+!>  In the first ring containing dynamic ice, it returns a value from the highest-priority
+!>  category of dynamic cells present in that ring:
+!>  1. floating cells not at the ice margin: the thickness of the thinnest such cell,
+!>  2. floating cells at the ice margin: the thickness of the thinnest such cell,
+!>  3. grounded cells: the thickness floating ice would need for its upper surface to reach
+!>     the lowest upper surface of those grounded cells.  (Comparing thicknesses of floating
+!>     cells is equivalent to comparing their upper surfaces, but grounded thickness says
+!>     little about how far grounded ice stands above adjacent floating ice; this prevents thin
+!>     floating ice from activating next to steep grounded ice.  This value is at least the
+!>     thickness of the grounded cell, with equality if it is at flotation.  It may exceed the
+!>     flotation thickness of iCell, in which case iCell will ground before it activates.)
 !>  Floating margin cells are given lower priority so that the reference for a cell at
 !>  the front is the ice behind the front rather than adjacent front cells that are
 !>  thinning at a similar rate (which would prevent deactivation).  They remain a fallback
@@ -1406,7 +1423,8 @@ contains
 !-----------------------------------------------------------------------
 
    function calculate_reference_thickness_cell(iCell, searchID, nRings, nCells, nEdgesOnCell, cellsOnCell, &
-                                               thickness, cellMask, visitedBy, currentRing, nextRing) result(refThk)
+                                               thickness, bedTopography, seaLevel, freeboardFraction, cellMask, &
+                                               visitedBy, currentRing, nextRing) result(refThk)
 
       integer, intent(in) :: iCell     !< Input: cell to calculate reference thickness for
       integer, intent(in) :: searchID  !< Input: unique ID for this search
@@ -1415,13 +1433,16 @@ contains
       integer, dimension(:), intent(in) :: nEdgesOnCell
       integer, dimension(:,:), intent(in) :: cellsOnCell
       real(KIND=RKIND), dimension(:), intent(in) :: thickness
+      real(KIND=RKIND), dimension(:), intent(in) :: bedTopography
+      real(KIND=RKIND), intent(in) :: seaLevel
+      real(KIND=RKIND), intent(in) :: freeboardFraction  !< Input: fraction of floating ice thickness above sea level
       integer, dimension(:), intent(in) :: cellMask
       integer, dimension(:), intent(inout) :: visitedBy   !< Work array of size nCells+1
       integer, dimension(:), intent(inout) :: currentRing, nextRing  !< Work arrays of size nCells
       real(KIND=RKIND) :: refThk
 
       integer :: iRing, n, j, jCell, kCell, nCurrent, nNext
-      real(KIND=RKIND) :: minFloating, minFloatingMargin, minGrounded
+      real(KIND=RKIND) :: minFloating, minFloatingMargin, minGroundedSurface
       real(KIND=RKIND), parameter :: noValue = huge(1.0_RKIND)
 
       refThk = 0.0_RKIND
@@ -1433,7 +1454,7 @@ contains
          nNext = 0
          minFloating = noValue
          minFloatingMargin = noValue
-         minGrounded = noValue
+         minGroundedSurface = noValue
          do n = 1, nCurrent
             jCell = currentRing(n)
             do j = 1, nEdgesOnCell(jCell)
@@ -1452,7 +1473,7 @@ contains
                         minFloating = min(minFloating, thickness(kCell))
                      endif
                   else
-                     minGrounded = min(minGrounded, thickness(kCell))
+                     minGroundedSurface = min(minGroundedSurface, bedTopography(kCell) + thickness(kCell))
                   endif
                endif
             enddo
@@ -1465,8 +1486,9 @@ contains
          elseif (minFloatingMargin < noValue) then
             refThk = minFloatingMargin
             exit
-         elseif (minGrounded < noValue) then
-            refThk = minGrounded
+         elseif (minGroundedSurface < noValue) then
+            ! thickness of floating ice with upper surface at minGroundedSurface
+            refThk = (minGroundedSurface - seaLevel) / freeboardFraction
             exit
          endif
 

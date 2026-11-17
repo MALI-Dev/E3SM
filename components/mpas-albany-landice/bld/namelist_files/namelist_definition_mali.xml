@@ -134,7 +134,7 @@ Default: Defined in namelist_defaults.xml
 
 <entry id="config_floating_ice_activation_reference_thickness_fraction" type="real"
 	category="velocity_solver" group="velocity_solver">
-A non-dynamic floating cell becomes dynamic when its thickness exceeds the larger of config_dynamic_thickness and this fraction times its referenceThickness.  referenceThickness is the thickness of the thinnest dynamic cell in the nearest ring of neighbors containing dynamic ice, preferring floating cells not at the ice margin, then floating margin cells, then grounded cells, searching up to min(4, config_num_halos) rings outward through cells with ice.  Must be greater than or equal to config_floating_ice_deactivation_reference_thickness_fraction and no larger than 1.
+A non-dynamic floating cell becomes dynamic when its thickness exceeds the larger of config_dynamic_thickness and this fraction times its referenceThickness.  referenceThickness is the thickness of the thinnest dynamic cell in the nearest ring of neighbors containing dynamic ice, preferring floating cells not at the ice margin, then floating margin cells; if only grounded dynamic cells are found, it is the thickness at which floating ice would reach the lowest upper surface of those cells, searching up to min(4, config_num_halos) rings outward through cells with ice.  Must be greater than or equal to config_floating_ice_deactivation_reference_thickness_fraction and no larger than 1.
 
 Valid values: Any real value between 0 and 1.
 Default: Defined in namelist_defaults.xml
