@@ -61,7 +61,11 @@ int ice_present_bit_value;
 // li_velocity_external_block_init().
 const int FEM_EXT_ISMIP6_ERA = 0;  // 'ismip6-era' (pre-ismip7-era scheme)
 const int FEM_EXT_ISMIP7_ERA = 1;  // 'ismip7-era'
+const int FEM_EXT_FLAT_CLIFF = 2;  // 'flat-cliff'
 int femExtensionMethod = FEM_EXT_ISMIP6_ERA;
+// 'flat-cliff' only: maximum surface slope (dimensionless) by which an extension node may lie
+// below the mean surface of its dynamic neighbors (config_fem_flat_cliff_slope_limit).
+double flatCliffSlopeLimit = 0.05;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -124,7 +128,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* clausius_clapeyron_coeff,
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                         int const* use_GLP_F, int const* fem_extension_method_code_F) {
+                         int const* use_GLP_F, int const* fem_extension_method_code_F,
+                         double const* flat_cliff_slope_limit_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -132,6 +137,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
   ice_present_bit_value = *li_mask_ValueIce;
   femExtensionMethod = *fem_extension_method_code_F;
+  flatCliffSlopeLimit = *flat_cliff_slope_limit_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -1126,6 +1132,50 @@ double signedTriangleAreaOnSphere(const double* x, const double* y,
 }
 
 
+
+// Statistics over the dynamic (Albany-active) edge-neighbors of MPAS cell fCell, used by the
+// 'flat-cliff' FEM extension.  Geometry is in Albany units (km).
+struct DynamicNeighborStats {
+  int count = 0;
+  double minElev = 1e10;   // lowest surface elevation
+  double meanElev = 0.0;   // mean surface elevation
+  double meanThick = 0.0;  // mean thickness
+  double meanDist = 0.0;   // mean distance between cell centers, km
+};
+
+static DynamicNeighborStats dynamicNeighborStats(int fCell,
+    double const* lowerSurface_F, double const* thickness_F) {
+  DynamicNeighborStats stats;
+  int nEdg = nEdgesOnCells_F[fCell];
+  for (int j = 0; j < nEdg; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    double elev = (lowerSurface_F[c] + thickness_F[c]) / unit_length;
+    double dx = xCell_F[c] - xCell_F[fCell];
+    double dy = yCell_F[c] - yCell_F[fCell];
+    double dz = zCell_F[c] - zCell_F[fCell];
+    stats.count++;
+    stats.minElev = std::min(stats.minElev, elev);
+    stats.meanElev += elev;
+    stats.meanThick += thickness_F[c] / unit_length;
+    stats.meanDist += std::sqrt(dx * dx + dy * dy + dz * dz) / unit_length;
+  }
+  if (stats.count > 0) {
+    stats.meanElev /= stats.count;
+    stats.meanThick /= stats.count;
+    stats.meanDist /= stats.count;
+  }
+  return stats;
+}
+
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
     double const * beta_F, double const* stiffnessFactor_F, double const* effecPress_F, double const* muFriction_F,
@@ -1265,13 +1315,13 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
         // -- nonmarine (terrestrial) margin -- (extend to zero thickness)
 
         // First assign standard values for terrestrial margin extension.
-        // Under 'ismip6-era' these are the final values; under 'ismip7-era' they may be
-        // adjusted below if necessary.
+        // Under 'ismip6-era' these are the final values; under 'ismip7-era' and 'flat-cliff'
+        // they may be adjusted below if necessary.
         thicknessData[iV] = eps;
         elevationData[iV] = bedTopographyData[iV]+eps;
 
-        if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
-          // 'ismip7-era' extension: we want to avoid smearing ice up a cliff if the ice-free
+        if (femExtensionMethod != FEM_EXT_ISMIP6_ERA) {
+          // 'ismip7-era' and 'flat-cliff' extensions: we want to avoid smearing ice up a cliff if the ice-free
           // neighbor has a higher elevation than the last cell with ice.  But we still need
           // the thickness to ramp to zero to avoid an erroneous ice cliff.
           // Instead, if necessary, adjust so the surface elevation cannot be higher than the
@@ -1315,7 +1365,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
                elevationData[iV] = bedTopographyData[iV] + thicknessData[iV];
             }
           }
-        } // femExtensionMethod == FEM_EXT_ISMIP7_ERA
+        } // femExtensionMethod != FEM_EXT_ISMIP6_ERA
 
       } // else (nonmarine)
     } // is on margin (not dynamic vertex check)
@@ -1331,7 +1381,39 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double elev = -1e10;
     double thick = eps;
 
-    if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
+    if (femExtensionMethod == FEM_EXT_FLAT_CLIFF) {
+      // 'flat-cliff' extension: continue the ice flat to the extension cell E and let
+      // Albany's calving-front boundary condition carry the cliff force, with no ramp (a
+      // ramp puts a large driving stress where there is little basal resistance).  Every
+      // quantity is a continuous function of the dynamic neighbors, so E's geometry
+      // does not jump when the ordering of the neighbors changes.
+      DynamicNeighborStats stats = dynamicNeighborStats(vertexToFCell[iv], lowerSurface_F, thickness_F);
+      if (stats.count == 0)  // cannot happen (ic is a dynamic neighbor), but don't use empty stats
+        stats = {1, (lowerSurface_F[ic] + thickness_F[ic]) / unit_length,
+                 (lowerSurface_F[ic] + thickness_F[ic]) / unit_length, thickness_F[ic] / unit_length, 0.0};
+
+      // Surface: the lowest neighbor surface, so no neighbor sees a reverse slope.  But
+      // where the neighbors differ a lot (e.g. steep grounded ice next to an ice shelf),
+      // that value makes the surface step between them point out through the open corner
+      // at E; so E may not lie more than flatCliffSlopeLimit * dc below the neighbors'
+      // mean surface.
+      elev = std::max(stats.minElev, stats.meanElev - flatCliffSlopeLimit * stats.meanDist);
+
+      // Thickness: the neighbors' mean thickness, limited so the column neither extends
+      // below the natural bed nor exceeds flotation at this surface (sea level at 0, as
+      // elsewhere here).
+      const double floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+      thick = std::min(std::min(stats.meanThick, elev - bed), floatThick);
+
+      // If the thickness cap is what limits it, the column is lighter than flotation but its
+      // base lies above the natural bed.  That is a grounded cliff, so raise the FEM bed (not
+      // the MPAS bed) to the column base to make it consistent.  Otherwise the column is
+      // either grounded on the natural bed or floating, and the bed is unchanged.
+      if ((thick < elev - bed) && (thick < floatThick)) {
+        bed = elev - thick;
+        bedTopographyData[iv] = bed;
+      }
+    } else if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
       // check if loan cell bed is above sea level or not
       // Note: ic is a raw MPAS cell index (not an FE vertex index), so use bedTopography_F here.
       if (bedTopography_F[ic] / unit_length > 0.0) {

@@ -65,7 +65,8 @@ module li_velocity_external
          config_default_flowParamA, &
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
-         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, fem_extension_method_code) &
+         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, fem_extension_method_code, &
+         config_fem_flat_cliff_slope_limit) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
@@ -73,14 +74,14 @@ module li_velocity_external
          ! config_use_glp is passed as 0 or 1, not as LOGICAL(C_BOOL): some
          ! compilers (e.g. Intel's ifx) give .true. the value -1, which is not
          ! a valid C++ bool.  fem_extension_method_code is an integer code for
-         ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era'); the values
+         ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era', 2 = 'flat-cliff'); the values
          ! must match the FEM_EXT_* constants in Interface_velocity_solver.cpp.
          INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, &
                            config_use_glp, fem_extension_method_code
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
-                           config_thermal_thickness
+                           config_thermal_thickness, config_fem_flat_cliff_slope_limit
       end subroutine velocity_solver_set_parameters
 
    end interface
@@ -269,7 +270,8 @@ contains
       real (kind=RKIND), pointer :: radius
       type (field1DInteger), pointer :: indexToCellIDField, indexToEdgeIDField, indexToVertexIDField
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density,  config_sea_level, config_default_flowParamA, &
-                                    config_thermal_thickness, config_flowLawExponent, config_dynamic_thickness
+                                    config_thermal_thickness, config_flowLawExponent, config_dynamic_thickness, &
+                                    config_fem_flat_cliff_slope_limit
       logical, pointer :: config_use_glp
       character (len=StrKIND), pointer :: femExtensionMethod
       integer(C_INT) :: fem_extension_method_code
@@ -365,6 +367,7 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_thermal_thickness', config_thermal_thickness)
       call mpas_pool_get_config(liConfigs, 'config_dynamic_thickness', config_dynamic_thickness)
       call mpas_pool_get_config(liConfigs, 'config_use_glp', config_use_glp)
+      call mpas_pool_get_config(liConfigs, 'config_fem_flat_cliff_slope_limit', config_fem_flat_cliff_slope_limit)
       ! femExtensionMethod is resolved (never 'auto') by li_core_init before this routine
       ! runs, and stored per-block in meshPool rather than read from configs directly.
       call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
@@ -373,6 +376,12 @@ contains
          fem_extension_method_code = 0_C_INT
       case ('ismip7-era')
          fem_extension_method_code = 1_C_INT
+      case ('flat-cliff')
+         fem_extension_method_code = 2_C_INT
+         if (config_fem_flat_cliff_slope_limit < 0.0_RKIND) then
+            call mpas_log_write('config_fem_flat_cliff_slope_limit must be non-negative.', MPAS_LOG_ERR)
+            err = 1
+         end if
       case default
          call mpas_log_write(trim(femExtensionMethod) // ' is not a valid land ice fem extension method option.', &
             MPAS_LOG_ERR)
@@ -387,7 +396,8 @@ contains
          config_thermal_thickness, &
          li_mask_ValueAlbanyActive, li_mask_ValueIce, &
          merge(1_C_INT, 0_C_INT, config_use_glp), &
-         fem_extension_method_code )
+         fem_extension_method_code, &
+         config_fem_flat_cliff_slope_limit )
 
       call interface_reset_stdout()
 #endif
