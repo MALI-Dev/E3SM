@@ -140,7 +140,8 @@ void write_ascii_mesh(int const* indexToCellID_F,
     double const* bmb_F, double const* bmbUncertainty_F,
     double const* observedSurfaceVelocityX_F, double const* observedSurfaceVelocityY_F,
     double const* observedVelocityUncertainty_F, 
-    double const* observedThicknessTendency_F, double const * observedThicknessTendencyUncertainty_F);
+    double const* observedThicknessTendency_F, double const * observedThicknessTendencyUncertainty_F,
+    double const* xVelocityOnCell_F, double const* yVelocityOnCell_F);
 
 } // extern "C"
 
@@ -208,6 +209,9 @@ double signedTriangleArea(const double* x, const double* y);
 double signedTriangleArea(const double* x, const double* y, const double* z);
 
 void createReducedMPI(int nLocalEntities, MPI_Comm& reduced_comm_id);
+
+void importCellVelocities(double const* dirichletVelocityXValue, double const* dirichletVelocitYValue,
+    double const* xVelocityOnCell, double const* yVelocityOnCell);
 
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
                 double const* bedTopography_F, double const* lowerSurface_F, double const* thickness_F,

@@ -261,24 +261,8 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
     int *error) {
 
   std::fill(u_normal_F, u_normal_F + nEdges_F * (nLayers+1), 0.);
-  //import velocity from initial guess and from dirichlet values.
+  importCellVelocities(dirichletVelocityXValue, dirichletVelocitYValue, xVelocityOnCell, yVelocityOnCell);
   int sizeVelOnCell = nCells_F * (nLayers + 1);
-  for(int iCell=0; iCell<nCells_F; ++iCell) {
-    for(int il=0; il<nLayers + 1; ++il) {
-      int ilReversed = nLayers - il;
-      int indexReversed = iCell * (nLayers+1) + ilReversed;
-      int index = iCell * (nLayers + 1) +il;
-      if(dirichletCellsMask_F[indexReversed]!=0) {
-        velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
-        velocityOnCells[index+sizeVelOnCell] = dirichletVelocitYValue[indexReversed];
-      }
-      else {
-        velocityOnCells[index] = xVelocityOnCell[indexReversed];
-        velocityOnCells[index+sizeVelOnCell] = yVelocityOnCell[indexReversed];
-      }
-    }
-  }
-  mapCellsToVertices(velocityOnCells, velocityOnVertices, 2, nLayers, Ordering);
 
   if (!isDomainEmpty) {
 
@@ -1216,6 +1200,33 @@ static int selectUpstreamNeighbor(double const* thickness_F, int fCell) {
 }
 
 
+// Import velocity on MPAS cells into velocityOnCells (and velocityOnVertices): the
+// Dirichlet value where dirichletCellsMask_F is set, the current velocity (initial guess)
+// elsewhere.  Inputs are MPAS-ordered (top interface first) in Albany units (m/yr).
+// Used both before an FO solve and when writing the ASCII mesh, so that the 'upstream'
+// FEM extension sees the same velocity in both cases.
+void importCellVelocities(double const* dirichletVelocityXValue, double const* dirichletVelocitYValue,
+    double const* xVelocityOnCell, double const* yVelocityOnCell) {
+  int sizeVelOnCell = nCells_F * (nLayers + 1);
+  for(int iCell=0; iCell<nCells_F; ++iCell) {
+    for(int il=0; il<nLayers + 1; ++il) {
+      int ilReversed = nLayers - il;
+      int indexReversed = iCell * (nLayers+1) + ilReversed;
+      int index = iCell * (nLayers + 1) +il;
+      if(dirichletCellsMask_F[indexReversed]!=0) {
+        velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
+        velocityOnCells[index+sizeVelOnCell] = dirichletVelocitYValue[indexReversed];
+      }
+      else {
+        velocityOnCells[index] = xVelocityOnCell[indexReversed];
+        velocityOnCells[index+sizeVelOnCell] = yVelocityOnCell[indexReversed];
+      }
+    }
+  }
+  mapCellsToVertices(velocityOnCells, velocityOnVertices, 2, nLayers, Ordering);
+}
+
+
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
     double const * beta_F, double const* stiffnessFactor_F, double const* effecPress_F, double const* muFriction_F,
@@ -1947,7 +1958,8 @@ bool belongToTria(double const* x, double const* t, double bcoords[3], double ep
     double const* bmb_F, double const* bmbUncertainty_F,
     double const* observedSurfaceVelocityX_F, double const* observedSurfaceVelocityY_F,
     double const* observedSurfaceVelocityUncertainty_F, 
-    double const* observedThicknessTendency_F, double const * observedThicknessTendencyUncertainty_F) {
+    double const* observedThicknessTendency_F, double const * observedThicknessTendencyUncertainty_F,
+    double const* xVelocityOnCell_F, double const* yVelocityOnCell_F) {
 
 
     // Write out ASCII format
@@ -2024,6 +2036,11 @@ bool belongToTria(double const* x, double const* t, double bcoords[3], double ep
 
     // individual field values
     // Call needed functions to process MPAS fields to Albany units/format
+
+    // Load the velocity exactly as velocity_solver_solve_fo() does before its first solve
+    // (uReconstructX/Y serve as both the initial guess and the Dirichlet values), so the
+    // velocity-dependent 'upstream' extension gives the same FE geometry as the forward run.
+    importCellVelocities(xVelocityOnCell_F, yVelocityOnCell_F, xVelocityOnCell_F, yVelocityOnCell_F);
 
     std::vector<std::pair<int, int> > marineBdyExtensionMap;  // local map to be created by importFields
     importFields(marineBdyExtensionMap, bedTopography_F, lowerSurface_F, thickness_F, beta_F,

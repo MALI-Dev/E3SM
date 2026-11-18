@@ -91,6 +91,9 @@ module li_velocity_external
    !
    !--------------------------------------------------------------------
 
+   real(kind=RKIND), parameter :: secondsInYear = 365.0_RKIND * 24.0_RKIND * 3600.0_RKIND
+      !< The value of seconds in a year assumed by external dycores
+
 
 !***********************************************************************
 
@@ -500,8 +503,6 @@ contains
       integer :: iEdge
       integer :: iCell
       integer :: albanyVelocityErrorTmp
-      real(kind=RKIND), parameter :: secondsInYear = 365.0_RKIND * 24.0_RKIND * 3600.0_RKIND
-         !< The value of seconds in a year assumed by external dycores
       integer, pointer :: albanyVelocityError
 
       err = 0
@@ -818,6 +819,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
          observedSurfaceVelocityX, observedSurfaceVelocityY, observedSurfaceVelocityUncertainty
       real (kind=RKIND), dimension(:), pointer :: observedThicknessTendency, observedThicknessTendencyUncertainty
       real (kind=RKIND), dimension(:,:), pointer :: temperature
+      real (kind=RKIND), dimension(:,:), pointer :: uReconstructX, uReconstructY
       real (kind=RKIND), dimension(:), pointer :: surfaceAirTemperature, basalHeatFlux
       integer, dimension(:), pointer :: vertexMask, cellMask, edgeMask, indexToCellID
       real (kind=RKIND), dimension(:,:), pointer :: layerThickness
@@ -893,6 +895,8 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       call mpas_pool_get_array(velocityPool, 'basalDebrisFactor', basalDebrisFactor)
       call mpas_pool_get_array(velocityPool, 'dirichletVelocityMask', dirichletVelocityMask, timeLevel = 1)
       call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
+      call mpas_pool_get_array(velocityPool, 'uReconstructX', uReconstructX)
+      call mpas_pool_get_array(velocityPool, 'uReconstructY', uReconstructY)
 
       ! Thermal variables
       call mpas_pool_get_array(thermalPool, 'temperature', temperature)
@@ -938,7 +942,12 @@ subroutine li_velocity_external_write_albany_mesh(domain)
               layerThicknessFractions, lowerSurface, thickness, err)
 
       ! call the C++ routine to write the mesh
+      ! uReconstructX/Y are passed (in m/yr, as for a solve) because the 'upstream' FEM
+      ! extension depends on velocity; this makes the written mesh match the FE geometry
+      ! of the first velocity solve of a forward run from the same input file.
       call mpas_log_write("Writing Albany ASCII mesh.", flushNow=.true.)
+      uReconstructX = uReconstructX * secondsInYear
+      uReconstructY = uReconstructY * secondsInYear
       call write_ascii_mesh(indexToCellID, bedTopography, lowerSurface, &
               beta, temperature, &
               surfaceAirTemperature, basalHeatFlux, &
@@ -949,7 +958,10 @@ subroutine li_velocity_external_write_albany_mesh(domain)
               sfcMassBal, sfcMassBalUncertainty, &
               floatingBasalMassBal, floatingBasalMassBalUncertainty, &
               observedSurfaceVelocityX, observedSurfaceVelocityY, observedSurfaceVelocityUncertainty, &
-              observedThicknessTendency, observedThicknessTendencyUncertainty)
+              observedThicknessTendency, observedThicknessTendencyUncertainty, &
+              uReconstructX, uReconstructY)
+      uReconstructX = uReconstructX / secondsInYear
+      uReconstructY = uReconstructY / secondsInYear
 
       !----
 
