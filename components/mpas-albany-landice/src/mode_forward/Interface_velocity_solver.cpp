@@ -1176,6 +1176,39 @@ static DynamicNeighborStats dynamicNeighborStats(int fCell,
   return stats;
 }
 
+// Mean of the MPAS cell field field_F over the dynamic edge-neighbors of cell fCell that are
+// grounded by flotation (sea level at 0), or over all dynamic neighbors if none is grounded.
+// Used by 'flat-cliff' to give a grounded-cliff extension node the basal properties of the ice
+// it continues, rather than those of the ice-free ocean cell it occupies.
+static double groundedNeighborMean(int fCell, double const* field_F,
+    double const* thickness_F, double const* bedTopography_F) {
+  double sumGrounded = 0.0, sumAll = 0.0;
+  int nGrounded = 0, nAll = 0;
+  int nEdg = nEdgesOnCells_F[fCell];
+  for (int j = 0; j < nEdg; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    sumAll += field_F[c];
+    nAll++;
+    if (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]) {
+      sumGrounded += field_F[c];
+      nGrounded++;
+    }
+  }
+  if (nGrounded > 0)
+    return sumGrounded / nGrounded;
+  return (nAll > 0) ? sumAll / nAll : field_F[fCell];
+}
+
+
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
     double const * beta_F, double const* stiffnessFactor_F, double const* effecPress_F, double const* muFriction_F,
@@ -1412,6 +1445,23 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       if ((thick < elev - bed) && (thick < floatThick)) {
         bed = elev - thick;
         bedTopographyData[iv] = bed;
+
+        // A grounded cliff at E would otherwise get the basal properties of the ice-free
+        // ocean cell (e.g. no friction), so use those of the grounded ice it continues.
+        // These are FEM inputs only; scaling matches the import loop above.
+        const int fCellE = vertexToFCell[iv];
+        if (beta_F != 0)
+          betaData[iv] = groundedNeighborMean(fCellE, beta_F, thickness_F, bedTopography_F) / unit_length;
+        if (effecPress_F != 0)
+          effecPressData[iv] = groundedNeighborMean(fCellE, effecPress_F, thickness_F, bedTopography_F) / unit_length;
+        if (muFriction_F != 0)
+          muFrictionData[iv] = groundedNeighborMean(fCellE, muFriction_F, thickness_F, bedTopography_F);
+        if (bedRoughnessRC_F != 0)
+          bedRoughnessData[iv] = groundedNeighborMean(fCellE, bedRoughnessRC_F, thickness_F, bedTopography_F) / unit_length;
+        if (bulkFriction_F != 0)
+          bulkFrictionData[iv] = groundedNeighborMean(fCellE, bulkFriction_F, thickness_F, bedTopography_F);
+        if (basalDebris_F != 0)
+          basalDebrisData[iv] = groundedNeighborMean(fCellE, basalDebris_F, thickness_F, bedTopography_F);
       }
     } else if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
       // check if loan cell bed is above sea level or not
