@@ -56,9 +56,12 @@ double rho_ocean;
 int dynamic_ice_bit_value;
 int ice_present_bit_value;
 // Selects the version of the margin (thickness/elevation) extension logic used in
-// importFields(): false => 'ismip6-era' (pre-ismip7-era scheme), true => 'ismip7-era'.
-// Set from the namelist option config_fem_extension_method via velocity_solver_set_parameters().
-bool useISMIP7Extension = false;
+// importFields().  Set from the namelist option config_fem_extension_method via
+// velocity_solver_set_parameters(); the integer codes must match those passed from
+// li_velocity_external_block_init().
+const int FEM_EXT_ISMIP6_ERA = 0;  // 'ismip6-era' (pre-ismip7-era scheme)
+const int FEM_EXT_ISMIP7_ERA = 1;  // 'ismip7-era'
+int femExtensionMethod = FEM_EXT_ISMIP6_ERA;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -121,14 +124,14 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* clausius_clapeyron_coeff,
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                         int const* use_GLP_F, int const* use_ISMIP7_extension_F) {
+                         int const* use_GLP_F, int const* fem_extension_method_code_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
   thermal_thickness_limit = *thermal_thickness_limit_F / unit_length; // Import with Albany scaling
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
   ice_present_bit_value = *li_mask_ValueIce;
-  useISMIP7Extension = (*use_ISMIP7_extension_F != 0);
+  femExtensionMethod = *fem_extension_method_code_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -1267,7 +1270,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
         thicknessData[iV] = eps;
         elevationData[iV] = bedTopographyData[iV]+eps;
 
-        if (useISMIP7Extension) {
+        if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
           // 'ismip7-era' extension: we want to avoid smearing ice up a cliff if the ice-free
           // neighbor has a higher elevation than the last cell with ice.  But we still need
           // the thickness to ramp to zero to avoid an erroneous ice cliff.
@@ -1312,7 +1315,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
                elevationData[iV] = bedTopographyData[iV] + thicknessData[iV];
             }
           }
-        } // useISMIP7Extension
+        } // femExtensionMethod == FEM_EXT_ISMIP7_ERA
 
       } // else (nonmarine)
     } // is on margin (not dynamic vertex check)
@@ -1328,7 +1331,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double elev = -1e10;
     double thick = eps;
 
-    if (useISMIP7Extension) {
+    if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
       // check if loan cell bed is above sea level or not
       // Note: ic is a raw MPAS cell index (not an FE vertex index), so use bedTopography_F here.
       if (bedTopography_F[ic] / unit_length > 0.0) {
@@ -1365,7 +1368,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     }
   } // map vector loop
 
-  if (useISMIP7Extension) {
+  if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
     // 'ismip7-era' extension only: do another pass.  For any extended marine margin
     // locations that are connected to any grounded neighbors but have at least one
     // floating neighbor, create a ramp down to zero thickness instead of whatever they
@@ -1413,7 +1416,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
         thicknessData[iv] = eps;
         elevationData[iv] = std::max(bedTopographyData[iv] + eps, (1.0 - rho_ice/rho_ocean)*eps);
     }
-  } // useISMIP7Extension
+  } // femExtensionMethod == FEM_EXT_ISMIP7_ERA
 }
 
 
