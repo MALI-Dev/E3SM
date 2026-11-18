@@ -389,6 +389,11 @@ contains
             call mpas_log_write('config_fem_flat_cliff_slope_limit must be non-negative.', MPAS_LOG_ERR)
             err = 1
          end if
+         ! 'flat-cliff' also uses config_fem_land_wall_slope, to leave wall neighbors out
+         if (config_fem_land_wall_slope < 0.0_RKIND) then
+            call mpas_log_write('config_fem_land_wall_slope must be non-negative.', MPAS_LOG_ERR)
+            err = 1
+         end if
       case default
          call mpas_log_write(trim(femExtensionMethod) // ' is not a valid land ice fem extension method option.', &
             MPAS_LOG_ERR)
