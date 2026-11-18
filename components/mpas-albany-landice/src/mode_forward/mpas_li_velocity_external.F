@@ -73,7 +73,7 @@ module li_velocity_external
          ! config_use_glp is passed as 0 or 1, not as LOGICAL(C_BOOL): some
          ! compilers (e.g. Intel's ifx) give .true. the value -1, which is not
          ! a valid C++ bool.  fem_extension_method_code is an integer code for
-         ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era'); the values
+         ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era', 2 = 'upstream'); the values
          ! must match the FEM_EXT_* constants in Interface_velocity_solver.cpp.
          INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, &
                            config_use_glp, fem_extension_method_code
@@ -373,6 +373,8 @@ contains
          fem_extension_method_code = 0_C_INT
       case ('ismip7-era')
          fem_extension_method_code = 1_C_INT
+      case ('upstream')
+         fem_extension_method_code = 2_C_INT
       case default
          call mpas_log_write(trim(femExtensionMethod) // ' is not a valid land ice fem extension method option.', &
             MPAS_LOG_ERR)

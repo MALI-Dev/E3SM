@@ -61,7 +61,12 @@ int ice_present_bit_value;
 // li_velocity_external_block_init().
 const int FEM_EXT_ISMIP6_ERA = 0;  // 'ismip6-era' (pre-ismip7-era scheme)
 const int FEM_EXT_ISMIP7_ERA = 1;  // 'ismip7-era'
+const int FEM_EXT_UPSTREAM = 2;    // 'upstream'
 int femExtensionMethod = FEM_EXT_ISMIP6_ERA;
+
+// Safety margin [km] used by the 'upstream' extension when it adjusts the FEM bed so that
+// an extension vertex is unambiguously grounded or floating.
+const double upstreamExtensionTol = 1e-3;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -1126,6 +1131,91 @@ double signedTriangleAreaOnSphere(const double* x, const double* y,
 }
 
 
+// ---------------------------------------------------------------------------
+// Helpers for the 'upstream' FEM extension method (see importFields()).
+// All take MPAS (0-based, local) cell indices.
+// ---------------------------------------------------------------------------
+
+// Distance between the centers of two MPAS cells, in MPAS units (m).
+static double cellCenterDistance(int c0, int c1) {
+  double dx = xCell_F[c1] - xCell_F[c0];
+  double dy = yCell_F[c1] - yCell_F[c0];
+  double dz = zCell_F[c1] - zCell_F[c0];
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// Depth-averaged velocity of an MPAS cell from velocityOnCells, which at the time
+// importFields() is called holds the previous solution (or the initial guess and
+// Dirichlet values).  Zero if velocityOnCells has not been populated.
+static void depthAveragedCellVelocity(int iCell, double& ubar, double& vbar) {
+  ubar = 0.0;
+  vbar = 0.0;
+  if (velocityOnCells.empty() || (static_cast<int>(layersRatio.size()) != nLayers))
+    return;
+  // velocityOnCells is [x|y][iCell*(nLayers+1) + il] with il = 0 at the bed,
+  // and layersRatio is likewise ordered from the bed up.
+  const int yShift = nCells_F * (nLayers + 1);
+  const int base = iCell * (nLayers + 1);
+  for (int il = 0; il < nLayers; il++) {
+    ubar += layersRatio[il] * 0.5 * (velocityOnCells[base + il] + velocityOnCells[base + il + 1]);
+    vbar += layersRatio[il] * 0.5 * (velocityOnCells[yShift + base + il] + velocityOnCells[yShift + base + il + 1]);
+  }
+}
+
+// Depth-integrated ice flux from cell cSrc into the adjacent cell cDst across MPAS edge
+// fEdge, computed donor-cell style from the thickness (thickness_F, MPAS units) and
+// depth-averaged velocity of cSrc.
+// Positive means flow from cSrc toward cDst.  It is only used to rank neighbors, so the
+// units do not matter.
+static double fluxIntoNeighbor(double const* thickness_F, int cSrc, int cDst, int fEdge) {
+  double dc = cellCenterDistance(cSrc, cDst);
+  if (dc <= 0.0)
+    return 0.0;
+  double ubar, vbar;
+  depthAveragedCellVelocity(cSrc, ubar, vbar);
+  double uNormal = (ubar * (xCell_F[cDst] - xCell_F[cSrc]) + vbar * (yCell_F[cDst] - yCell_F[cSrc])) / dc;
+
+  // Edge length from the edge's two vertices.  If one is outside this block's vertex list,
+  // use the regular-hexagon relation dvEdge = dcEdge / sqrt(3).
+  double dvEdge = dc / std::sqrt(3.0);
+  int v0 = verticesOnEdge_F[2 * fEdge] - 1;
+  int v1 = verticesOnEdge_F[2 * fEdge + 1] - 1;
+  if ((v0 >= 0) && (v1 >= 0) && (v0 < nVertices_F) && (v1 < nVertices_F)) {
+    double dx = xVertex_F[v1] - xVertex_F[v0];
+    double dy = yVertex_F[v1] - yVertex_F[v0];
+    double dz = zVertex_F[v1] - zVertex_F[v0];
+    dvEdge = std::sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  return thickness_F[cSrc] * uNormal * dvEdge;
+}
+
+// Return the Albany-active (dynamic) neighbor of cell fCell that sends the largest
+// positive flux into fCell, or -1 if no active neighbor flows into it.
+static int selectUpstreamNeighbor(double const* thickness_F, int fCell) {
+  int upstreamCell = -1;
+  double maxFlux = 0.0;
+  int nEdg = nEdgesOnCells_F[fCell];
+  for (int j = 0; j < nEdg; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    double flux = fluxIntoNeighbor(thickness_F, c, fCell, fEdge);
+    if (flux > maxFlux) {
+      maxFlux = flux;
+      upstreamCell = c;
+    }
+  }
+  return upstreamCell;
+}
+
+
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
     double const * beta_F, double const* stiffnessFactor_F, double const* effecPress_F, double const* muFriction_F,
@@ -1250,6 +1340,14 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
             }
           }
         }
+        if (femExtensionMethod == FEM_EXT_UPSTREAM) {
+          // 'upstream': use as the reference cell the dynamic neighbor that, with the
+          // previous velocity, delivers the most ice flux into this cell.  If none flows in
+          // (e.g. no velocity is available yet), keep the lowest-elevation neighbor found above.
+          int upstreamCell = selectUpstreamNeighbor(thickness_F, fCell);
+          if (upstreamCell != -1)
+            neighbor_cell = upstreamCell;
+        }
         // check if we didn't assign anything.  This occurs if this node has no neighbors with (dynamic) ice.
         // This should not ever occur, but including the check just to be safe.
         if (neighbor_cell != -1) {
@@ -1265,13 +1363,13 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
         // -- nonmarine (terrestrial) margin -- (extend to zero thickness)
 
         // First assign standard values for terrestrial margin extension.
-        // Under 'ismip6-era' these are the final values; under 'ismip7-era' they may be
-        // adjusted below if necessary.
+        // Under 'ismip6-era' these are the final values; under 'ismip7-era' and 'upstream'
+        // they may be adjusted below if necessary.
         thicknessData[iV] = eps;
         elevationData[iV] = bedTopographyData[iV]+eps;
 
-        if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
-          // 'ismip7-era' extension: we want to avoid smearing ice up a cliff if the ice-free
+        if (femExtensionMethod != FEM_EXT_ISMIP6_ERA) {
+          // 'ismip7-era' and 'upstream' extensions: we want to avoid smearing ice up a cliff if the ice-free
           // neighbor has a higher elevation than the last cell with ice.  But we still need
           // the thickness to ramp to zero to avoid an erroneous ice cliff.
           // Instead, if necessary, adjust so the surface elevation cannot be higher than the
@@ -1315,7 +1413,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
                elevationData[iV] = bedTopographyData[iV] + thicknessData[iV];
             }
           }
-        } // femExtensionMethod == FEM_EXT_ISMIP7_ERA
+        } // femExtensionMethod != FEM_EXT_ISMIP6_ERA
 
       } // else (nonmarine)
     } // is on margin (not dynamic vertex check)
@@ -1331,7 +1429,56 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double elev = -1e10;
     double thick = eps;
 
-    if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
+    if (femExtensionMethod == FEM_EXT_UPSTREAM) {
+      // 'upstream' extension.  ic is the reference cell R chosen above (normally the
+      // neighbor feeding the most flux into this extension cell E).
+      const double thickR = thickness_F[ic] / unit_length;
+      const double elevR = (lowerSurface_F[ic] + thickness_F[ic]) / unit_length;
+      // Flotation thickness per unit surface elevation (sea level at 0, as elsewhere here)
+      const double floatThickPerElev = rho_ocean / (rho_ocean - rho_ice);
+
+      // Extrapolate the surface from R to E using the along-flow slope just upstream of R,
+      // i.e. from the neighbor U that feeds the most flux into R.  A rising slope is set
+      // to 0 so the extension never puts a surface above R's (which would push ice back
+      // into the domain).  With no U, E gets R's surface.
+      double slope = 0.0;
+      int up = selectUpstreamNeighbor(thickness_F, ic);
+      double dcUR = (up != -1) ? cellCenterDistance(up, ic) : 0.0;
+      if (dcUR > 0.0) {
+        double elevU = (lowerSurface_F[up] + thickness_F[up]) / unit_length;
+        slope = std::min(0.0, (elevR - elevU) / dcUR);
+      }
+      elev = elevR + slope * cellCenterDistance(ic, vertexToFCell[iv]);
+
+      // E is grounded or floating like R.  But a grounded column at surface elev must be
+      // no thicker than the flotation thickness there, so if elev is too low for any
+      // grounded column E is treated as floating instead.
+      bool isGrounded = (rho_ice * thickness_F[ic] >= -rho_ocean * bedTopography_F[ic]);
+      if (isGrounded && (floatThickPerElev * elev - upstreamExtensionTol < eps))
+        isGrounded = false;
+
+      if (isGrounded) {
+        // Fill from the natural bed up to the surface, but no thicker than R and at least
+        // upstreamExtensionTol thinner than flotation.  If either limit is active, the FEM
+        // bed (not the MPAS bed) is raised to the base of the column so E stays grounded
+        // with the prescribed surface.
+        thick = std::min(std::min(elev - bed, thickR), floatThickPerElev * elev - upstreamExtensionTol);
+        if (thick < elev - bed)
+          bed = elev - thick;
+      } else {
+        // Floating in hydrostatic equilibrium at the extrapolated surface.  If the natural
+        // bed would ground the shelf, lower the FEM bed to upstreamExtensionTol below its base.
+        thick = floatThickPerElev * elev;
+        if (thick < eps) {
+          thick = eps;
+          elev = (1.0 - rho_ice / rho_ocean) * eps;
+        }
+        double lowerSurf = elev - thick;
+        if (bed > lowerSurf - upstreamExtensionTol)
+          bed = lowerSurf - upstreamExtensionTol;
+      }
+      bedTopographyData[iv] = bed;
+    } else if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
       // check if loan cell bed is above sea level or not
       // Note: ic is a raw MPAS cell index (not an FE vertex index), so use bedTopography_F here.
       if (bedTopography_F[ic] / unit_length > 0.0) {
