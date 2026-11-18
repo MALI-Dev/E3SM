@@ -66,7 +66,7 @@ module li_velocity_external
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
          li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, fem_extension_method_code, &
-         config_fem_flat_cliff_slope_limit) &
+         config_fem_flat_cliff_slope_limit, land_wall_velocity_code, config_fem_land_wall_slope) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
@@ -76,12 +76,15 @@ module li_velocity_external
          ! a valid C++ bool.  fem_extension_method_code is an integer code for
          ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era', 2 = 'flat-cliff'); the values
          ! must match the FEM_EXT_* constants in Interface_velocity_solver.cpp.
+         ! land_wall_velocity_code is 0 = 'free', 1 = 'zero' for config_fem_land_wall_velocity,
+         ! matching the LAND_WALL_* constants there.
          INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, &
-                           config_use_glp, fem_extension_method_code
+                           config_use_glp, fem_extension_method_code, land_wall_velocity_code
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
-                           config_thermal_thickness, config_fem_flat_cliff_slope_limit
+                           config_thermal_thickness, config_fem_flat_cliff_slope_limit, &
+                           config_fem_land_wall_slope
       end subroutine velocity_solver_set_parameters
 
    end interface
@@ -271,10 +274,12 @@ contains
       type (field1DInteger), pointer :: indexToCellIDField, indexToEdgeIDField, indexToVertexIDField
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density,  config_sea_level, config_default_flowParamA, &
                                     config_thermal_thickness, config_flowLawExponent, config_dynamic_thickness, &
-                                    config_fem_flat_cliff_slope_limit
+                                    config_fem_flat_cliff_slope_limit, config_fem_land_wall_slope
       logical, pointer :: config_use_glp
       character (len=StrKIND), pointer :: femExtensionMethod
       integer(C_INT) :: fem_extension_method_code
+      character (len=StrKIND), pointer :: config_fem_land_wall_velocity
+      integer(C_INT) :: land_wall_velocity_code
 
       ! halo exchange arrays
       integer, dimension(:), pointer :: sendCellsArray, &
@@ -368,6 +373,8 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_dynamic_thickness', config_dynamic_thickness)
       call mpas_pool_get_config(liConfigs, 'config_use_glp', config_use_glp)
       call mpas_pool_get_config(liConfigs, 'config_fem_flat_cliff_slope_limit', config_fem_flat_cliff_slope_limit)
+      call mpas_pool_get_config(liConfigs, 'config_fem_land_wall_velocity', config_fem_land_wall_velocity)
+      call mpas_pool_get_config(liConfigs, 'config_fem_land_wall_slope', config_fem_land_wall_slope)
       ! femExtensionMethod is resolved (never 'auto') by li_core_init before this routine
       ! runs, and stored per-block in meshPool rather than read from configs directly.
       call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
@@ -388,6 +395,21 @@ contains
          err = 1
          fem_extension_method_code = 0_C_INT
       end select
+      select case (trim(config_fem_land_wall_velocity))
+      case ('free')
+         land_wall_velocity_code = 0_C_INT
+      case ('zero')
+         land_wall_velocity_code = 1_C_INT
+         if (config_fem_land_wall_slope < 0.0_RKIND) then
+            call mpas_log_write('config_fem_land_wall_slope must be non-negative.', MPAS_LOG_ERR)
+            err = 1
+         end if
+      case default
+         call mpas_log_write(trim(config_fem_land_wall_velocity) // &
+            ' is not a valid option for config_fem_land_wall_velocity.', MPAS_LOG_ERR)
+         err = 1
+         land_wall_velocity_code = 0_C_INT
+      end select
 #if defined(USE_EXTERNAL_L1L2) || defined(USE_EXTERNAL_FIRSTORDER) || defined(USE_EXTERNAL_STOKES)
       call velocity_solver_set_parameters(gravity, config_ice_density, config_ocean_density, config_sea_level, &
          config_default_flowParamA, &
@@ -397,7 +419,8 @@ contains
          li_mask_ValueAlbanyActive, li_mask_ValueIce, &
          merge(1_C_INT, 0_C_INT, config_use_glp), &
          fem_extension_method_code, &
-         config_fem_flat_cliff_slope_limit )
+         config_fem_flat_cliff_slope_limit, &
+         land_wall_velocity_code, config_fem_land_wall_slope )
 
       call interface_reset_stdout()
 #endif
@@ -587,7 +610,7 @@ contains
           (dirichletMaskChanged == 1) ) then
          call mpas_log_write("Generating new external velocity solver FEM grid.", flushNow=.true.)
          call generate_fem_grid(config_velocity_solver, vertexMask, cellMask, dirichletVelocityMask, &
-              layerThicknessFractions, lowerSurface, thickness, err)
+              layerThicknessFractions, lowerSurface, thickness, bedTopography, err)
       endif
 
 
@@ -943,7 +966,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       ! Create FEM mesh
       call mpas_log_write("Generating new external velocity solver FEM grid.", flushNow=.true.)
       call generate_fem_grid(config_velocity_solver, vertexMask, cellMask, dirichletVelocityMask, &
-              layerThicknessFractions, lowerSurface, thickness, err)
+              layerThicknessFractions, lowerSurface, thickness, bedTopography, err)
 
       ! call the C++ routine to write the mesh
       call mpas_log_write("Writing Albany ASCII mesh.", flushNow=.true.)
@@ -1057,7 +1080,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
 !-----------------------------------------------------------------------
 
    subroutine generate_fem_grid(config_velocity_solver, vertexMask, cellMask, dirichletVelocityMask, &
-              layerThicknessFractions, lowerSurface, thickness, err)
+              layerThicknessFractions, lowerSurface, thickness, bedTopography, err)
 
       !-----------------------------------------------------------------
       ! input variables
@@ -1067,6 +1090,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       integer, pointer, dimension(:,:), intent(in) :: dirichletVelocityMask
       real(kind=RKIND), pointer, dimension(:), intent(in) :: layerThicknessFractions, &
              lowerSurface, thickness
+      real(kind=RKIND), pointer, dimension(:), intent(in) :: bedTopography !< used to find land walls
 
       !-----------------------------------------------------------------
       ! input/output variables
@@ -1086,7 +1110,7 @@ subroutine li_velocity_external_write_albany_mesh(domain)
 
 #if defined(USE_EXTERNAL_L1L2) || defined(USE_EXTERNAL_FIRSTORDER) || defined(USE_EXTERNAL_STOKES)
           call mpas_timer_start("velocity_solver_compute_2d_grid")
-          call velocity_solver_compute_2d_grid(vertexMask, cellMask, dirichletVelocityMask)
+          call velocity_solver_compute_2d_grid(vertexMask, cellMask, dirichletVelocityMask, bedTopography)
           call mpas_timer_stop("velocity_solver_compute_2d_grid")
 #else
           call mpas_log_write("To run with an external velocity solver you must compile MPAS with one.", MPAS_LOG_ERR)

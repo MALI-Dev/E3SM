@@ -67,6 +67,17 @@ int femExtensionMethod = FEM_EXT_ISMIP6_ERA;
 // below the mean surface of its dynamic neighbors (config_fem_flat_cliff_slope_limit).
 double flatCliffSlopeLimit = 0.05;
 
+// Velocity condition at FE nodes on steep land walls (config_fem_land_wall_velocity), and the
+// bed slope above which a land extension node is a wall (config_fem_land_wall_slope).  The
+// codes must match those passed from li_velocity_external_block_init().
+const int LAND_WALL_FREE = 0;
+const int LAND_WALL_ZERO = 1;
+int landWallVelocity = LAND_WALL_FREE;
+double landWallSlope = 0.1;
+// isPinnedWallCell[iCell]: MPAS cell iCell is a land wall given a zero-velocity Dirichlet
+// condition.  Set each time the FE mesh is built.
+std::vector<bool> isPinnedWallCell;
+
 // global variables used for handling logging
 char albany_log_filename[128];
 int original_stdout; // the location of stdout before we captured it
@@ -108,6 +119,51 @@ exchange::exchange(int _procID, int const* vec_first, int const* vec_last,
         fieldDim * (vec_last - vec_first)) {
 }
 
+
+// Mark the land FE extension cells that sit on a steep wall (fjord wall, nunatak) and so get a
+// zero-velocity Dirichlet condition when config_fem_land_wall_velocity='zero'.  A wall cell is
+// non-dynamic, has no dirichletVelocityMask condition, has bed at or above sea level (0, as in
+// importFields), and its bed rises from at least one dynamic edge-neighbor by a slope greater
+// than landWallSlope.  Only the bed and the dynamic mask are used (not the evolving ice surface),
+// so the classification cannot flicker; it is redone whenever the FE mesh is rebuilt, which
+// happens whenever the dynamic cell mask changes.  All inputs are valid in the halo, so no
+// communication is needed.
+static void findLandWallCells(double const* bedTopography_F) {
+  isPinnedWallCell.assign(nCells_F, false);
+  if (landWallVelocity == LAND_WALL_FREE)
+    return;
+  int numWallCells = 0;
+  for (int iCell = 0; iCell < nCells_F; iCell++) {
+    if ((cellsMask_F[iCell] & dynamic_ice_bit_value) || (dirichletCellsMask_F[(nLayers+1)*iCell] != 0) ||
+        (bedTopography_F[iCell] < 0.0))
+      continue;
+    int nEdg = nEdgesOnCells_F[iCell];
+    for (int j = 0; j < nEdg; j++) {
+      int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+      if ((fEdge < 0) || (fEdge >= nEdges_F))
+        continue;
+      int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+      int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+      if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+        continue;
+      int c = (c0 == iCell) ? c1 : c0;
+      if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+        continue;
+      double dx = xCell_F[iCell] - xCell_F[c];
+      double dy = yCell_F[iCell] - yCell_F[c];
+      double dz = zCell_F[iCell] - zCell_F[c];
+      double dc = std::sqrt(dx * dx + dy * dy + dz * dz);
+      if ((dc > 0.0) && ((bedTopography_F[iCell] - bedTopography_F[c]) / dc > landWallSlope)) {
+        isPinnedWallCell[iCell] = true;
+        numWallCells++;
+        break;
+      }
+    }
+  }
+  std::cout << "Land wall cells with zero-velocity condition (this rank, incl. halo): "
+            << numWallCells << std::endl;
+}
+
 extern "C" {
 
 // ===================================================
@@ -129,7 +185,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
                          int const* use_GLP_F, int const* fem_extension_method_code_F,
-                         double const* flat_cliff_slope_limit_F) {
+                         double const* flat_cliff_slope_limit_F,
+                         int const* land_wall_velocity_code_F, double const* land_wall_slope_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -138,6 +195,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   ice_present_bit_value = *li_mask_ValueIce;
   femExtensionMethod = *fem_extension_method_code_F;
   flatCliffSlopeLimit = *flat_cliff_slope_limit_F;
+  landWallVelocity = *land_wall_velocity_code_F;
+  landWallSlope = *land_wall_slope_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -273,6 +332,11 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
         velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
         velocityOnCells[index+sizeVelOnCell] = dirichletVelocitYValue[indexReversed];
       }
+      else if (!isPinnedWallCell.empty() && isPinnedWallCell[iCell]) {
+        // zero-velocity Dirichlet condition at land walls (see config_fem_land_wall_velocity)
+        velocityOnCells[index] = 0.0;
+        velocityOnCells[index+sizeVelOnCell] = 0.0;
+      }
       else {
         velocityOnCells[index] = xVelocityOnCell[indexReversed];
         velocityOnCells[index+sizeVelOnCell] = yVelocityOnCell[indexReversed];
@@ -368,12 +432,15 @@ void velocity_solver_finalize() {
  *
  */
 
-void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F) {
+void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F,
+    double const* bedTopography_F) {
   int numProcs, me;
   verticesMask_F = _verticesMask_F;
   cellsMask_F = _cellsMask_F;
   verticesMask_F = _verticesMask_F;
   dirichletCellsMask_F = _dirichletCellsMask_F;
+
+  findLandWallCells(bedTopography_F);
 
   MPI_Comm_size(comm, &numProcs);
   MPI_Comm_rank(comm, &me);
@@ -596,9 +663,9 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
       int fCell1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
       assert((fCell0<nCells_F) && (fCell1<nCells_F));
       bool isCell0OnMargin = !(cellsMask_F[fCell0] & dynamic_ice_bit_value) &&
-          (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0);
+          (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0) && !isPinnedWallCell[fCell0];
       bool isCell1OnMargin = !(cellsMask_F[fCell1] & dynamic_ice_bit_value) &&
-          (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0);
+          (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0) && !isPinnedWallCell[fCell1];
       if(isCell0OnMargin || isCell1OnMargin)
         iceMarginEdgesLIds.push_back(index);
     }
@@ -681,7 +748,7 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
     for(int il=0; il< nLayers+1; ++il)
     {
       int imask_F = il+(nLayers+1)*fCell;
-      if(dirichletCellsMask_F[imask_F]!=0)
+      if((dirichletCellsMask_F[imask_F]!=0) || isPinnedWallCell[fCell])
         dirichletNodesIDs.push_back((nLayers-il)*vertexColumnShift+indexToVertexID[index]*vertexLayerShift);
     }
 
@@ -1977,7 +2044,7 @@ bool belongToTria(double const* x, double const* t, double bcoords[3], double ep
        for (int index = 0; index < nVertices; index++) { //coordinates lines
           int iCell = vertexToFCell[index];
           //setting boundary vertices labels, 2 for dirichlet nodes, 1 otherwise
-          bool isDirichletVertex = dirichletCellsMask_F[(nLayers+1)*iCell] != 0;
+          bool isDirichletVertex = (dirichletCellsMask_F[(nLayers+1)*iCell] != 0) || isPinnedWallCell[iCell];
           int vertexLabel = (!isVertexBoundary[index]) ? 0 :
                             isDirichletVertex ? 3 : 1;
 
