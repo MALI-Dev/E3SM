@@ -76,7 +76,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         double const* clausius_clapeyron_coeff,
                         double const* thermal_thickness_limit_F,
                         int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                        int const* use_GLP_F, int const* use_ISMIP7_extension_F);
+                        int const* use_GLP_F, int const* fem_extension_method_code_F);
 
 void velocity_solver_init_l1l2(double const* levelsRatio);
 

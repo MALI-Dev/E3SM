@@ -65,16 +65,18 @@ module li_velocity_external
          config_default_flowParamA, &
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
-         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, use_ismip7_fem_extension) &
+         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, fem_extension_method_code) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
 
-         ! config_use_glp and use_ismip7_fem_extension are passed as 0 or 1,
-         ! not as LOGICAL(C_BOOL): some compilers (e.g. Intel's ifx) give
-         ! .true. the value -1, which is not a valid C++ bool
+         ! config_use_glp is passed as 0 or 1, not as LOGICAL(C_BOOL): some
+         ! compilers (e.g. Intel's ifx) give .true. the value -1, which is not
+         ! a valid C++ bool.  fem_extension_method_code is an integer code for
+         ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era'); the values
+         ! must match the FEM_EXT_* constants in Interface_velocity_solver.cpp.
          INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, &
-                           config_use_glp, use_ismip7_fem_extension
+                           config_use_glp, fem_extension_method_code
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
@@ -270,7 +272,7 @@ contains
                                     config_thermal_thickness, config_flowLawExponent, config_dynamic_thickness
       logical, pointer :: config_use_glp
       character (len=StrKIND), pointer :: femExtensionMethod
-      logical :: use_ismip7_fem_extension
+      integer(C_INT) :: fem_extension_method_code
 
       ! halo exchange arrays
       integer, dimension(:), pointer :: sendCellsArray, &
@@ -366,12 +368,17 @@ contains
       ! femExtensionMethod is resolved (never 'auto') by li_core_init before this routine
       ! runs, and stored per-block in meshPool rather than read from configs directly.
       call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
-      if (trim(femExtensionMethod) /= 'ismip6-era' .and. trim(femExtensionMethod) /= 'ismip7-era') then
+      select case (trim(femExtensionMethod))
+      case ('ismip6-era')
+         fem_extension_method_code = 0_C_INT
+      case ('ismip7-era')
+         fem_extension_method_code = 1_C_INT
+      case default
          call mpas_log_write(trim(femExtensionMethod) // ' is not a valid land ice fem extension method option.', &
             MPAS_LOG_ERR)
          err = 1
-      end if
-      use_ismip7_fem_extension = (trim(femExtensionMethod) == 'ismip7-era')
+         fem_extension_method_code = 0_C_INT
+      end select
 #if defined(USE_EXTERNAL_L1L2) || defined(USE_EXTERNAL_FIRSTORDER) || defined(USE_EXTERNAL_STOKES)
       call velocity_solver_set_parameters(gravity, config_ice_density, config_ocean_density, config_sea_level, &
          config_default_flowParamA, &
@@ -380,7 +387,7 @@ contains
          config_thermal_thickness, &
          li_mask_ValueAlbanyActive, li_mask_ValueIce, &
          merge(1_C_INT, 0_C_INT, config_use_glp), &
-         merge(1_C_INT, 0_C_INT, use_ismip7_fem_extension) )
+         fem_extension_method_code )
 
       call interface_reset_stdout()
 #endif
