@@ -1312,6 +1312,10 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
   marineBdyExtensionMap.clear();
   marineBdyExtensionMap.reserve(nVertices);
 
+  // Counters for the per-call 'upstream' extension summary written to the Albany log
+  int nUpstreamByFlux = 0, nUpstreamFallback = 0, nUpstreamGrounded = 0, nUpstreamFloating = 0,
+      nUpstreamGroundedToFloating = 0, nUpstreamBedRaised = 0, nUpstreamBedLowered = 0;
+
   for (int iV = 0; iV < nVertices; iV++) {
     int fCell = vertexToFCell[iV];
     bool isDynamicIceVertex = cellsMask_F[fCell] & dynamic_ice_bit_value;
@@ -1356,8 +1360,12 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
           // previous velocity, delivers the most ice flux into this cell.  If none flows in
           // (e.g. no velocity is available yet), keep the lowest-elevation neighbor found above.
           int upstreamCell = selectUpstreamNeighbor(thickness_F, fCell);
-          if (upstreamCell != -1)
+          if (upstreamCell != -1) {
             neighbor_cell = upstreamCell;
+            nUpstreamByFlux++;
+          } else {
+            nUpstreamFallback++;
+          }
         }
         // check if we didn't assign anything.  This occurs if this node has no neighbors with (dynamic) ice.
         // This should not ever occur, but including the check just to be safe.
@@ -1465,8 +1473,10 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       // no thicker than the flotation thickness there, so if elev is too low for any
       // grounded column E is treated as floating instead.
       bool isGrounded = (rho_ice * thickness_F[ic] >= -rho_ocean * bedTopography_F[ic]);
-      if (isGrounded && (floatThickPerElev * elev - upstreamExtensionTol < eps))
+      if (isGrounded && (floatThickPerElev * elev - upstreamExtensionTol < eps)) {
         isGrounded = false;
+        nUpstreamGroundedToFloating++;
+      }
 
       if (isGrounded) {
         // Fill from the natural bed up to the surface, but no thicker than R and at least
@@ -1474,8 +1484,11 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
         // bed (not the MPAS bed) is raised to the base of the column so E stays grounded
         // with the prescribed surface.
         thick = std::min(std::min(elev - bed, thickR), floatThickPerElev * elev - upstreamExtensionTol);
-        if (thick < elev - bed)
+        if (thick < elev - bed) {
           bed = elev - thick;
+          nUpstreamBedRaised++;
+        }
+        nUpstreamGrounded++;
       } else {
         // Floating in hydrostatic equilibrium at the extrapolated surface.  If the natural
         // bed would ground the shelf, lower the FEM bed to upstreamExtensionTol below its base.
@@ -1485,8 +1498,11 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
           elev = (1.0 - rho_ice / rho_ocean) * eps;
         }
         double lowerSurf = elev - thick;
-        if (bed > lowerSurf - upstreamExtensionTol)
+        if (bed > lowerSurf - upstreamExtensionTol) {
           bed = lowerSurf - upstreamExtensionTol;
+          nUpstreamBedLowered++;
+        }
+        nUpstreamFloating++;
       }
       bedTopographyData[iv] = bed;
     } else if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
@@ -1525,6 +1541,18 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       elevationData[iv] = elev;
     }
   } // map vector loop
+
+  if (femExtensionMethod == FEM_EXT_UPSTREAM) {
+    // Local (this rank only) counts: a global reduction is not possible here because
+    // ranks without ice never call importFields().
+    std::cout << "'upstream' FEM extension (this rank): marine extension vertices: "
+              << marineBdyExtensionMap.size()
+              << "; reference cell by flux: " << nUpstreamByFlux
+              << ", by lowest-surface fallback: " << nUpstreamFallback
+              << "; grounded: " << nUpstreamGrounded << " (bed raised: " << nUpstreamBedRaised << ")"
+              << ", floating: " << nUpstreamFloating << " (bed lowered: " << nUpstreamBedLowered
+              << ", from grounded reference: " << nUpstreamGroundedToFloating << ")" << std::endl;
+  }
 
   if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
     // 'ismip7-era' extension only: do another pass.  For any extended marine margin
