@@ -74,7 +74,8 @@ module li_velocity_external
          ! config_use_glp is passed as 0 or 1, not as LOGICAL(C_BOOL): some
          ! compilers (e.g. Intel's ifx) give .true. the value -1, which is not
          ! a valid C++ bool.  fem_extension_method_code is an integer code for
-         ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era', 2 = 'flat-cliff'); the values
+         ! femExtensionMethod (0 = 'ismip6-era', 1 = 'ismip7-era', 2 = 'flat-cliff',
+         ! 3 = 'ismip6-era-landcap'); the values
          ! must match the FEM_EXT_* constants in Interface_velocity_solver.cpp.
          ! land_wall_velocity_code is 0 = 'free', 1 = 'zero' for config_fem_land_wall_velocity,
          ! matching the LAND_WALL_* constants there.
@@ -389,6 +390,8 @@ contains
             call mpas_log_write('config_fem_flat_cliff_slope_limit must be non-negative.', MPAS_LOG_ERR)
             err = 1
          end if
+      case ('ismip6-era-landcap')
+         fem_extension_method_code = 3_C_INT
       case default
          call mpas_log_write(trim(femExtensionMethod) // ' is not a valid land ice fem extension method option.', &
             MPAS_LOG_ERR)

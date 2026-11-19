@@ -62,6 +62,7 @@ int ice_present_bit_value;
 const int FEM_EXT_ISMIP6_ERA = 0;  // 'ismip6-era' (pre-ismip7-era scheme)
 const int FEM_EXT_ISMIP7_ERA = 1;  // 'ismip7-era'
 const int FEM_EXT_FLAT_CLIFF = 2;  // 'flat-cliff'
+const int FEM_EXT_ISMIP6_ERA_LANDCAP = 3;  // 'ismip6-era-landcap': ismip6-era marine, ismip7-era terrestrial
 int femExtensionMethod = FEM_EXT_ISMIP6_ERA;
 // 'flat-cliff' only: maximum surface slope (dimensionless) by which an extension node may lie
 // below the mean surface of its dynamic neighbors (config_fem_flat_cliff_slope_limit).
@@ -1415,13 +1416,13 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
         // -- nonmarine (terrestrial) margin -- (extend to zero thickness)
 
         // First assign standard values for terrestrial margin extension.
-        // Under 'ismip6-era' these are the final values; under 'ismip7-era' and 'flat-cliff'
-        // they may be adjusted below if necessary.
+        // Under 'ismip6-era' these are the final values; under every other method
+        // ('ismip7-era', 'flat-cliff', 'ismip6-era-landcap') they may be adjusted below.
         thicknessData[iV] = eps;
         elevationData[iV] = bedTopographyData[iV]+eps;
 
         if (femExtensionMethod != FEM_EXT_ISMIP6_ERA) {
-          // 'ismip7-era' and 'flat-cliff' extensions: we want to avoid smearing ice up a cliff if the ice-free
+          // All methods but 'ismip6-era': we want to avoid smearing ice up a cliff if the ice-free
           // neighbor has a higher elevation than the last cell with ice.  But we still need
           // the thickness to ramp to zero to avoid an erroneous ice cliff.
           // Instead, if necessary, adjust so the surface elevation cannot be higher than the
@@ -1550,8 +1551,8 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
          elev = std::max((1.0 - rho_ice / rho_ocean) * thick, bed + thick);
       }
     } else {
-      // 'ismip6-era' extension: assume elevation as given and adjust thickness to avoid
-      // unphysical situations
+      // 'ismip6-era' (and 'ismip6-era-landcap') extension: assume elevation as given and
+      // adjust thickness to avoid unphysical situations
       elev = (lowerSurface_F[ic]+thickness_F[ic]) / unit_length;
       thick = thickness_F[ic] / unit_length;
       thick = std::min(thick, elev - bed);
