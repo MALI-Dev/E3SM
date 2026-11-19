@@ -70,6 +70,11 @@ double flatCliffSlopeLimit = 0.05;
 // 'flat-cliff' only: also apply the 'ismip7-era' mixed grounded/floating ramp
 // (config_fem_flat_cliff_mixed_ramp).
 bool flatCliffMixedRamp = false;
+// 'flat-cliff' only: surface heights [km] over which a grounded extension column is blended
+// from the flat-cliff column toward a floating ramp (config_fem_flat_cliff_freeboard_ramp_start
+// and _end); the blend is off when the end height is not positive.
+double flatCliffFreeboardRampStart = 0.0;
+double flatCliffFreeboardRampEnd = 0.0;
 
 // Velocity condition at FE nodes on steep land walls (config_fem_land_wall_velocity), and the
 // bed slope above which a land extension node is a wall (config_fem_land_wall_slope).  The
@@ -191,7 +196,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          int const* use_GLP_F, int const* fem_extension_method_code_F,
                          double const* flat_cliff_slope_limit_F,
                          int const* land_wall_velocity_code_F, double const* land_wall_slope_F,
-                         int const* flat_cliff_mixed_ramp_F) {
+                         int const* flat_cliff_mixed_ramp_F,
+                         double const* flat_cliff_freeboard_ramp_start_F, double const* flat_cliff_freeboard_ramp_end_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -203,6 +209,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   landWallVelocity = *land_wall_velocity_code_F;
   landWallSlope = *land_wall_slope_F;
   flatCliffMixedRamp = (*flat_cliff_mixed_ramp_F != 0);
+  flatCliffFreeboardRampStart = *flat_cliff_freeboard_ramp_start_F / unit_length;
+  flatCliffFreeboardRampEnd = *flat_cliff_freeboard_ramp_end_F / unit_length;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -1508,8 +1516,28 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       // Thickness: the neighbors' mean thickness, limited so the column neither extends
       // below the natural bed nor exceeds flotation at this surface (sea level at 0, as
       // elsewhere here).
-      const double floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+      double floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
       thick = std::min(std::min(stats.meanThick, elev - bed), floatThick);
+
+      // Optional cliff-height limit.  A grounded column (lighter than flotation at its surface)
+      // presents a subaerial cliff of height elev at the edge of the FE mesh, and the calving-
+      // front force there grows with that height.  Grounded marine cliffs much more than about
+      // 100 m above the water are not generally stable (marine ice-cliff instability), and MALI
+      // has no parameterization for it, so between the start and end heights the column is
+      // blended linearly, in both surface and thickness, toward a floating ramp to (near) zero
+      // thickness; above the end height it is that ramp.  The blended column is then made
+      // consistent with the natural bed by the same rules as above, so it stays continuous as the
+      // cliff grows or shrinks.  Floating columns are left alone.
+      if ((flatCliffFreeboardRampEnd > 0.0) && (thick < floatThick)) {
+        double w = (elev - flatCliffFreeboardRampStart) / (flatCliffFreeboardRampEnd - flatCliffFreeboardRampStart);
+        w = std::min(1.0, std::max(0.0, w));
+        if (w > 0.0) {
+          const double hBlend = (1.0 - w) * thick + w * eps;
+          elev = (1.0 - w) * elev + w * (1.0 - rho_ice / rho_ocean) * eps;
+          floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+          thick = std::min(std::min(hBlend, elev - bed), floatThick);
+        }
+      }
 
       // If the thickness cap is what limits it, the column is lighter than flotation but its
       // base lies above the natural bed.  That is a grounded cliff, so raise the FEM bed (not

@@ -79,7 +79,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         int const* use_GLP_F, int const* fem_extension_method_code_F,
                         double const* flat_cliff_slope_limit_F,
                         int const* land_wall_velocity_code_F, double const* land_wall_slope_F,
-                        int const* flat_cliff_mixed_ramp_F);
+                        int const* flat_cliff_mixed_ramp_F,
+                        double const* flat_cliff_freeboard_ramp_start_F, double const* flat_cliff_freeboard_ramp_end_F);
 
 void velocity_solver_init_l1l2(double const* levelsRatio);
 
