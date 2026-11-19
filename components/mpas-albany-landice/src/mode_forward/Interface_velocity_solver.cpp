@@ -1222,10 +1222,11 @@ struct DynamicNeighborStats {
   double meanElev = 0.0;   // mean surface elevation
   double meanThick = 0.0;  // mean thickness
   double meanDist = 0.0;   // mean distance between cell centers, km
+  double maxMarineCliffElev = -1e10;  // highest surface of a grounded neighbor whose bed is below sea level
 };
 
 static DynamicNeighborStats dynamicNeighborStats(int fCell,
-    double const* lowerSurface_F, double const* thickness_F) {
+    double const* lowerSurface_F, double const* thickness_F, double const* bedTopography_F) {
   DynamicNeighborStats stats;
   int nEdg = nEdgesOnCells_F[fCell];
   for (int j = 0; j < nEdg; j++) {
@@ -1248,6 +1249,9 @@ static DynamicNeighborStats dynamicNeighborStats(int fCell,
     stats.meanElev += elev;
     stats.meanThick += thickness_F[c] / unit_length;
     stats.meanDist += std::sqrt(dx * dx + dy * dy + dz * dz) / unit_length;
+    // A marine cliff: grounded (by flotation) on a bed below sea level (0, as elsewhere here)
+    if ((bedTopography_F[c] < 0.0) && (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]))
+      stats.maxMarineCliffElev = std::max(stats.maxMarineCliffElev, elev);
   }
   if (stats.count > 0) {
     stats.meanElev /= stats.count;
@@ -1501,7 +1505,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       // ramp puts a large driving stress where there is little basal resistance).  Every
       // quantity is a continuous function of the dynamic neighbors, so E's geometry
       // does not jump when the ordering of the neighbors changes.
-      DynamicNeighborStats stats = dynamicNeighborStats(vertexToFCell[iv], lowerSurface_F, thickness_F);
+      DynamicNeighborStats stats = dynamicNeighborStats(vertexToFCell[iv], lowerSurface_F, thickness_F, bedTopography_F);
       if (stats.count == 0)  // cannot happen (ic is a dynamic neighbor), but don't use empty stats
         stats = {1, (lowerSurface_F[ic] + thickness_F[ic]) / unit_length,
                  (lowerSurface_F[ic] + thickness_F[ic]) / unit_length, thickness_F[ic] / unit_length, 0.0};
@@ -1525,11 +1529,15 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       // 100 m above the water are not generally stable (marine ice-cliff instability), and MALI
       // has no parameterization for it, so between the start and end heights the column is
       // blended linearly, in both surface and thickness, toward a floating ramp to (near) zero
-      // thickness; above the end height it is that ramp.  The blended column is then made
+      // thickness; above the end height it is that ramp.  The height that sets the blend is the
+      // tallest *marine* cliff next to E: a grounded neighbor whose bed is below sea level.  Thin
+      // ice perched on a fjord wall (bed above sea level) can have a surface hundreds of meters
+      // up, but it is not a marine cliff, and ramping E next to it puts a steep drop onto a
+      // floating node (in a Helheim test this more than doubled the fast extension nodes there).  The blended column is then made
       // consistent with the natural bed by the same rules as above, so it stays continuous as the
       // cliff grows or shrinks.  Floating columns are left alone.
       if ((flatCliffFreeboardRampEnd > 0.0) && (thick < floatThick)) {
-        double w = (elev - flatCliffFreeboardRampStart) / (flatCliffFreeboardRampEnd - flatCliffFreeboardRampStart);
+        double w = (stats.maxMarineCliffElev - flatCliffFreeboardRampStart) / (flatCliffFreeboardRampEnd - flatCliffFreeboardRampStart);
         w = std::min(1.0, std::max(0.0, w));
         if (w > 0.0) {
           const double hBlend = (1.0 - w) * thick + w * eps;

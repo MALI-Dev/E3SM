@@ -81,7 +81,7 @@
 		            possible_values=".true. or .false."
 		/>
 		<nml_option name="config_fem_flat_cliff_freeboard_ramp_start" type="real" default_value="0.0" units="m"
-		            description="Only used when config_fem_extension_method is 'flat-cliff' and config_fem_flat_cliff_freeboard_ramp_end is positive.  A grounded marine extension column whose surface is higher above sea level than this is blended toward a floating ramp to near-zero thickness, reaching the ramp at config_fem_flat_cliff_freeboard_ramp_end.  Grounded marine cliffs more than about 100 m high are not generally stable (marine ice-cliff instability), so the extension should not present one at the edge of the FE mesh.  Must be at least 0 and less than config_fem_flat_cliff_freeboard_ramp_end."
+		            description="Only used when config_fem_extension_method is 'flat-cliff' and config_fem_flat_cliff_freeboard_ramp_end is positive.  A grounded marine extension column is blended toward a floating ramp to near-zero thickness when the tallest marine cliff next to it (a grounded dynamic neighbor on a bed below sea level) has its surface higher above sea level than this, reaching the ramp when that cliff reaches config_fem_flat_cliff_freeboard_ramp_end.  Ice on beds above sea level (e.g. thin ice perched on fjord walls) does not count as a marine cliff.  Grounded marine cliffs more than about 100 m high are not generally stable (marine ice-cliff instability), so the extension should not present one at the edge of the FE mesh.  Must be at least 0 and less than config_fem_flat_cliff_freeboard_ramp_end."
 		            possible_values="Any non-negative real value"
 		/>
 		<nml_option name="config_fem_flat_cliff_freeboard_ramp_end" type="real" default_value="0.0" units="m"
