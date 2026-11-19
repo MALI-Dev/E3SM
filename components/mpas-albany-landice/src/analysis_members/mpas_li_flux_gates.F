@@ -114,12 +114,12 @@ contains
       real (kind=RKIND), dimension(:), pointer ::  dvEdge
       real (kind=RKIND), dimension(:,:), pointer :: layerThicknessEdge, &
                                                     layerNormalVelocity
-      integer, dimension(:,:), pointer :: fluxGateEdgeMasks, fluxGateEdgeMasksSigns
+      integer, dimension(:), pointer :: fluxGateEdgeID, fluxGateEdgeSign
       real (kind=RKIND), dimension(:), pointer :: iceFluxThroughGates
       integer, pointer :: nEdgesSolve
       real (kind=RKIND), pointer ::  rhoi
       real (kind=RKIND), dimension(nFluxGates) :: localIceFluxThroughGates
-      integer :: iGate
+      integer :: iGate, iEdge
 
       err = 0
 
@@ -137,19 +137,25 @@ contains
       call mpas_pool_get_array(geometryPool, 'layerThicknessEdge', layerThicknessEdge)
       call mpas_pool_get_array(fluxGatesAMPool, 'iceFluxThroughGates', iceFluxThroughGates)
       call mpas_pool_get_array(velocityPool, 'layerNormalVelocity', layerNormalVelocity)
-      call mpas_pool_get_array(fluxGatesPool, 'fluxGateEdgeMasks', fluxGateEdgeMasks)
-      call mpas_pool_get_array(fluxGatesPool, 'fluxGateEdgeMasksSigns', fluxGateEdgeMasksSigns)
+      call mpas_pool_get_array(fluxGatesPool, 'fluxGateEdgeID', fluxGateEdgeID)
+      call mpas_pool_get_array(fluxGatesPool, 'fluxGateEdgeSign', fluxGateEdgeSign)
 
       localIceFluxThroughGates(:) = 0.0_RKIND
       iceFluxThroughGates(:) = 0.0_RKIND
 
-      do iGate = 1, nFluxGates
-         localIceFluxThroughGates(iGate) = abs(sum( sum(layerNormalVelocity(:,1:nEdgesSolve) * layerThicknessEdge(:,1:nEdgesSolve), 1) * &
-                                                    dvEdge(1:nEdgesSolve) * rhoi * scyr * fluxGateEdgeMasks(iGate, 1:nEdgesSolve) * &
-                                                    fluxGateEdgeMasksSigns(iGate, 1:nEdgesSolve) ))
+      do iEdge = 1, nEdgesSolve
+         iGate = fluxGateEdgeID(iEdge)
+         if (iGate >= 1 .and. iGate <= nFluxGates) then
+            localIceFluxThroughGates(iGate) = localIceFluxThroughGates(iGate) + &
+               sum(layerNormalVelocity(:,iEdge) * layerThicknessEdge(:,iEdge)) * &
+                   dvEdge(iEdge) * rhoi * scyr * real(fluxGateEdgeSign(iEdge), RKIND)
+         endif
       enddo
 
       call mpas_dmpar_sum_real_array(dminfo, nFluxGates, localIceFluxThroughGates, iceFluxThroughGates)
+
+      ! Gate orientation is arbitrary, so report the magnitude of the net flux
+      iceFluxThroughGates(:) = abs(iceFluxThroughGates(:))
 
    end subroutine li_compute_flux_across_gates
 
