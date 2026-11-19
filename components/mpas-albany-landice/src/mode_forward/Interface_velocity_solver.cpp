@@ -67,6 +67,9 @@ int femExtensionMethod = FEM_EXT_ISMIP6_ERA;
 // 'flat-cliff' only: maximum surface slope (dimensionless) by which an extension node may lie
 // below the mean surface of its dynamic neighbors (config_fem_flat_cliff_slope_limit).
 double flatCliffSlopeLimit = 0.05;
+// 'flat-cliff' only: also apply the 'ismip7-era' mixed grounded/floating ramp
+// (config_fem_flat_cliff_mixed_ramp).
+bool flatCliffMixedRamp = false;
 
 // Velocity condition at FE nodes on steep land walls (config_fem_land_wall_velocity), and the
 // bed slope above which a land extension node is a wall (config_fem_land_wall_slope).  The
@@ -187,7 +190,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
                          int const* use_GLP_F, int const* fem_extension_method_code_F,
                          double const* flat_cliff_slope_limit_F,
-                         int const* land_wall_velocity_code_F, double const* land_wall_slope_F) {
+                         int const* land_wall_velocity_code_F, double const* land_wall_slope_F,
+                         int const* flat_cliff_mixed_ramp_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -198,6 +202,7 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   flatCliffSlopeLimit = *flat_cliff_slope_limit_F;
   landWallVelocity = *land_wall_velocity_code_F;
   landWallSlope = *land_wall_slope_F;
+  flatCliffMixedRamp = (*flat_cliff_mixed_ramp_F != 0);
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -1568,8 +1573,15 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     }
   } // map vector loop
 
-  if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
-    // 'ismip7-era' extension only: do another pass.  For any extended marine margin
+  // Under 'flat-cliff' this pass is optional (config_fem_flat_cliff_mixed_ramp).  In GIS tests
+  // the recurring 'flat-cliff' failure is a marine extension node whose only dynamic neighbor is
+  // a tall grounded cliff, while it also touches floating non-dynamic ice (partly filled or
+  // remnant front cells).  'flat-cliff' copies the cliff there, but this pass ramps the node to
+  // zero, and those nodes were about 2-3 times slower under 'ismip7-era'.
+  const bool applyMixedRamp = (femExtensionMethod == FEM_EXT_ISMIP7_ERA) ||
+                              ((femExtensionMethod == FEM_EXT_FLAT_CLIFF) && flatCliffMixedRamp);
+  if (applyMixedRamp) {
+    // Do another pass.  For any extended marine margin
     // locations that are connected to any grounded neighbors but have at least one
     // floating neighbor, create a ramp down to zero thickness instead of whatever they
     // are currently doing.
@@ -1612,11 +1624,15 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     } // map vector loop ("do another pass")
     // Now loop through locations identified and apply the zero ramp
     for (const int iv : marineRevisionList) {
+        // 'flat-cliff' may have raised the FEM bed of a grounded-cliff node; a ramp sits on
+        // the natural bed (for 'ismip7-era' the bed was never changed).
+        if (femExtensionMethod == FEM_EXT_FLAT_CLIFF)
+          bedTopographyData[iv] = bedTopography_F[vertexToFCell[iv]] / unit_length;
         // modify existing thk,elev to create ramp to 0
         thicknessData[iv] = eps;
         elevationData[iv] = std::max(bedTopographyData[iv] + eps, (1.0 - rho_ice/rho_ocean)*eps);
     }
-  } // femExtensionMethod == FEM_EXT_ISMIP7_ERA
+  } // applyMixedRamp
 }
 
 

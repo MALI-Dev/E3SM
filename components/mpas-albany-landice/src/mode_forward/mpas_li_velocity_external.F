@@ -66,7 +66,8 @@ module li_velocity_external
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
          li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, fem_extension_method_code, &
-         config_fem_flat_cliff_slope_limit, land_wall_velocity_code, config_fem_land_wall_slope) &
+         config_fem_flat_cliff_slope_limit, land_wall_velocity_code, config_fem_land_wall_slope, &
+         flat_cliff_mixed_ramp) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
@@ -79,8 +80,10 @@ module li_velocity_external
          ! must match the FEM_EXT_* constants in Interface_velocity_solver.cpp.
          ! land_wall_velocity_code is 0 = 'free', 1 = 'zero' for config_fem_land_wall_velocity,
          ! matching the LAND_WALL_* constants there.
+         ! flat_cliff_mixed_ramp is config_fem_flat_cliff_mixed_ramp passed as 0 or 1.
          INTEGER(C_INT) :: li_mask_ValueDynamicIce, li_mask_ValueIce, &
-                           config_use_glp, fem_extension_method_code, land_wall_velocity_code
+                           config_use_glp, fem_extension_method_code, land_wall_velocity_code, &
+                           flat_cliff_mixed_ramp
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
@@ -276,7 +279,7 @@ contains
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density,  config_sea_level, config_default_flowParamA, &
                                     config_thermal_thickness, config_flowLawExponent, config_dynamic_thickness, &
                                     config_fem_flat_cliff_slope_limit, config_fem_land_wall_slope
-      logical, pointer :: config_use_glp
+      logical, pointer :: config_use_glp, config_fem_flat_cliff_mixed_ramp
       character (len=StrKIND), pointer :: femExtensionMethod
       integer(C_INT) :: fem_extension_method_code
       character (len=StrKIND), pointer :: config_fem_land_wall_velocity
@@ -376,6 +379,7 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_fem_flat_cliff_slope_limit', config_fem_flat_cliff_slope_limit)
       call mpas_pool_get_config(liConfigs, 'config_fem_land_wall_velocity', config_fem_land_wall_velocity)
       call mpas_pool_get_config(liConfigs, 'config_fem_land_wall_slope', config_fem_land_wall_slope)
+      call mpas_pool_get_config(liConfigs, 'config_fem_flat_cliff_mixed_ramp', config_fem_flat_cliff_mixed_ramp)
       ! femExtensionMethod is resolved (never 'auto') by li_core_init before this routine
       ! runs, and stored per-block in meshPool rather than read from configs directly.
       call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
@@ -423,7 +427,8 @@ contains
          merge(1_C_INT, 0_C_INT, config_use_glp), &
          fem_extension_method_code, &
          config_fem_flat_cliff_slope_limit, &
-         land_wall_velocity_code, config_fem_land_wall_slope )
+         land_wall_velocity_code, config_fem_land_wall_slope, &
+         merge(1_C_INT, 0_C_INT, config_fem_flat_cliff_mixed_ramp) )
 
       call interface_reset_stdout()
 #endif
