@@ -135,6 +135,10 @@
 		            description="An optional maximum limit on effective pressure passed to the velocity solver."
 		            possible_values="Any positive, real number."
 		/>
+		<nml_option name="config_strain_rate_stencil" type="character" default_value="all-cells" units="unitless"
+		            description="Cells used to compute the strain rates (exx, eyy, exy, eMax, eMin) and the stresses derived from them, which are used by calving laws (e.g. crevasse_depth, von_Mises_stress, eigencalving) and by damage.  'all-cells' computes the velocity gradient at each cell from the velocities of all its neighbors, using the standard MPAS reconstruction.  Near the ice margin these neighbors include cells whose velocity was not solved for: with config_fem_extension_method='none' or 'terrestrial-only' they get no velocity or an extrapolated one (config_fem_velocity_extrapolation_target), and with the marine FEM extension they are extension nodes whose geometry is made up.  'solved-cells' computes the gradient at each dynamic cell by a least-squares fit to the velocities of its neighbors that are 'solved' cells: dynamic cells that, with an FEM velocity solver, are nodes of the FE mesh (at least one of their vertices is Albany active).  At the margin this is a one-sided gradient from the solved ice; where only one solved neighbor exists, only the gradient along that direction is used.  Strain rates are zero at non-dynamic cells.  'solved-cells' is only supported on planar meshes."
+		            possible_values="'all-cells', 'solved-cells'"
+		/>
 	</nml_record>
 
 
