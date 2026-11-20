@@ -75,6 +75,11 @@ bool flatCliffMixedRamp = false;
 // and _end); the blend is off when the end height is not positive.
 double flatCliffFreeboardRampStart = 0.0;
 double flatCliffFreeboardRampEnd = 0.0;
+// 'flat-cliff' only: maximum along-flow surface slopes (dimensionless) by which the surface may
+// continue to drop from the reference neighbor to the extension node, for floating and grounded
+// ice (config_fem_flat_cliff_surface_slope_max_floating and _grounded); 0 turns each off.
+double flatCliffSurfaceSlopeMaxFloating = 0.0;
+double flatCliffSurfaceSlopeMaxGrounded = 0.0;
 
 // Velocity condition at FE nodes on steep land walls (config_fem_land_wall_velocity), and the
 // bed slope above which a land extension node is a wall (config_fem_land_wall_slope).  The
@@ -211,7 +216,9 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* flat_cliff_slope_limit_F,
                          int const* land_wall_velocity_code_F, double const* land_wall_slope_F,
                          int const* flat_cliff_mixed_ramp_F,
-                         double const* flat_cliff_freeboard_ramp_start_F, double const* flat_cliff_freeboard_ramp_end_F) {
+                         double const* flat_cliff_freeboard_ramp_start_F, double const* flat_cliff_freeboard_ramp_end_F,
+                         double const* flat_cliff_surface_slope_max_floating_F,
+                         double const* flat_cliff_surface_slope_max_grounded_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -225,6 +232,8 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   flatCliffMixedRamp = (*flat_cliff_mixed_ramp_F != 0);
   flatCliffFreeboardRampStart = *flat_cliff_freeboard_ramp_start_F / unit_length;
   flatCliffFreeboardRampEnd = *flat_cliff_freeboard_ramp_end_F / unit_length;
+  flatCliffSurfaceSlopeMaxFloating = *flat_cliff_surface_slope_max_floating_F;
+  flatCliffSurfaceSlopeMaxGrounded = *flat_cliff_surface_slope_max_grounded_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -1307,6 +1316,76 @@ static double groundedNeighborMean(int fCell, double const* field_F,
   return (nAll > 0) ? sumAll / nAll : field_F[fCell];
 }
 
+// Distance [m] between the centers of MPAS cells c0 and c1.
+static double cellDistance(int c0, int c1) {
+  const double dx = xCell_F[c1] - xCell_F[c0];
+  const double dy = yCell_F[c1] - yCell_F[c0];
+  const double dz = zCell_F[c1] - zCell_F[c0];
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// Edge-neighbor of MPAS cell fCell across its j-th edge, or -1 if there is none.
+static int cellNeighbor(int fCell, int j) {
+  const int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+  if ((fEdge < 0) || (fEdge >= nEdges_F))
+    return -1;
+  const int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+  const int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+  if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+    return -1;
+  return (c0 == fCell) ? c1 : c0;
+}
+
+// Surface slope (dimensionless, positive downhill toward the extension cell fCellE) of the ice
+// upstream of its reference neighbor fCellR, for 'flat-cliff'.  The upstream cells are fCellR's
+// dynamic neighbors that lie roughly opposite fCellE (the direction from the neighbor to fCellR
+// within 60 degrees of the direction from fCellR to fCellE), of the same kind as fCellR: if
+// floating, floating cells not on the dynamic margin (none of their own neighbors is
+// non-dynamic), whose slope is that of the shelf rather than of its front; if grounded, grounded
+// cells.  Returns the smallest slope among them (so one steep neighbor cannot steepen E), or 0
+// if there are none.
+static double upstreamSurfaceSlope(int fCellR, int fCellE, bool floating,
+    double const* lowerSurface_F, double const* thickness_F, double const* bedTopography_F) {
+  const double dRE = cellDistance(fCellR, fCellE);
+  if (dRE <= 0.0)
+    return 0.0;
+  const double eX = (xCell_F[fCellE] - xCell_F[fCellR]) / dRE;
+  const double eY = (yCell_F[fCellE] - yCell_F[fCellR]) / dRE;
+  const double eZ = (zCell_F[fCellE] - zCell_F[fCellR]) / dRE;
+  const double sR = lowerSurface_F[fCellR] + thickness_F[fCellR];
+  double minSlope = 1e10;
+  for (int j = 0; j < nEdgesOnCells_F[fCellR]; j++) {
+    const int u = cellNeighbor(fCellR, j);
+    if ((u < 0) || (u == fCellE) || !(cellsMask_F[u] & dynamic_ice_bit_value))
+      continue;
+    const bool uFloating = rho_ice * thickness_F[u] < -rho_ocean * bedTopography_F[u];
+    if (uFloating != floating)
+      continue;
+    if (floating) {
+      bool onMargin = false;
+      for (int k = 0; k < nEdgesOnCells_F[u]; k++) {
+        const int n = cellNeighbor(u, k);
+        if ((n >= 0) && !(cellsMask_F[n] & dynamic_ice_bit_value)) {
+          onMargin = true;
+          break;
+        }
+      }
+      if (onMargin)
+        continue;
+    }
+    const double dUR = cellDistance(u, fCellR);
+    if (dUR <= 0.0)
+      continue;
+    const double align = ((xCell_F[fCellR] - xCell_F[u]) * eX + (yCell_F[fCellR] - yCell_F[u]) * eY +
+                          (zCell_F[fCellR] - zCell_F[u]) * eZ) / dUR;
+    if (align < 0.5)
+      continue;
+    const double sU = lowerSurface_F[u] + thickness_F[u];
+    minSlope = std::min(minSlope, (sU - sR) / dUR);
+  }
+  return (minSlope < 1e9) ? std::max(0.0, minSlope) : 0.0;
+}
+
 
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
@@ -1536,6 +1615,37 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
       // elsewhere here).
       double floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
       thick = std::min(std::min(stats.meanThick, elev - bed), floatThick);
+
+      // Optional along-flow surface slope.  A flat continuation leaves no driving stress at E,
+      // while the real ice keeps thinning toward its front.  Where E continues ice of the same
+      // kind as its reference neighbor R (the lowest-surface dynamic neighbor, which sets
+      // stats.minElev), let the surface keep falling from R to E at the upstream slope of that
+      // ice, capped by a typical slope for the kind: an ice shelf (floating R, floating column
+      // at E) or a tidewater glacier (grounded R, grounded column at E).  A floating column
+      // stays at flotation at its lowered surface; a grounded one keeps its base, losing the
+      // same thickness as surface.  Mixed cases (e.g. a grounded R and a floating column at E)
+      // get no slope; the freeboard blend below handles tall cliffs.
+      if ((flatCliffSurfaceSlopeMaxFloating > 0.0) || (flatCliffSurfaceSlopeMaxGrounded > 0.0)) {
+        const bool refFloating = rho_ice * thickness_F[ic] < -rho_ocean * bedTopography_F[ic];
+        const bool columnFloating = (thick >= floatThick);
+        double slopeMax = 0.0;
+        if (refFloating && columnFloating)
+          slopeMax = flatCliffSurfaceSlopeMaxFloating;
+        else if (!refFloating && !columnFloating)
+          slopeMax = flatCliffSurfaceSlopeMaxGrounded;
+        if (slopeMax > 0.0) {
+          const int fCellE = vertexToFCell[iv];
+          const double slope = std::min(slopeMax,
+              upstreamSurfaceSlope(ic, fCellE, refFloating, lowerSurface_F, thickness_F, bedTopography_F));
+          if (slope > 0.0) {
+            const double drop = slope * cellDistance(ic, fCellE) / unit_length;
+            const double hLowered = refFloating ? stats.meanThick : thick - drop;
+            elev -= drop;
+            floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+            thick = std::min(std::min(hLowered, elev - bed), floatThick);
+          }
+        }
+      }
 
       // Optional cliff-height limit.  A grounded column (lighter than flotation at its surface)
       // presents a subaerial cliff of height elev at the edge of the FE mesh, and the calving-

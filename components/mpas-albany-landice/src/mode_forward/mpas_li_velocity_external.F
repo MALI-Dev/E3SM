@@ -67,7 +67,8 @@ module li_velocity_external
          config_thermal_thickness, &
          li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, fem_extension_method_code, &
          config_fem_flat_cliff_slope_limit, land_wall_velocity_code, config_fem_land_wall_slope, &
-         flat_cliff_mixed_ramp, config_fem_flat_cliff_freeboard_ramp_start, config_fem_flat_cliff_freeboard_ramp_end) &
+         flat_cliff_mixed_ramp, config_fem_flat_cliff_freeboard_ramp_start, config_fem_flat_cliff_freeboard_ramp_end, &
+         config_fem_flat_cliff_surface_slope_max_floating, config_fem_flat_cliff_surface_slope_max_grounded) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
@@ -89,7 +90,9 @@ module li_velocity_external
                            iceMeltingPointPressureDependence, &
                            config_thermal_thickness, config_fem_flat_cliff_slope_limit, &
                            config_fem_land_wall_slope, config_fem_flat_cliff_freeboard_ramp_start, &
-                           config_fem_flat_cliff_freeboard_ramp_end
+                           config_fem_flat_cliff_freeboard_ramp_end, &
+                           config_fem_flat_cliff_surface_slope_max_floating, &
+                           config_fem_flat_cliff_surface_slope_max_grounded
       end subroutine velocity_solver_set_parameters
 
    end interface
@@ -280,7 +283,9 @@ contains
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density,  config_sea_level, config_default_flowParamA, &
                                     config_thermal_thickness, config_flowLawExponent, config_dynamic_thickness, &
                                     config_fem_flat_cliff_slope_limit, config_fem_land_wall_slope, &
-                                    config_fem_flat_cliff_freeboard_ramp_start, config_fem_flat_cliff_freeboard_ramp_end
+                                    config_fem_flat_cliff_freeboard_ramp_start, config_fem_flat_cliff_freeboard_ramp_end, &
+                                    config_fem_flat_cliff_surface_slope_max_floating, &
+                                    config_fem_flat_cliff_surface_slope_max_grounded
       logical, pointer :: config_use_glp, config_fem_flat_cliff_mixed_ramp
       character (len=StrKIND), pointer :: femExtensionMethod
       integer(C_INT) :: fem_extension_method_code
@@ -386,6 +391,10 @@ contains
          config_fem_flat_cliff_freeboard_ramp_start)
       call mpas_pool_get_config(liConfigs, 'config_fem_flat_cliff_freeboard_ramp_end', &
          config_fem_flat_cliff_freeboard_ramp_end)
+      call mpas_pool_get_config(liConfigs, 'config_fem_flat_cliff_surface_slope_max_floating', &
+         config_fem_flat_cliff_surface_slope_max_floating)
+      call mpas_pool_get_config(liConfigs, 'config_fem_flat_cliff_surface_slope_max_grounded', &
+         config_fem_flat_cliff_surface_slope_max_grounded)
       ! femExtensionMethod is resolved (never 'auto') by li_core_init before this routine
       ! runs, and stored per-block in meshPool rather than read from configs directly.
       call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
@@ -405,6 +414,12 @@ contains
               (config_fem_flat_cliff_freeboard_ramp_start >= config_fem_flat_cliff_freeboard_ramp_end))) then
             call mpas_log_write('config_fem_flat_cliff_freeboard_ramp_start must be >= 0 and less than ' // &
                'config_fem_flat_cliff_freeboard_ramp_end.', MPAS_LOG_ERR)
+            err = 1
+         end if
+         if ((config_fem_flat_cliff_surface_slope_max_floating < 0.0_RKIND) .or. &
+             (config_fem_flat_cliff_surface_slope_max_grounded < 0.0_RKIND)) then
+            call mpas_log_write('config_fem_flat_cliff_surface_slope_max_floating and _grounded must be non-negative.', &
+               MPAS_LOG_ERR)
             err = 1
          end if
       case ('ismip6-era-landcap')
@@ -442,7 +457,8 @@ contains
          config_fem_flat_cliff_slope_limit, &
          land_wall_velocity_code, config_fem_land_wall_slope, &
          merge(1_C_INT, 0_C_INT, config_fem_flat_cliff_mixed_ramp), &
-         config_fem_flat_cliff_freeboard_ramp_start, config_fem_flat_cliff_freeboard_ramp_end )
+         config_fem_flat_cliff_freeboard_ramp_start, config_fem_flat_cliff_freeboard_ramp_end, &
+         config_fem_flat_cliff_surface_slope_max_floating, config_fem_flat_cliff_surface_slope_max_grounded )
 
       call interface_reset_stdout()
 #endif
