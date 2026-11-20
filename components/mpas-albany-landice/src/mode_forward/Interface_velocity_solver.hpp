@@ -82,7 +82,9 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         int const* velocity_extrapolation_method_F,
                         int const* use_velocity_extrapolation_limiter_F,
                         int const* terrestrial_node_velocity_F,
-                        int const* velocity_extrapolation_target_F);
+                        int const* velocity_extrapolation_target_F,
+                        int const* marine_cliff_extension_F,
+                        double const* marine_cliff_height_start_F, double const* marine_cliff_height_end_F);
 
 void velocity_solver_init_l1l2(double const* levelsRatio);
 
@@ -103,7 +105,8 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
     int *error = 0 );
 
 
-void velocity_solver_compute_2d_grid(int const* verticesMask_F, int const* _cellsMask_F, int const* dirichletNodesMask_F);
+void velocity_solver_compute_2d_grid(int const* verticesMask_F, int const* _cellsMask_F, int const* dirichletNodesMask_F,
+    double const* bedTopography_F);
 
 void velocity_solver_set_grid_data(int const* _nCells_F, int const* _nEdges_F,
     int const* _nVertices_F, int const* _nLayers, int const* _nCellsSolve_F,

@@ -368,6 +368,9 @@ contains
       logical, dimension(:), allocatable :: wasDynamic
       logical :: keepDynamic
       logical :: isMarineFrontCandidate
+      logical, pointer :: config_fem_marine_cliff_extension
+      real (kind=RKIND), pointer :: config_fem_marine_cliff_height_start
+      logical, dimension(:), allocatable :: isCliffExtensionCell
 
       call mpas_timer_start('calculate mask')
 
@@ -666,6 +669,33 @@ contains
          ! Otherwise, a vertex is Albany active if any of its cells are, and the interface extends
          ! fields to the non-dynamic nodes of those triangles.
          call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
+
+         ! With 'terrestrial-only' and config_fem_marine_cliff_extension, a non-active marine cell next to a tall
+         ! grounded marine cliff (an active neighbor grounded by flotation on a bed below 0, with its surface above
+         ! config_fem_marine_cliff_height_start) is not treated as marine below, so the FE mesh extends onto it.
+         ! (This test must match the cliff test in importFields in Interface_velocity_solver.cpp.)
+         call mpas_pool_get_config(liConfigs, 'config_fem_marine_cliff_extension', config_fem_marine_cliff_extension)
+         call mpas_pool_get_config(liConfigs, 'config_fem_marine_cliff_height_start', config_fem_marine_cliff_height_start)
+         allocate(isCliffExtensionCell(nCells+1))
+         isCliffExtensionCell(:) = .false.
+         if (config_fem_marine_cliff_extension .and. (trim(femExtensionMethod) == 'terrestrial-only')) then
+            do i = 1, nCells
+               if (li_mask_is_albany_active(cellMask(i)) .or. (bedTopography(i) >= 0.0_RKIND)) cycle
+               do j = 1, nEdgesOnCell(i)
+                  iCellNeighbor = cellsOnCell(j, i)
+                  if (iCellNeighbor > nCells) cycle
+                  if ( li_mask_is_albany_active(cellMask(iCellNeighbor)) .and. &
+                       (bedTopography(iCellNeighbor) < 0.0_RKIND) .and. &
+                       (config_ice_density * thickness(iCellNeighbor) >= &
+                        -config_ocean_density * bedTopography(iCellNeighbor)) .and. &
+                       (bedTopography(iCellNeighbor) + thickness(iCellNeighbor) > config_fem_marine_cliff_height_start) ) then
+                     isCliffExtensionCell(i) = .true.
+                     exit
+                  endif
+               enddo
+            enddo
+         endif
+
          do i = 1,nVertices
             aCellOnVertexIsAlbanyActive = .false.
             allCellsOnVertexAreAlbanyActive = .true.
@@ -680,7 +710,7 @@ contains
                if (iCell < nCells+1) then
                   numCellsOnVertex = numCellsOnVertex + 1
                   if ( (.not. li_mask_is_albany_active(cellMask(iCell))) .and. &
-                       (bedTopography(iCell) < 0.0_RKIND) ) then
+                       (bedTopography(iCell) < 0.0_RKIND) .and. (.not. isCliffExtensionCell(iCell)) ) then
                      aCellOnVertexIsInactiveMarine = .true.
                   endif
                endif
@@ -718,6 +748,7 @@ contains
                endif
             endif
          end do  ! vertices loop
+         deallocate(isCliffExtensionCell)
       endif  ! HO velocity solver
 
       !call mpas_timer_stop('calculate mask vertex')

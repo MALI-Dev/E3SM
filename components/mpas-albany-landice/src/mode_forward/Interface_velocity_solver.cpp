@@ -96,6 +96,13 @@ int terrestrialNodeVelocity = terrestrialNodeFree;
 // isPinnedTerrestrialCell[iCell]: MPAS cell iCell is an FE node given a zero-velocity Dirichlet condition
 // following terrestrialNodeVelocity.  Set when the FE mesh is built.
 std::vector<bool> isPinnedTerrestrialCell;
+// Extension at tall grounded marine cliffs, only used with 'terrestrial-only' (config_fem_marine_cliff_extension).
+// A non-dynamic marine cell next to a grounded marine dynamic cell whose surface is higher than
+// marineCliffHeightStart is an FE node (see li_calculate_mask), and importFields() gives it a column blended from
+// a flat continuation of the ice toward a floating ramp as that cliff grows to marineCliffHeightEnd.  Heights in km.
+bool useMarineCliffExtension = false;
+double marineCliffHeightStart = 0.05;
+double marineCliffHeightEnd = 0.1;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -164,7 +171,9 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          int const* velocity_extrapolation_method_F,
                          int const* use_velocity_extrapolation_limiter_F,
                          int const* terrestrial_node_velocity_F,
-                         int const* velocity_extrapolation_target_F) {
+                         int const* velocity_extrapolation_target_F,
+                         int const* marine_cliff_extension_F,
+                         double const* marine_cliff_height_start_F, double const* marine_cliff_height_end_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
@@ -179,6 +188,9 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
   useVelocityExtrapolationLimiter = (*use_velocity_extrapolation_limiter_F != 0);
   terrestrialNodeVelocity = *terrestrial_node_velocity_F;
   velocityExtrapolationTarget = *velocity_extrapolation_target_F;
+  useMarineCliffExtension = (*marine_cliff_extension_F != 0);
+  marineCliffHeightStart = *marine_cliff_height_start_F / unit_length;
+  marineCliffHeightEnd = *marine_cliff_height_end_F / unit_length;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -444,7 +456,7 @@ std::vector<int> prunedVerticesMask;
 // joined to grounded ice only through one node (a "hinge") can still rotate about that node and is not constrained.
 // Removed triangles lose the dynamic bit in prunedVerticesMask, and verticesMask_F is pointed at that copy.
 // Cells that lose all their triangles get their velocity from the extrapolation done for non-FE dynamic cells.
-void pruneUnanchoredTriangles() {
+void pruneUnanchoredTriangles(double const* bedTopography_F) {
   int me;
   MPI_Comm_rank(comm, &me);
   std::vector<int> reached(nVertices_F, 0);
@@ -465,8 +477,10 @@ void pruneUnanchoredTriangles() {
       bool isFloating = cellsMask_F[iCell] & floating_ice_bit_value;
       if (isIce && !isFloating)
         numGrounded++;
+      // A zero-velocity terrestrial node anchors the triangle; an ice-free marine node (a tall-cliff extension
+      // node, see config_fem_marine_cliff_extension) does not.
       if ((dirichletCellsMask_F[(nLayers+1)*iCell] != 0) ||
-          (!isIce && (terrestrialNodeVelocity == terrestrialNodeZero))) {
+          (!isIce && (terrestrialNodeVelocity == terrestrialNodeZero) && (bedTopography_F[iCell] >= 0.0))) {
         anchored = true;
         break;
       }
@@ -518,13 +532,14 @@ void pruneUnanchoredTriangles() {
   verticesMask_F = prunedVerticesMask.data();
 }
 
-void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F) {
+void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F,
+    double const* bedTopography_F) {
   int numProcs, me;
   verticesMask_F = _verticesMask_F;
   cellsMask_F = _cellsMask_F;
   dirichletCellsMask_F = _dirichletCellsMask_F;
   if (!useMarineExtension)
-    pruneUnanchoredTriangles();
+    pruneUnanchoredTriangles(bedTopography_F);
 
   MPI_Comm_size(comm, &numProcs);
   MPI_Comm_rank(comm, &me);
@@ -879,8 +894,10 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
     // valid triangle that has a dynamic node but is excluded from the FE mesh, which under 'terrestrial-only'
     // means the triangle also has an ice-free marine node, so the mesh boundary passes between this node and a
     // dynamic node.  All data used here is valid in the halo cells needed, so no communication is required.
+    // With config_fem_marine_cliff_extension, non-dynamic marine (bed < 0) FE nodes are tall-cliff extension
+    // nodes, which are never pinned.
     if ((terrestrialNodeVelocity != terrestrialNodeFree) && !hasDirichletMask &&
-        !(cellsMask_F[fCell] & dynamic_ice_bit_value)) {
+        !(cellsMask_F[fCell] & dynamic_ice_bit_value) && (bedTopography_F[fCell] >= 0.0)) {
       bool pinNode = (terrestrialNodeVelocity == terrestrialNodeZero);
       if (terrestrialNodeVelocity == terrestrialNodeZeroAtJunctions) {
         for (int j = 0; (j < nEdgesOnCells_F[fCell]) && !pinNode; j++) {
@@ -1896,6 +1913,71 @@ double signedTriangleAreaOnSphere(const double* x, const double* y,
 }
 
 
+// Statistics over the dynamic (Albany-active) edge-neighbors of MPAS cell fCell, used for the tall-cliff extension
+// (config_fem_marine_cliff_extension).  Geometry in Albany units (km); sea level is 0, as elsewhere in importFields.
+struct DynamicNeighborStats {
+  int count = 0;
+  double minElev = 1e10;   // lowest surface elevation
+  double meanThick = 0.0;  // mean thickness
+  double maxMarineCliffElev = -1e10;  // highest surface of a grounded neighbor whose bed is below sea level
+};
+
+static DynamicNeighborStats dynamicNeighborStats(int fCell,
+    double const* lowerSurface_F, double const* thickness_F, double const* bedTopography_F) {
+  DynamicNeighborStats stats;
+  for (int j = 0; j < nEdgesOnCells_F[fCell]; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    double elev = (lowerSurface_F[c] + thickness_F[c]) / unit_length;
+    stats.count++;
+    stats.minElev = std::min(stats.minElev, elev);
+    stats.meanThick += thickness_F[c] / unit_length;
+    if ((bedTopography_F[c] < 0.0) && (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]))
+      stats.maxMarineCliffElev = std::max(stats.maxMarineCliffElev, elev);
+  }
+  if (stats.count > 0)
+    stats.meanThick /= stats.count;
+  return stats;
+}
+
+// Mean of the MPAS cell field field_F over the dynamic edge-neighbors of cell fCell that are grounded by flotation
+// (sea level at 0), or over all dynamic neighbors if none is grounded.  Gives a grounded-cliff extension node the
+// basal properties of the ice it continues rather than those of the ice-free ocean cell it occupies.
+static double groundedNeighborMean(int fCell, double const* field_F,
+    double const* thickness_F, double const* bedTopography_F) {
+  double sumGrounded = 0.0, sumAll = 0.0;
+  int nGrounded = 0, nAll = 0;
+  for (int j = 0; j < nEdgesOnCells_F[fCell]; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    sumAll += field_F[c];
+    nAll++;
+    if (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]) {
+      sumGrounded += field_F[c];
+      nGrounded++;
+    }
+  }
+  if (nGrounded > 0)
+    return sumGrounded / nGrounded;
+  return (nAll > 0) ? sumAll / nAll : field_F[fCell];
+}
+
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
     double const * beta_F, double const* stiffnessFactor_F, double const* effecPress_F, double const* muFriction_F,
@@ -1981,8 +2063,9 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
   marineBdyExtensionMap.clear();
 
   // With config_fem_extension_method='none', all FE vertices are dynamic ice, so there is nothing to extend.
-  // With 'terrestrial-only', no non-dynamic marine (bed < 0) cell is an FE vertex (see li_calculate_mask),
-  // so only the terrestrial branch below is used and marineBdyExtensionMap stays empty.
+  // With 'terrestrial-only', the only non-dynamic marine (bed < 0) FE vertices are tall-cliff extension nodes
+  // (config_fem_marine_cliff_extension; see li_calculate_mask), so without that option only the terrestrial
+  // branch below is used and marineBdyExtensionMap stays empty.
   if (!useTerrestrialExtension)
     return;
 
@@ -2108,7 +2191,55 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double elev = -1e10;
     double thick = eps;
 
-    if (useISMIP7Extension) {
+    if (!useMarineExtension) {
+      // 'terrestrial-only' with config_fem_marine_cliff_extension: this node is next to a grounded marine cliff
+      // taller than marineCliffHeightStart.  Without an extension the full cliff is the edge of the FE mesh, and
+      // the calving-front force grows with its height.  Grounded marine cliffs more than about 100 m high are not
+      // generally stable (marine ice-cliff instability), and MALI has no parameterization of their failure, so
+      // treat a tall cliff as adjusting viscously to a ramp: continue the ice flat to this node (the lowest
+      // neighbor surface, so no neighbor sees a reverse slope, with the neighbors' mean thickness, limited by the
+      // bed and by flotation), then blend that column linearly, in surface and thickness, toward a floating ramp to
+      // near-zero thickness as the tallest marine cliff next to it grows from marineCliffHeightStart to
+      // marineCliffHeightEnd.  The column is a continuous function of the neighbors, so it does not jump when
+      // their ordering changes; it only appears when a cliff first exceeds marineCliffHeightStart.
+      DynamicNeighborStats stats = dynamicNeighborStats(vertexToFCell[iv], lowerSurface_F, thickness_F, bedTopography_F);
+      if (stats.count == 0)  // cannot happen (ic is a dynamic neighbor), but don't use empty stats
+        stats = {1, (lowerSurface_F[ic] + thickness_F[ic]) / unit_length, thickness_F[ic] / unit_length,
+                 (lowerSurface_F[ic] + thickness_F[ic]) / unit_length};
+      elev = stats.minElev;
+      double floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+      thick = std::min(std::min(stats.meanThick, elev - bed), floatThick);
+      if (thick < floatThick) {  // grounded column: blend toward the floating ramp; a floating one is left alone
+        double w = (stats.maxMarineCliffElev - marineCliffHeightStart) / (marineCliffHeightEnd - marineCliffHeightStart);
+        w = std::min(1.0, std::max(0.0, w));
+        if (w > 0.0) {
+          const double hBlend = (1.0 - w) * thick + w * eps;
+          elev = (1.0 - w) * elev + w * (1.0 - rho_ice / rho_ocean) * eps;
+          floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+          thick = std::min(std::min(hBlend, elev - bed), floatThick);
+        }
+      }
+      // If the thickness (not the bed or flotation) limits the column, it is lighter than flotation but its base
+      // lies above the natural bed: a grounded cliff, so raise the FEM bed (not the MPAS bed) to its base, and give
+      // it the basal properties of the grounded ice it continues (these are FEM inputs only; scaling as above).
+      if ((thick < elev - bed) && (thick < floatThick)) {
+        bed = elev - thick;
+        bedTopographyData[iv] = bed;
+        const int fCellE = vertexToFCell[iv];
+        if (beta_F != 0)
+          betaData[iv] = groundedNeighborMean(fCellE, beta_F, thickness_F, bedTopography_F) / unit_length;
+        if (effecPress_F != 0)
+          effecPressData[iv] = groundedNeighborMean(fCellE, effecPress_F, thickness_F, bedTopography_F) / unit_length;
+        if (muFriction_F != 0)
+          muFrictionData[iv] = groundedNeighborMean(fCellE, muFriction_F, thickness_F, bedTopography_F);
+        if (bedRoughnessRC_F != 0)
+          bedRoughnessData[iv] = groundedNeighborMean(fCellE, bedRoughnessRC_F, thickness_F, bedTopography_F) / unit_length;
+        if (bulkFriction_F != 0)
+          bulkFrictionData[iv] = groundedNeighborMean(fCellE, bulkFriction_F, thickness_F, bedTopography_F);
+        if (basalDebris_F != 0)
+          basalDebrisData[iv] = groundedNeighborMean(fCellE, basalDebris_F, thickness_F, bedTopography_F);
+      }
+    } else if (useISMIP7Extension) {
       // check if loan cell bed is above sea level or not
       // Note: ic is a raw MPAS cell index (not an FE vertex index), so use bedTopography_F here.
       if (bedTopography_F[ic] / unit_length > 0.0) {
@@ -2145,8 +2276,8 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     }
   } // map vector loop
 
-  if (useISMIP7Extension) {
-    // 'ismip7-era' extension only: do another pass.  For any extended marine margin
+  if (useISMIP7Extension && useMarineExtension) {
+    // 'ismip7-era' extension only (not the tall-cliff nodes of 'terrestrial-only'): do another pass.  For any extended marine margin
     // locations that are connected to any grounded neighbors but have at least one
     // floating neighbor, create a ramp down to zero thickness instead of whatever they
     // are currently doing.
