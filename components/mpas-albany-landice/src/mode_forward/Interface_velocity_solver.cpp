@@ -56,9 +56,41 @@ double rho_ocean;
 int dynamic_ice_bit_value;
 int ice_present_bit_value;
 // Selects the version of the margin (thickness/elevation) extension logic used in
-// importFields(): false => 'ismip6-era' (pre-ismip7-era scheme), true => 'ismip7-era'.
-// Set from the namelist option config_fem_extension_method via velocity_solver_set_parameters().
-bool useISMIP7Extension = false;
+// importFields().  Set from the namelist option config_fem_extension_method via
+// velocity_solver_set_parameters(); the integer codes must match those passed from
+// li_velocity_external_block_init().
+const int FEM_EXT_ISMIP6_ERA = 0;  // 'ismip6-era' (pre-ismip7-era scheme)
+const int FEM_EXT_ISMIP7_ERA = 1;  // 'ismip7-era'
+const int FEM_EXT_FLAT_CLIFF = 2;  // 'flat-cliff'
+const int FEM_EXT_ISMIP6_ERA_LANDCAP = 3;  // 'ismip6-era-landcap': ismip6-era marine, ismip7-era terrestrial
+int femExtensionMethod = FEM_EXT_ISMIP6_ERA;
+// 'flat-cliff' only: maximum surface slope (dimensionless) by which an extension node may lie
+// below the mean surface of its dynamic neighbors (config_fem_flat_cliff_slope_limit).
+double flatCliffSlopeLimit = 0.05;
+// 'flat-cliff' only: also apply the 'ismip7-era' mixed grounded/floating ramp
+// (config_fem_flat_cliff_mixed_ramp).
+bool flatCliffMixedRamp = false;
+// 'flat-cliff' only: surface heights [km] over which a grounded extension column is blended
+// from the flat-cliff column toward a floating ramp (config_fem_flat_cliff_freeboard_ramp_start
+// and _end); the blend is off when the end height is not positive.
+double flatCliffFreeboardRampStart = 0.0;
+double flatCliffFreeboardRampEnd = 0.0;
+// 'flat-cliff' only: maximum along-flow surface slopes (dimensionless) by which the surface may
+// continue to drop from the reference neighbor to the extension node, for floating and grounded
+// ice (config_fem_flat_cliff_surface_slope_max_floating and _grounded); 0 turns each off.
+double flatCliffSurfaceSlopeMaxFloating = 0.0;
+double flatCliffSurfaceSlopeMaxGrounded = 0.0;
+
+// Velocity condition at FE nodes on steep land walls (config_fem_land_wall_velocity), and the
+// bed slope above which a land extension node is a wall (config_fem_land_wall_slope).  The
+// codes must match those passed from li_velocity_external_block_init().
+const int LAND_WALL_FREE = 0;
+const int LAND_WALL_ZERO = 1;
+int landWallVelocity = LAND_WALL_FREE;
+double landWallSlope = 0.1;
+// isPinnedWallCell[iCell]: MPAS cell iCell is a land wall given a zero-velocity Dirichlet
+// condition.  Set each time the FE mesh is built.
+std::vector<bool> isPinnedWallCell;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -101,6 +133,65 @@ exchange::exchange(int _procID, int const* vec_first, int const* vec_last,
         fieldDim * (vec_last - vec_first)) {
 }
 
+
+// Mark the land FE extension cells that sit on a steep wall (fjord wall, nunatak) and so get a
+// zero-velocity Dirichlet condition when config_fem_land_wall_velocity='zero'.  A wall cell is
+// non-dynamic, has no dirichletVelocityMask condition, has bed at or above sea level (0, as in
+// importFields), touches dynamic ice, and its bed rises by a slope greater than landWallSlope
+// from at least one edge-neighbor that is either dynamic or marine (bed below sea level).  Only the bed and the dynamic mask are used (not the evolving ice surface),
+// so the classification cannot flicker; it is redone whenever the FE mesh is rebuilt, which
+// happens whenever the dynamic cell mask changes.  All inputs are valid in the halo, so no
+// communication is needed.
+static void findLandWallCells(double const* bedTopography_F) {
+  isPinnedWallCell.assign(nCells_F, false);
+  if (landWallVelocity == LAND_WALL_FREE)
+    return;
+  int numWallCells = 0;
+  for (int iCell = 0; iCell < nCells_F; iCell++) {
+    if ((cellsMask_F[iCell] & dynamic_ice_bit_value) || (dirichletCellsMask_F[(nLayers+1)*iCell] != 0) ||
+        (bedTopography_F[iCell] < 0.0))
+      continue;
+    // The bed rise is measured from two kinds of neighbor:
+    //  - dynamic neighbors (any bed), the glacier the wall bounds, e.g. a land-terminating
+    //    valley glacier; and
+    //  - marine neighbors (bed below sea level), dynamic or not: the fjord floor.
+    // Without the second kind, a node next to the fjord floor is judged only against its dynamic
+    // neighbors, which can be thin ice perched partway up the same wall; the wall then looks
+    // gentle and the node stays free (at Helheim such a 10 m node on a +401 m bed beside a
+    // -183 m fjord cell ran at the speed cap).  With it, the classification of such a node does
+    // not depend on which of its neighbors happen to be dynamic.  Only cells touching dynamic
+    // ice (i.e. FE nodes) are flagged.
+    bool hasDynamicNeighbor = false, isWall = false;
+    int nEdg = nEdgesOnCells_F[iCell];
+    for (int j = 0; j < nEdg; j++) {
+      int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+      if ((fEdge < 0) || (fEdge >= nEdges_F))
+        continue;
+      int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+      int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+      if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+        continue;
+      int c = (c0 == iCell) ? c1 : c0;
+      const bool dynamicNeighbor = (cellsMask_F[c] & dynamic_ice_bit_value);
+      hasDynamicNeighbor = hasDynamicNeighbor || dynamicNeighbor;
+      if (!dynamicNeighbor && (bedTopography_F[c] >= 0.0))
+        continue;
+      double dx = xCell_F[iCell] - xCell_F[c];
+      double dy = yCell_F[iCell] - yCell_F[c];
+      double dz = zCell_F[iCell] - zCell_F[c];
+      double dc = std::sqrt(dx * dx + dy * dy + dz * dz);
+      if ((dc > 0.0) && ((bedTopography_F[iCell] - bedTopography_F[c]) / dc > landWallSlope))
+        isWall = true;
+    }
+    if (isWall && hasDynamicNeighbor) {
+      isPinnedWallCell[iCell] = true;
+      numWallCells++;
+    }
+  }
+  std::cout << "Land wall cells with zero-velocity condition (this rank, incl. halo): "
+            << numWallCells << std::endl;
+}
+
 extern "C" {
 
 // ===================================================
@@ -121,14 +212,28 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* clausius_clapeyron_coeff,
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                         int const* use_GLP_F, int const* use_ISMIP7_extension_F) {
+                         int const* use_GLP_F, int const* fem_extension_method_code_F,
+                         double const* flat_cliff_slope_limit_F,
+                         int const* land_wall_velocity_code_F, double const* land_wall_slope_F,
+                         int const* flat_cliff_mixed_ramp_F,
+                         double const* flat_cliff_freeboard_ramp_start_F, double const* flat_cliff_freeboard_ramp_end_F,
+                         double const* flat_cliff_surface_slope_max_floating_F,
+                         double const* flat_cliff_surface_slope_max_grounded_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
   thermal_thickness_limit = *thermal_thickness_limit_F / unit_length; // Import with Albany scaling
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
   ice_present_bit_value = *li_mask_ValueIce;
-  useISMIP7Extension = (*use_ISMIP7_extension_F != 0);
+  femExtensionMethod = *fem_extension_method_code_F;
+  flatCliffSlopeLimit = *flat_cliff_slope_limit_F;
+  landWallVelocity = *land_wall_velocity_code_F;
+  landWallSlope = *land_wall_slope_F;
+  flatCliffMixedRamp = (*flat_cliff_mixed_ramp_F != 0);
+  flatCliffFreeboardRampStart = *flat_cliff_freeboard_ramp_start_F / unit_length;
+  flatCliffFreeboardRampEnd = *flat_cliff_freeboard_ramp_end_F / unit_length;
+  flatCliffSurfaceSlopeMaxFloating = *flat_cliff_surface_slope_max_floating_F;
+  flatCliffSurfaceSlopeMaxGrounded = *flat_cliff_surface_slope_max_grounded_F;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -264,6 +369,11 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
         velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
         velocityOnCells[index+sizeVelOnCell] = dirichletVelocitYValue[indexReversed];
       }
+      else if (!isPinnedWallCell.empty() && isPinnedWallCell[iCell]) {
+        // zero-velocity Dirichlet condition at land walls (see config_fem_land_wall_velocity)
+        velocityOnCells[index] = 0.0;
+        velocityOnCells[index+sizeVelOnCell] = 0.0;
+      }
       else {
         velocityOnCells[index] = xVelocityOnCell[indexReversed];
         velocityOnCells[index+sizeVelOnCell] = yVelocityOnCell[indexReversed];
@@ -359,12 +469,15 @@ void velocity_solver_finalize() {
  *
  */
 
-void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F) {
+void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F,
+    double const* bedTopography_F) {
   int numProcs, me;
   verticesMask_F = _verticesMask_F;
   cellsMask_F = _cellsMask_F;
   verticesMask_F = _verticesMask_F;
   dirichletCellsMask_F = _dirichletCellsMask_F;
+
+  findLandWallCells(bedTopography_F);
 
   MPI_Comm_size(comm, &numProcs);
   MPI_Comm_rank(comm, &me);
@@ -587,9 +700,9 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
       int fCell1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
       assert((fCell0<nCells_F) && (fCell1<nCells_F));
       bool isCell0OnMargin = !(cellsMask_F[fCell0] & dynamic_ice_bit_value) &&
-          (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0);
+          (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0) && !isPinnedWallCell[fCell0];
       bool isCell1OnMargin = !(cellsMask_F[fCell1] & dynamic_ice_bit_value) &&
-          (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0);
+          (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0) && !isPinnedWallCell[fCell1];
       if(isCell0OnMargin || isCell1OnMargin)
         iceMarginEdgesLIds.push_back(index);
     }
@@ -672,7 +785,7 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
     for(int il=0; il< nLayers+1; ++il)
     {
       int imask_F = il+(nLayers+1)*fCell;
-      if(dirichletCellsMask_F[imask_F]!=0)
+      if((dirichletCellsMask_F[imask_F]!=0) || isPinnedWallCell[fCell])
         dirichletNodesIDs.push_back((nLayers-il)*vertexColumnShift+indexToVertexID[index]*vertexLayerShift);
     }
 
@@ -1123,6 +1236,157 @@ double signedTriangleAreaOnSphere(const double* x, const double* y,
 }
 
 
+
+// Statistics over the dynamic (Albany-active) edge-neighbors of MPAS cell fCell, used by the
+// 'flat-cliff' FEM extension.  Geometry is in Albany units (km).
+struct DynamicNeighborStats {
+  int count = 0;
+  double minElev = 1e10;   // lowest surface elevation
+  double meanElev = 0.0;   // mean surface elevation
+  double meanThick = 0.0;  // mean thickness
+  double meanDist = 0.0;   // mean distance between cell centers, km
+  double maxMarineCliffElev = -1e10;  // highest surface of a grounded neighbor whose bed is below sea level
+};
+
+static DynamicNeighborStats dynamicNeighborStats(int fCell,
+    double const* lowerSurface_F, double const* thickness_F, double const* bedTopography_F) {
+  DynamicNeighborStats stats;
+  int nEdg = nEdgesOnCells_F[fCell];
+  for (int j = 0; j < nEdg; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    double elev = (lowerSurface_F[c] + thickness_F[c]) / unit_length;
+    double dx = xCell_F[c] - xCell_F[fCell];
+    double dy = yCell_F[c] - yCell_F[fCell];
+    double dz = zCell_F[c] - zCell_F[fCell];
+    stats.count++;
+    stats.minElev = std::min(stats.minElev, elev);
+    stats.meanElev += elev;
+    stats.meanThick += thickness_F[c] / unit_length;
+    stats.meanDist += std::sqrt(dx * dx + dy * dy + dz * dz) / unit_length;
+    // A marine cliff: grounded (by flotation) on a bed below sea level (0, as elsewhere here)
+    if ((bedTopography_F[c] < 0.0) && (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]))
+      stats.maxMarineCliffElev = std::max(stats.maxMarineCliffElev, elev);
+  }
+  if (stats.count > 0) {
+    stats.meanElev /= stats.count;
+    stats.meanThick /= stats.count;
+    stats.meanDist /= stats.count;
+  }
+  return stats;
+}
+
+// Mean of the MPAS cell field field_F over the dynamic edge-neighbors of cell fCell that are
+// grounded by flotation (sea level at 0), or over all dynamic neighbors if none is grounded.
+// Used by 'flat-cliff' to give a grounded-cliff extension node the basal properties of the ice
+// it continues, rather than those of the ice-free ocean cell it occupies.
+static double groundedNeighborMean(int fCell, double const* field_F,
+    double const* thickness_F, double const* bedTopography_F) {
+  double sumGrounded = 0.0, sumAll = 0.0;
+  int nGrounded = 0, nAll = 0;
+  int nEdg = nEdgesOnCells_F[fCell];
+  for (int j = 0; j < nEdg; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    sumAll += field_F[c];
+    nAll++;
+    if (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]) {
+      sumGrounded += field_F[c];
+      nGrounded++;
+    }
+  }
+  if (nGrounded > 0)
+    return sumGrounded / nGrounded;
+  return (nAll > 0) ? sumAll / nAll : field_F[fCell];
+}
+
+// Distance [m] between the centers of MPAS cells c0 and c1.
+static double cellDistance(int c0, int c1) {
+  const double dx = xCell_F[c1] - xCell_F[c0];
+  const double dy = yCell_F[c1] - yCell_F[c0];
+  const double dz = zCell_F[c1] - zCell_F[c0];
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// Edge-neighbor of MPAS cell fCell across its j-th edge, or -1 if there is none.
+static int cellNeighbor(int fCell, int j) {
+  const int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+  if ((fEdge < 0) || (fEdge >= nEdges_F))
+    return -1;
+  const int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+  const int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+  if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+    return -1;
+  return (c0 == fCell) ? c1 : c0;
+}
+
+// Surface slope (dimensionless, positive downhill toward the extension cell fCellE) of the ice
+// upstream of its reference neighbor fCellR, for 'flat-cliff'.  The upstream cells are fCellR's
+// dynamic neighbors that lie roughly opposite fCellE (the direction from the neighbor to fCellR
+// within 60 degrees of the direction from fCellR to fCellE), of the same kind as fCellR: if
+// floating, floating cells not on the dynamic margin (none of their own neighbors is
+// non-dynamic), whose slope is that of the shelf rather than of its front; if grounded, grounded
+// cells.  Returns the smallest slope among them (so one steep neighbor cannot steepen E), or 0
+// if there are none.
+static double upstreamSurfaceSlope(int fCellR, int fCellE, bool floating,
+    double const* lowerSurface_F, double const* thickness_F, double const* bedTopography_F) {
+  const double dRE = cellDistance(fCellR, fCellE);
+  if (dRE <= 0.0)
+    return 0.0;
+  const double eX = (xCell_F[fCellE] - xCell_F[fCellR]) / dRE;
+  const double eY = (yCell_F[fCellE] - yCell_F[fCellR]) / dRE;
+  const double eZ = (zCell_F[fCellE] - zCell_F[fCellR]) / dRE;
+  const double sR = lowerSurface_F[fCellR] + thickness_F[fCellR];
+  double minSlope = 1e10;
+  for (int j = 0; j < nEdgesOnCells_F[fCellR]; j++) {
+    const int u = cellNeighbor(fCellR, j);
+    if ((u < 0) || (u == fCellE) || !(cellsMask_F[u] & dynamic_ice_bit_value))
+      continue;
+    const bool uFloating = rho_ice * thickness_F[u] < -rho_ocean * bedTopography_F[u];
+    if (uFloating != floating)
+      continue;
+    if (floating) {
+      bool onMargin = false;
+      for (int k = 0; k < nEdgesOnCells_F[u]; k++) {
+        const int n = cellNeighbor(u, k);
+        if ((n >= 0) && !(cellsMask_F[n] & dynamic_ice_bit_value)) {
+          onMargin = true;
+          break;
+        }
+      }
+      if (onMargin)
+        continue;
+    }
+    const double dUR = cellDistance(u, fCellR);
+    if (dUR <= 0.0)
+      continue;
+    const double align = ((xCell_F[fCellR] - xCell_F[u]) * eX + (yCell_F[fCellR] - yCell_F[u]) * eY +
+                          (zCell_F[fCellR] - zCell_F[u]) * eZ) / dUR;
+    if (align < 0.5)
+      continue;
+    const double sU = lowerSurface_F[u] + thickness_F[u];
+    minSlope = std::min(minSlope, (sU - sR) / dUR);
+  }
+  return (minSlope < 1e9) ? std::max(0.0, minSlope) : 0.0;
+}
+
+
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
     double const * beta_F, double const* stiffnessFactor_F, double const* effecPress_F, double const* muFriction_F,
@@ -1262,13 +1526,13 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
         // -- nonmarine (terrestrial) margin -- (extend to zero thickness)
 
         // First assign standard values for terrestrial margin extension.
-        // Under 'ismip6-era' these are the final values; under 'ismip7-era' they may be
-        // adjusted below if necessary.
+        // Under 'ismip6-era' these are the final values; under every other method
+        // ('ismip7-era', 'flat-cliff', 'ismip6-era-landcap') they may be adjusted below.
         thicknessData[iV] = eps;
         elevationData[iV] = bedTopographyData[iV]+eps;
 
-        if (useISMIP7Extension) {
-          // 'ismip7-era' extension: we want to avoid smearing ice up a cliff if the ice-free
+        if (femExtensionMethod != FEM_EXT_ISMIP6_ERA) {
+          // All methods but 'ismip6-era': we want to avoid smearing ice up a cliff if the ice-free
           // neighbor has a higher elevation than the last cell with ice.  But we still need
           // the thickness to ramp to zero to avoid an erroneous ice cliff.
           // Instead, if necessary, adjust so the surface elevation cannot be higher than the
@@ -1312,7 +1576,7 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
                elevationData[iV] = bedTopographyData[iV] + thicknessData[iV];
             }
           }
-        } // useISMIP7Extension
+        } // femExtensionMethod != FEM_EXT_ISMIP6_ERA
 
       } // else (nonmarine)
     } // is on margin (not dynamic vertex check)
@@ -1328,7 +1592,111 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double elev = -1e10;
     double thick = eps;
 
-    if (useISMIP7Extension) {
+    if (femExtensionMethod == FEM_EXT_FLAT_CLIFF) {
+      // 'flat-cliff' extension: continue the ice flat to the extension cell E and let
+      // Albany's calving-front boundary condition carry the cliff force, with no ramp (a
+      // ramp puts a large driving stress where there is little basal resistance).  Every
+      // quantity is a continuous function of the dynamic neighbors, so E's geometry
+      // does not jump when the ordering of the neighbors changes.
+      DynamicNeighborStats stats = dynamicNeighborStats(vertexToFCell[iv], lowerSurface_F, thickness_F, bedTopography_F);
+      if (stats.count == 0)  // cannot happen (ic is a dynamic neighbor), but don't use empty stats
+        stats = {1, (lowerSurface_F[ic] + thickness_F[ic]) / unit_length,
+                 (lowerSurface_F[ic] + thickness_F[ic]) / unit_length, thickness_F[ic] / unit_length, 0.0};
+
+      // Surface: the lowest neighbor surface, so no neighbor sees a reverse slope.  But
+      // where the neighbors differ a lot (e.g. steep grounded ice next to an ice shelf),
+      // that value makes the surface step between them point out through the open corner
+      // at E; so E may not lie more than flatCliffSlopeLimit * dc below the neighbors'
+      // mean surface.
+      elev = std::max(stats.minElev, stats.meanElev - flatCliffSlopeLimit * stats.meanDist);
+
+      // Thickness: the neighbors' mean thickness, limited so the column neither extends
+      // below the natural bed nor exceeds flotation at this surface (sea level at 0, as
+      // elsewhere here).
+      double floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+      thick = std::min(std::min(stats.meanThick, elev - bed), floatThick);
+
+      // Optional along-flow surface slope.  A flat continuation leaves no driving stress at E,
+      // while the real ice keeps thinning toward its front.  Where E continues ice of the same
+      // kind as its reference neighbor R (the lowest-surface dynamic neighbor, which sets
+      // stats.minElev), let the surface keep falling from R to E at the upstream slope of that
+      // ice, capped by a typical slope for the kind: an ice shelf (floating R, floating column
+      // at E) or a tidewater glacier (grounded R, grounded column at E).  A floating column
+      // stays at flotation at its lowered surface; a grounded one keeps its base, losing the
+      // same thickness as surface.  Mixed cases (e.g. a grounded R and a floating column at E)
+      // get no slope; the freeboard blend below handles tall cliffs.
+      if ((flatCliffSurfaceSlopeMaxFloating > 0.0) || (flatCliffSurfaceSlopeMaxGrounded > 0.0)) {
+        const bool refFloating = rho_ice * thickness_F[ic] < -rho_ocean * bedTopography_F[ic];
+        const bool columnFloating = (thick >= floatThick);
+        double slopeMax = 0.0;
+        if (refFloating && columnFloating)
+          slopeMax = flatCliffSurfaceSlopeMaxFloating;
+        else if (!refFloating && !columnFloating)
+          slopeMax = flatCliffSurfaceSlopeMaxGrounded;
+        if (slopeMax > 0.0) {
+          const int fCellE = vertexToFCell[iv];
+          const double slope = std::min(slopeMax,
+              upstreamSurfaceSlope(ic, fCellE, refFloating, lowerSurface_F, thickness_F, bedTopography_F));
+          if (slope > 0.0) {
+            const double drop = slope * cellDistance(ic, fCellE) / unit_length;
+            const double hLowered = refFloating ? stats.meanThick : thick - drop;
+            elev -= drop;
+            floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+            thick = std::min(std::min(hLowered, elev - bed), floatThick);
+          }
+        }
+      }
+
+      // Optional cliff-height limit.  A grounded column (lighter than flotation at its surface)
+      // presents a subaerial cliff of height elev at the edge of the FE mesh, and the calving-
+      // front force there grows with that height.  Grounded marine cliffs much more than about
+      // 100 m above the water are not generally stable (marine ice-cliff instability), and MALI
+      // has no parameterization for it, so between the start and end heights the column is
+      // blended linearly, in both surface and thickness, toward a floating ramp to (near) zero
+      // thickness; above the end height it is that ramp.  The height that sets the blend is the
+      // tallest *marine* cliff next to E: a grounded neighbor whose bed is below sea level.  Thin
+      // ice perched on a fjord wall (bed above sea level) can have a surface hundreds of meters
+      // up, but it is not a marine cliff, and ramping E next to it puts a steep drop onto a
+      // floating node (in a Helheim test this more than doubled the fast extension nodes there).  The blended column is then made
+      // consistent with the natural bed by the same rules as above, so it stays continuous as the
+      // cliff grows or shrinks.  Floating columns are left alone.
+      if ((flatCliffFreeboardRampEnd > 0.0) && (thick < floatThick)) {
+        double w = (stats.maxMarineCliffElev - flatCliffFreeboardRampStart) / (flatCliffFreeboardRampEnd - flatCliffFreeboardRampStart);
+        w = std::min(1.0, std::max(0.0, w));
+        if (w > 0.0) {
+          const double hBlend = (1.0 - w) * thick + w * eps;
+          elev = (1.0 - w) * elev + w * (1.0 - rho_ice / rho_ocean) * eps;
+          floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+          thick = std::min(std::min(hBlend, elev - bed), floatThick);
+        }
+      }
+
+      // If the thickness cap is what limits it, the column is lighter than flotation but its
+      // base lies above the natural bed.  That is a grounded cliff, so raise the FEM bed (not
+      // the MPAS bed) to the column base to make it consistent.  Otherwise the column is
+      // either grounded on the natural bed or floating, and the bed is unchanged.
+      if ((thick < elev - bed) && (thick < floatThick)) {
+        bed = elev - thick;
+        bedTopographyData[iv] = bed;
+
+        // A grounded cliff at E would otherwise get the basal properties of the ice-free
+        // ocean cell (e.g. no friction), so use those of the grounded ice it continues.
+        // These are FEM inputs only; scaling matches the import loop above.
+        const int fCellE = vertexToFCell[iv];
+        if (beta_F != 0)
+          betaData[iv] = groundedNeighborMean(fCellE, beta_F, thickness_F, bedTopography_F) / unit_length;
+        if (effecPress_F != 0)
+          effecPressData[iv] = groundedNeighborMean(fCellE, effecPress_F, thickness_F, bedTopography_F) / unit_length;
+        if (muFriction_F != 0)
+          muFrictionData[iv] = groundedNeighborMean(fCellE, muFriction_F, thickness_F, bedTopography_F);
+        if (bedRoughnessRC_F != 0)
+          bedRoughnessData[iv] = groundedNeighborMean(fCellE, bedRoughnessRC_F, thickness_F, bedTopography_F) / unit_length;
+        if (bulkFriction_F != 0)
+          bulkFrictionData[iv] = groundedNeighborMean(fCellE, bulkFriction_F, thickness_F, bedTopography_F);
+        if (basalDebris_F != 0)
+          basalDebrisData[iv] = groundedNeighborMean(fCellE, basalDebris_F, thickness_F, bedTopography_F);
+      }
+    } else if (femExtensionMethod == FEM_EXT_ISMIP7_ERA) {
       // check if loan cell bed is above sea level or not
       // Note: ic is a raw MPAS cell index (not an FE vertex index), so use bedTopography_F here.
       if (bedTopography_F[ic] / unit_length > 0.0) {
@@ -1348,8 +1716,8 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
          elev = std::max((1.0 - rho_ice / rho_ocean) * thick, bed + thick);
       }
     } else {
-      // 'ismip6-era' extension: assume elevation as given and adjust thickness to avoid
-      // unphysical situations
+      // 'ismip6-era' (and 'ismip6-era-landcap') extension: assume elevation as given and
+      // adjust thickness to avoid unphysical situations
       elev = (lowerSurface_F[ic]+thickness_F[ic]) / unit_length;
       thick = thickness_F[ic] / unit_length;
       thick = std::min(thick, elev - bed);
@@ -1365,8 +1733,15 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     }
   } // map vector loop
 
-  if (useISMIP7Extension) {
-    // 'ismip7-era' extension only: do another pass.  For any extended marine margin
+  // Under 'flat-cliff' this pass is optional (config_fem_flat_cliff_mixed_ramp).  In GIS tests
+  // the recurring 'flat-cliff' failure is a marine extension node whose only dynamic neighbor is
+  // a tall grounded cliff, while it also touches floating non-dynamic ice (partly filled or
+  // remnant front cells).  'flat-cliff' copies the cliff there, but this pass ramps the node to
+  // zero, and those nodes were about 2-3 times slower under 'ismip7-era'.
+  const bool applyMixedRamp = (femExtensionMethod == FEM_EXT_ISMIP7_ERA) ||
+                              ((femExtensionMethod == FEM_EXT_FLAT_CLIFF) && flatCliffMixedRamp);
+  if (applyMixedRamp) {
+    // Do another pass.  For any extended marine margin
     // locations that are connected to any grounded neighbors but have at least one
     // floating neighbor, create a ramp down to zero thickness instead of whatever they
     // are currently doing.
@@ -1409,11 +1784,15 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     } // map vector loop ("do another pass")
     // Now loop through locations identified and apply the zero ramp
     for (const int iv : marineRevisionList) {
+        // 'flat-cliff' may have raised the FEM bed of a grounded-cliff node; a ramp sits on
+        // the natural bed (for 'ismip7-era' the bed was never changed).
+        if (femExtensionMethod == FEM_EXT_FLAT_CLIFF)
+          bedTopographyData[iv] = bedTopography_F[vertexToFCell[iv]] / unit_length;
         // modify existing thk,elev to create ramp to 0
         thicknessData[iv] = eps;
         elevationData[iv] = std::max(bedTopographyData[iv] + eps, (1.0 - rho_ice/rho_ocean)*eps);
     }
-  } // useISMIP7Extension
+  } // applyMixedRamp
 }
 
 
@@ -1842,7 +2221,7 @@ bool belongToTria(double const* x, double const* t, double bcoords[3], double ep
        for (int index = 0; index < nVertices; index++) { //coordinates lines
           int iCell = vertexToFCell[index];
           //setting boundary vertices labels, 2 for dirichlet nodes, 1 otherwise
-          bool isDirichletVertex = dirichletCellsMask_F[(nLayers+1)*iCell] != 0;
+          bool isDirichletVertex = (dirichletCellsMask_F[(nLayers+1)*iCell] != 0) || isPinnedWallCell[iCell];
           int vertexLabel = (!isVertexBoundary[index]) ? 0 :
                             isDirichletVertex ? 3 : 1;
 
