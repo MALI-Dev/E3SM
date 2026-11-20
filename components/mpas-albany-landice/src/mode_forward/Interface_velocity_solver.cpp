@@ -1458,59 +1458,111 @@ void extrapolateVelocityOnEdge(int iEdge, int iCell0, int iCell1, double nx, dou
 }
 
 // Fill the velocity of owned dynamic cells that are not FE nodes (and thus get no velocity from the
-// solver, e.g. one-cell-wide tongues or isolated cells) with the Dirichlet velocity where specified,
-// otherwise with the average velocity of their neighboring dynamic FE node cells.  Also sets isFilledCell.
-// Must be called on all procs because it includes halo exchanges.
+// solver, e.g. one-cell-wide tongues, isolated cells, or cells whose triangles were pruned as floating hinges)
+// with the Dirichlet velocity where specified, otherwise with the average velocity of their dynamic
+// neighbors that have one.  The first pass uses only FE-node neighbors.  Later passes also use cells
+// filled in earlier passes, so a chain of non-FE dynamic cells (common at jagged fronts) is filled from its
+// end: with a single pass, the second cell of a chain had no velocity at all, so it received ice from its
+// moving neighbor but could not advect it out, melt it or calve it, and grew without bound.  Each pass only
+// uses values from earlier passes, so the result does not depend on the cell ordering.  Also sets
+// isFilledCell.  Must be called on all procs because it includes halo exchanges.
 void fillOrphanCellVelocities(double const* dirichletVelocityXValue, double const* dirichletVelocityYValue) {
+  const int maxPasses = 20;
   int nLevels = nLayers + 1;
   int sizeVelOnCell = nCells_F * nLevels;
   std::vector<int> isFilled(nCells_F, 0);
   std::vector<int> neighbors;
   neighbors.reserve(maxNEdgesOnCell_F);
+  std::vector<int> newlyFilled;
+  std::vector<double> newU, newV;
 
-  for (int iCell = 0; iCell < nCellsSolve_F; iCell++) {
-    if (isFENodeCell[iCell] || !(cellsMask_F[iCell] & dynamic_ice_bit_value))
-      continue;
-
-    // neighboring cells that are dynamic FE nodes (not extended terrestrial nodes under 'terrestrial-only')
-    neighbors.clear();
-    for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
-      int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
-      if ((fEdge < 0) || (fEdge >= nEdges_F))
+  for (int pass = 0; pass < maxPasses; pass++) {
+    newlyFilled.clear();
+    newU.clear();
+    newV.clear();
+    for (int iCell = 0; iCell < nCellsSolve_F; iCell++) {
+      if (isFENodeCell[iCell] || isFilled[iCell] || !(cellsMask_F[iCell] & dynamic_ice_bit_value))
         continue;
-      int c0 = cellsOnEdge_F[2 * fEdge] - 1;
-      int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
-      if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
-        continue;
-      int c = (c0 == iCell) ? c1 : c0;
-      if (isFENodeCell[c] && (cellsMask_F[c] & dynamic_ice_bit_value))
-        neighbors.push_back(c);
-    }
 
-    for (int il = 0; il < nLevels; il++) {
-      int ilReversed = nLayers - il;
-      int indexReversed = iCell * nLevels + ilReversed;
-      int index = iCell * nLevels + il;
-      if (dirichletCellsMask_F[indexReversed] != 0) {
-        velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
-        velocityOnCells[index + sizeVelOnCell] = dirichletVelocityYValue[indexReversed];
-        isFilled[iCell] = 1;
-      } else if (!neighbors.empty()) {
+      // neighboring dynamic cells with a velocity: FE nodes (not extended terrestrial nodes under
+      // 'terrestrial-only'), or cells filled in an earlier pass
+      neighbors.clear();
+      for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+        int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+        if ((fEdge < 0) || (fEdge >= nEdges_F))
+          continue;
+        int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+        int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+        if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+          continue;
+        int c = (c0 == iCell) ? c1 : c0;
+        // (isFilled is only used after the first pass, whose values are written as they are computed)
+        if ((isFENodeCell[c] || ((pass > 0) && isFilled[c])) && (cellsMask_F[c] & dynamic_ice_bit_value))
+          neighbors.push_back(c);
+      }
+
+      if (pass == 0) {
+        // First pass, as before: per layer, the Dirichlet value if specified, else the mean of the FE-node
+        // neighbors.  The sources are FE nodes, whose values this pass does not change, so write directly.
+        for (int il = 0; il < nLevels; il++) {
+          int ilReversed = nLayers - il;
+          int indexReversed = iCell * nLevels + ilReversed;
+          int index = iCell * nLevels + il;
+          if (dirichletCellsMask_F[indexReversed] != 0) {
+            velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
+            velocityOnCells[index + sizeVelOnCell] = dirichletVelocityYValue[indexReversed];
+            isFilled[iCell] = 1;
+          } else if (!neighbors.empty()) {
+            double u = 0, v = 0;
+            for (int c : neighbors) {
+              u += velocityOnCells[c * nLevels + il];
+              v += velocityOnCells[c * nLevels + il + sizeVelOnCell];
+            }
+            velocityOnCells[index] = u / neighbors.size();
+            velocityOnCells[index + sizeVelOnCell] = v / neighbors.size();
+            isFilled[iCell] = 1;
+          }
+        }
+        if (isFilled[iCell])
+          newlyFilled.push_back(-1);  // counted below, already applied
+        continue;
+      }
+      if (neighbors.empty())
+        continue;
+
+      newlyFilled.push_back(iCell);
+      for (int il = 0; il < nLevels; il++) {
         double u = 0, v = 0;
         for (int c : neighbors) {
           u += velocityOnCells[c * nLevels + il];
           v += velocityOnCells[c * nLevels + il + sizeVelOnCell];
         }
-        velocityOnCells[index] = u / neighbors.size();
-        velocityOnCells[index + sizeVelOnCell] = v / neighbors.size();
-        isFilled[iCell] = 1;
+        newU.push_back(u / neighbors.size());
+        newV.push_back(v / neighbors.size());
       }
     }
-  }
+    // apply this pass's values only now, so that they are not used within the same pass
+    for (size_t k = 0, kv = 0; k < newlyFilled.size(); k++) {
+      int iCell = newlyFilled[k];
+      if (iCell < 0)
+        continue;  // first-pass cell, already applied
+      for (int il = 0; il < nLevels; il++) {
+        velocityOnCells[iCell * nLevels + il] = newU[kv * nLevels + il];
+        velocityOnCells[iCell * nLevels + il + sizeVelOnCell] = newV[kv * nLevels + il];
+      }
+      kv++;
+      isFilled[iCell] = 1;
+    }
 
-  for (int dim = 0; dim < 2; dim++)
-    allToAll(&velocityOnCells[dim * sizeVelOnCell], sendCellsList_F, recvCellsList_F, nLevels);
-  allToAll(isFilled, sendCellsList_F, recvCellsList_F);
+    for (int dim = 0; dim < 2; dim++)
+      allToAll(&velocityOnCells[dim * sizeVelOnCell], sendCellsList_F, recvCellsList_F, nLevels);
+    allToAll(isFilled, sendCellsList_F, recvCellsList_F);
+
+    int numNew = newlyFilled.size(), globalNumNew = 0;
+    MPI_Allreduce(&numNew, &globalNumNew, 1, MPI_INT, MPI_SUM, comm);
+    if (globalNumNew == 0)
+      break;
+  }
 
   isFilledCell.assign(nCells_F, false);
   for (int iCell = 0; iCell < nCells_F; iCell++)

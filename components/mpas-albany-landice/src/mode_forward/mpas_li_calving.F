@@ -3310,7 +3310,12 @@ module li_calving
        real(kind=RKIND) :: mag
 
        mag = sqrt(u**2 + v**2)
-       if (mag == 0.0_RKIND) mag = 1.0_RKIND
+       if (mag == 0.0_RKIND) then
+          ! No flow direction to project onto: use the full edge length.  (Projecting a zero velocity gave 0,
+          ! so a front cell with no velocity got no face melting or calving at all and could grow without bound.)
+          scale_edge_length = 1.0_RKIND
+          return
+       endif
        scale_edge_length =  abs(u/mag * cos(angleEdgeHere) + v/mag * sin(angleEdgeHere))  ! dot product of unit vectors
        !scale_edge_length = abs(cos(angleEdgeHere - atan2(v, u)))
     end function scale_edge_length
