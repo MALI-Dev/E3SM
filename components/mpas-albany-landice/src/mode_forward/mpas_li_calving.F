@@ -2627,11 +2627,13 @@ module li_calving
       real(kind=RKIND), parameter :: ablationSmallThk = 1.0e-8_RKIND ! in meters, a small thickness threshold
       real(kind=RKIND) :: minOfMaxAllowableDt
       integer :: err_tmp, nDynNeighbors
+      logical, pointer :: config_mask_grounded_marine_front_rule
 
       err = 0
       err_tmp = 0
 
       call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
+      call mpas_pool_get_config(liConfigs, 'config_mask_grounded_marine_front_rule', config_mask_grounded_marine_front_rule)
       call mpas_pool_get_config(liConfigs, 'config_calving_error_threshold', config_calving_error_threshold)
       call mpas_pool_get_config(liConfigs, 'config_distribute_unablatedVolumeDynCell', config_distribute_unablatedVolumeDynCell)
 
@@ -2711,6 +2713,12 @@ module li_calving
                      .and. li_mask_is_margin(cellMask(iNeighbor)) &
                      .and. (.not. li_mask_is_dynamic_ice(cellMask(iNeighbor)))))) then
                      nEmptyNeighbors = nEmptyNeighbors + 1
+                  elseif (config_mask_grounded_marine_front_rule .and. li_mask_is_grounded_ice(cellMask(iNeighbor)) &
+                     .and. (bedTopography(iNeighbor) < config_sea_level) .and. (openOceanMask(iNeighbor) == 1) &
+                     .and. li_mask_is_margin(cellMask(iNeighbor)) &
+                     .and. (.not. li_mask_is_dynamic_ice(cellMask(iNeighbor)))) then
+                     ! inactive grounded marine margin cell (config_mask_grounded_marine_front_rule)
+                     nEmptyNeighbors = nEmptyNeighbors + 1
                   endif
                enddo
                if (nEmptyNeighbors > 0) then
@@ -2768,6 +2776,10 @@ module li_calving
                if ( li_mask_is_floating_ice(cellMask(iNeighbor)) .and. &
                   .not. li_mask_is_dynamic_ice(cellMask(iNeighbor)) ) then
                   frontAblationMask(iNeighbor) = 2 ! Use 2 for these non-dynamic floating neighbors
+               elseif ( config_mask_grounded_marine_front_rule .and. li_mask_is_grounded_ice(cellMask(iNeighbor)) .and. &
+                  (bedTopography(iNeighbor) < config_sea_level) .and. &
+                  .not. li_mask_is_dynamic_ice(cellMask(iNeighbor)) ) then
+                  frontAblationMask(iNeighbor) = 2 ! non-dynamic grounded marine neighbors
                endif
             enddo
          endif
@@ -4315,11 +4327,16 @@ module li_calving
       integer :: iCell, iNeighbor, jCell, iNeighbor2, kCell
       logical, dimension(:), allocatable :: marineDynMarginMask
       integer :: err_tmp
+      logical, pointer :: config_mask_grounded_marine_front_rule
+      real (kind=RKIND), pointer :: config_sea_level
+      logical :: isThinNeighbor
 
       err = 0
 
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold_source', config_damage_calving_threshold_source)
+      call mpas_pool_get_config(liConfigs, 'config_mask_grounded_marine_front_rule', config_mask_grounded_marine_front_rule)
+      call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
 
       ! get fields
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
@@ -4423,7 +4440,14 @@ module li_calving
             ! First remove ice from "thin" neighbors
             do iNeighbor = 1, nEdgesOnCell(iCell)
                jCell = cellsOnCell(iNeighbor, iCell)
-               if (li_mask_is_floating_ice(cellMask(jCell)) .and. .not. li_mask_is_dynamic_ice(cellMask(jCell))) then
+               ! A thin neighbor is non-dynamic floating ice, or (with config_mask_grounded_marine_front_rule)
+               ! non-dynamic grounded ice on a bed below sea level.
+               isThinNeighbor = li_mask_is_floating_ice(cellMask(jCell)) .and. .not. li_mask_is_dynamic_ice(cellMask(jCell))
+               if (config_mask_grounded_marine_front_rule) then
+                  isThinNeighbor = isThinNeighbor .or. (li_mask_is_grounded_ice(cellMask(jCell)) .and. &
+                     (.not. li_mask_is_dynamic_ice(cellMask(jCell))) .and. (bedTopography(jCell) < config_sea_level))
+               endif
+               if (isThinNeighbor) then
                   ! this is a thin neighbor - remove the whole cell volume
                   calvingThickness(jCell) = thickness(jCell)
                   call li_update_calving_thickness_grounded(cellMask(jCell), calvingThickness(jCell), &

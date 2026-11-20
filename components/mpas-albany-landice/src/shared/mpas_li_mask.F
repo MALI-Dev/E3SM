@@ -226,6 +226,7 @@ contains
       logical, pointer :: config_do_restart
       integer, pointer :: config_num_halos, config_number_of_blocks
       logical, pointer :: config_mask_floating_dynamic_persistence
+      logical, pointer :: config_mask_grounded_marine_front_rule
       character (len=StrKIND), pointer :: config_calving
       integer :: err_tmp
 
@@ -253,6 +254,19 @@ contains
          case ('eigencalving', 'specified_calving_velocity', 'specified_retreat_velocity', 'von_Mises_stress', &
                'damagecalving', 'ismip6_retreat')
             call mpas_log_write("config_mask_floating_dynamic_persistence=.true. is not compatible with the rate-based " // &
+               "calving law config_calving='" // trim(config_calving) // "'.", MPAS_LOG_ERR)
+            err_tmp = 1
+         end select
+      endif
+      err = ior(err,err_tmp)
+
+      ! Non-dynamic grounded marine front cells are only handled by the damage-threshold calving laws
+      call mpas_pool_get_config(liConfigs, 'config_mask_grounded_marine_front_rule', config_mask_grounded_marine_front_rule)
+      if (config_mask_grounded_marine_front_rule) then
+         select case (trim(config_calving))
+         case ('eigencalving', 'specified_calving_velocity', 'specified_retreat_velocity', 'von_Mises_stress', &
+               'damagecalving', 'ismip6_retreat')
+            call mpas_log_write("config_mask_grounded_marine_front_rule=.true. is not compatible with the rate-based " // &
                "calving law config_calving='" // trim(config_calving) // "'.", MPAS_LOG_ERR)
             err_tmp = 1
          end select
@@ -350,8 +364,10 @@ contains
       integer :: iCellNeighbor
       logical :: openOceanNeighbor
       logical, pointer :: config_mask_floating_dynamic_persistence
+      logical, pointer :: config_mask_grounded_marine_front_rule
       logical, dimension(:), allocatable :: wasDynamic
       logical :: keepDynamic
+      logical :: isMarineFrontCandidate
 
       call mpas_timer_start('calculate mask')
 
@@ -390,6 +406,7 @@ contains
       ! ====
       !call mpas_log_write("Updating masks")  ! Disabled to avoid excessive logging from shared routine
       !call mpas_timer_start('calculate mask cell')
+      call mpas_pool_get_config(liConfigs, 'config_mask_grounded_marine_front_rule', config_mask_grounded_marine_front_rule)
       call mpas_pool_get_config(liConfigs, 'config_mask_floating_dynamic_persistence', config_mask_floating_dynamic_persistence)
       if (config_mask_floating_dynamic_persistence) then
          ! Save the dynamic bit as it exists on input (from a previous time step or intermediate stage),
@@ -440,8 +457,14 @@ contains
          cellMask = ior(cellMask, li_mask_ValueDynamicIce)
       end where
       ! Exclude floating margin cells that are thinner than all their non-margin neighbors
+      ! (and, with config_mask_grounded_marine_front_rule, grounded margin cells on beds below sea level)
        do i=1,nCells
-          if (li_mask_is_margin(cellMask(i)) .and. li_mask_is_floating_ice(cellMask(i))) then
+          isMarineFrontCandidate = li_mask_is_floating_ice(cellMask(i))
+          if (config_mask_grounded_marine_front_rule) then
+             isMarineFrontCandidate = isMarineFrontCandidate .or. &
+                (li_mask_is_grounded_ice(cellMask(i)) .and. (bedTopography(i) < config_sea_level))
+          endif
+          if (li_mask_is_margin(cellMask(i)) .and. isMarineFrontCandidate) then
               openOceanNeighbor = .false.
               thinnestNeighborHeight = 1.0e36_RKIND
               do j=1,nEdgesOnCell(i) ! Find height of thickest neighbor
