@@ -132,8 +132,8 @@ exchange::exchange(int _procID, int const* vec_first, int const* vec_last,
 // Mark the land FE extension cells that sit on a steep wall (fjord wall, nunatak) and so get a
 // zero-velocity Dirichlet condition when config_fem_land_wall_velocity='zero'.  A wall cell is
 // non-dynamic, has no dirichletVelocityMask condition, has bed at or above sea level (0, as in
-// importFields), and its bed rises from at least one dynamic edge-neighbor by a slope greater
-// than landWallSlope.  Only the bed and the dynamic mask are used (not the evolving ice surface),
+// importFields), touches dynamic ice, and its bed rises by a slope greater than landWallSlope
+// from at least one edge-neighbor that is either dynamic or marine (bed below sea level).  Only the bed and the dynamic mask are used (not the evolving ice surface),
 // so the classification cannot flicker; it is redone whenever the FE mesh is rebuilt, which
 // happens whenever the dynamic cell mask changes.  All inputs are valid in the halo, so no
 // communication is needed.
@@ -146,6 +146,17 @@ static void findLandWallCells(double const* bedTopography_F) {
     if ((cellsMask_F[iCell] & dynamic_ice_bit_value) || (dirichletCellsMask_F[(nLayers+1)*iCell] != 0) ||
         (bedTopography_F[iCell] < 0.0))
       continue;
+    // The bed rise is measured from two kinds of neighbor:
+    //  - dynamic neighbors (any bed), the glacier the wall bounds, e.g. a land-terminating
+    //    valley glacier; and
+    //  - marine neighbors (bed below sea level), dynamic or not: the fjord floor.
+    // Without the second kind, a node next to the fjord floor is judged only against its dynamic
+    // neighbors, which can be thin ice perched partway up the same wall; the wall then looks
+    // gentle and the node stays free (at Helheim such a 10 m node on a +401 m bed beside a
+    // -183 m fjord cell ran at the speed cap).  With it, the classification of such a node does
+    // not depend on which of its neighbors happen to be dynamic.  Only cells touching dynamic
+    // ice (i.e. FE nodes) are flagged.
+    bool hasDynamicNeighbor = false, isWall = false;
     int nEdg = nEdgesOnCells_F[iCell];
     for (int j = 0; j < nEdg; j++) {
       int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
@@ -156,17 +167,20 @@ static void findLandWallCells(double const* bedTopography_F) {
       if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
         continue;
       int c = (c0 == iCell) ? c1 : c0;
-      if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      const bool dynamicNeighbor = (cellsMask_F[c] & dynamic_ice_bit_value);
+      hasDynamicNeighbor = hasDynamicNeighbor || dynamicNeighbor;
+      if (!dynamicNeighbor && (bedTopography_F[c] >= 0.0))
         continue;
       double dx = xCell_F[iCell] - xCell_F[c];
       double dy = yCell_F[iCell] - yCell_F[c];
       double dz = zCell_F[iCell] - zCell_F[c];
       double dc = std::sqrt(dx * dx + dy * dy + dz * dz);
-      if ((dc > 0.0) && ((bedTopography_F[iCell] - bedTopography_F[c]) / dc > landWallSlope)) {
-        isPinnedWallCell[iCell] = true;
-        numWallCells++;
-        break;
-      }
+      if ((dc > 0.0) && ((bedTopography_F[iCell] - bedTopography_F[c]) / dc > landWallSlope))
+        isWall = true;
+    }
+    if (isWall && hasDynamicNeighbor) {
+      isPinnedWallCell[iCell] = true;
+      numWallCells++;
     }
   }
   std::cout << "Land wall cells with zero-velocity condition (this rank, incl. halo): "
