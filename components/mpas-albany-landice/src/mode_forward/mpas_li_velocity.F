@@ -62,7 +62,7 @@ module li_velocity
    ! Masks that the external dycore's FEM grid was last generated from.  These hold a single
    ! block's masks: external dycores support one block per task, which
    ! li_velocity_external_init enforces by requiring config_number_of_blocks = 0.
-   integer, dimension(:), allocatable :: femVertexDynamicMask, femCellDynamicMask
+   integer, dimension(:), allocatable :: femVertexDynamicMask, femCellDynamicMask, femVertexAlbanyActiveMask
    integer, dimension(:,:), allocatable :: femDirichletMask
 
 !***********************************************************************
@@ -296,6 +296,8 @@ contains
       integer, dimension(:), pointer :: indexToEdgeID
       integer, pointer :: anyDynamicVertexMaskChanged
       integer, pointer :: dirichletMaskChanged
+      character (len=StrKIND), pointer :: femExtensionMethod
+      logical :: vertexMaskDiffers
       ! truly local variables
       integer :: cell1, cell2
       integer :: cell3, cell4, thisCell
@@ -423,7 +425,15 @@ contains
                 blockDynamicVertexMaskChanged = 1
                 blockDirichletMaskChanged = 1
             else
-                if ( any(li_mask_is_dynamic_ice_int(vertexMask) /= femVertexDynamicMask) .or. &
+                call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
+                if ( (trim(femExtensionMethod) == 'none') .or. (trim(femExtensionMethod) == 'terrestrial-only') ) then
+                   ! Without the FEM extension, the FE mesh is defined by the Albany-active bit of vertexMask,
+                   ! which can change even if the dynamic-ice bit of vertexMask does not.
+                   vertexMaskDiffers = any(iand(vertexMask, li_mask_ValueAlbanyActive) /= femVertexAlbanyActiveMask)
+                else
+                   vertexMaskDiffers = any(li_mask_is_dynamic_ice_int(vertexMask) /= femVertexDynamicMask)
+                endif
+                if ( vertexMaskDiffers .or. &
                      any(li_mask_is_dynamic_ice_int(cellMask) /= femCellDynamicMask) ) then
                     blockDynamicVertexMaskChanged = 1
                 else
@@ -779,7 +789,7 @@ contains
       end select
 
       if (allocated(femVertexDynamicMask)) then
-         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask)
+         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask, femVertexAlbanyActiveMask)
       endif
 
       ! === error check
@@ -930,6 +940,7 @@ contains
       integer :: err_tmp
 
       real(kind=RKIND), pointer :: config_flowLawExponent
+      character (len=StrKIND), pointer :: config_strain_rate_stencil
 
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: layerThicknessFractions
@@ -987,11 +998,23 @@ contains
       meanFlowParamA => meanFlowParamAVar % array
 
       ! Calculate strain rates
-      call li_compute_gradient_2d(meshPool, xvelmean, exx, dudy, err_tmp)
-      err = ior(err, err_tmp)
+      call mpas_pool_get_config(liConfigs, 'config_strain_rate_stencil', config_strain_rate_stencil)
+      select case (trim(config_strain_rate_stencil))
+      case ('all-cells')
+         call li_compute_gradient_2d(meshPool, xvelmean, exx, dudy, err_tmp)
+         err = ior(err, err_tmp)
 
-      call li_compute_gradient_2d(meshPool, yvelmean, dvdx, eyy, err_tmp)
-      err = ior(err, err_tmp)
+         call li_compute_gradient_2d(meshPool, yvelmean, dvdx, eyy, err_tmp)
+         err = ior(err, err_tmp)
+      case ('solved-cells')
+         call compute_velocity_gradient_solved_cells(meshPool, geometryPool, xvelmean, yvelmean, &
+                                                     exx, dudy, dvdx, eyy, err_tmp)
+         err = ior(err, err_tmp)
+      case default
+         call mpas_log_write(trim(config_strain_rate_stencil) // ' is not a valid option for config_strain_rate_stencil.', &
+            MPAS_LOG_ERR)
+         err = 1
+      end select
 
       exy = 0.5_RKIND * (dudy + dvdx)
 
@@ -1035,6 +1058,123 @@ contains
 
    !--------------------------------------------------------------------
    end subroutine calculate_strain_rates_and_stresses
+
+!***********************************************************************
+!
+!  routine compute_velocity_gradient_solved_cells
+!
+!> \brief   Velocity gradient from solved cells only (config_strain_rate_stencil='solved-cells')
+!> \details
+!>  Computes the horizontal gradient of the vertical-mean velocity at each dynamic cell by a least-squares fit
+!>  to the velocity differences between the cell and those of its neighbors that are "solved" cells: dynamic
+!>  cells that, with an FEM velocity solver, are nodes of the FE mesh (at least one of their vertices is Albany
+!>  active).  The standard reconstruction uses every neighbor, so near the margin the strain rate of a dynamic
+!>  cell depends on velocities that were not solved for (zero, extrapolated, or those of extension nodes with
+!>  made-up geometry); calving laws then respond to that choice rather than to the solved ice.  Here a margin
+!>  cell gets a one-sided gradient from the solved ice.  If the solved neighbors are all in one direction,
+!>  only the gradient along that direction is used (the minimum-norm least-squares solution).  The gradient
+!>  is zero at non-dynamic cells and at dynamic cells with no solved neighbor.  Planar meshes only.
+!
+!-----------------------------------------------------------------------
+   subroutine compute_velocity_gradient_solved_cells(meshPool, geometryPool, u, v, dudx, dudy, dvdx, dvdy, err)
+
+      use li_mask
+
+      type (mpas_pool_type), intent(in) :: meshPool       !< Input: mesh object
+      type (mpas_pool_type), intent(in) :: geometryPool   !< Input: geometry object
+      real(kind=RKIND), dimension(:), intent(in) :: u, v  !< Input: velocity components at cell centers
+      real(kind=RKIND), dimension(:), intent(out) :: dudx, dudy, dvdx, dvdy  !< Output: velocity gradient
+      integer, intent(out) :: err  !< Output: error flag
+
+      integer, pointer :: nCells
+      integer, dimension(:), pointer :: nEdgesOnCell, cellMask, vertexMask
+      integer, dimension(:,:), pointer :: cellsOnCell, verticesOnCell
+      real(kind=RKIND), dimension(:), pointer :: xCell, yCell
+      logical, pointer :: on_a_sphere
+      character (len=StrKIND), pointer :: config_velocity_solver
+      logical, dimension(:), allocatable :: isSolved
+      logical :: isFEMSolver
+      integer :: iCell, jCell, j
+      real(kind=RKIND) :: dx, dy, du, dv, a11, a12, a22, bu1, bu2, bv1, bv2, det, trace
+
+      err = 0
+      call mpas_pool_get_config(meshPool, 'on_a_sphere', on_a_sphere)
+      if (on_a_sphere) then
+         call mpas_log_write("config_strain_rate_stencil='solved-cells' is only supported on planar meshes.", MPAS_LOG_ERR)
+         err = 1
+         return
+      endif
+      call mpas_pool_get_config(liConfigs, 'config_velocity_solver', config_velocity_solver)
+      isFEMSolver = (trim(config_velocity_solver) == 'L1L2') .or. (trim(config_velocity_solver) == 'FO') .or. &
+                    (trim(config_velocity_solver) == 'Stokes')
+
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+      call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
+      call mpas_pool_get_array(meshPool, 'verticesOnCell', verticesOnCell)
+      call mpas_pool_get_array(meshPool, 'xCell', xCell)
+      call mpas_pool_get_array(meshPool, 'yCell', yCell)
+      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+      call mpas_pool_get_array(geometryPool, 'vertexMask', vertexMask)
+
+      allocate(isSolved(nCells+1))
+      isSolved(:) = .false.
+      do iCell = 1, nCells
+         isSolved(iCell) = li_mask_is_dynamic_ice(cellMask(iCell))
+         if (isSolved(iCell) .and. isFEMSolver) then
+            isSolved(iCell) = .false.
+            do j = 1, nEdgesOnCell(iCell)
+               if (li_mask_is_albany_active(vertexMask(verticesOnCell(j, iCell)))) then
+                  isSolved(iCell) = .true.
+                  exit
+               endif
+            enddo
+         endif
+      enddo
+
+      dudx(:) = 0.0_RKIND
+      dudy(:) = 0.0_RKIND
+      dvdx(:) = 0.0_RKIND
+      dvdy(:) = 0.0_RKIND
+      do iCell = 1, nCells
+         if (.not. li_mask_is_dynamic_ice(cellMask(iCell))) cycle
+         a11 = 0.0_RKIND; a12 = 0.0_RKIND; a22 = 0.0_RKIND
+         bu1 = 0.0_RKIND; bu2 = 0.0_RKIND; bv1 = 0.0_RKIND; bv2 = 0.0_RKIND
+         do j = 1, nEdgesOnCell(iCell)
+            jCell = cellsOnCell(j, iCell)
+            if ((jCell < 1) .or. (jCell > nCells)) cycle
+            if (.not. isSolved(jCell)) cycle
+            dx = xCell(jCell) - xCell(iCell)
+            dy = yCell(jCell) - yCell(iCell)
+            du = u(jCell) - u(iCell)
+            dv = v(jCell) - v(iCell)
+            a11 = a11 + dx * dx
+            a12 = a12 + dx * dy
+            a22 = a22 + dy * dy
+            bu1 = bu1 + dx * du
+            bu2 = bu2 + dy * du
+            bv1 = bv1 + dx * dv
+            bv2 = bv2 + dy * dv
+         enddo
+         trace = a11 + a22
+         if (trace <= 0.0_RKIND) cycle  ! no solved neighbor
+         det = a11 * a22 - a12 * a12
+         if (det > 1.0e-6_RKIND * trace * trace) then
+            dudx(iCell) = ( a22 * bu1 - a12 * bu2) / det
+            dudy(iCell) = (-a12 * bu1 + a11 * bu2) / det
+            dvdx(iCell) = ( a22 * bv1 - a12 * bv2) / det
+            dvdy(iCell) = (-a12 * bv1 + a11 * bv2) / det
+         else
+            ! Solved neighbors all in one direction: minimum-norm solution, the gradient along that direction only.
+            dudx(iCell) = bu1 / trace
+            dudy(iCell) = bu2 / trace
+            dvdx(iCell) = bv1 / trace
+            dvdy(iCell) = bv2 / trace
+         endif
+      enddo
+      deallocate(isSolved)
+
+   end subroutine compute_velocity_gradient_solved_cells
 
 !***********************************************************************
 !
@@ -1192,14 +1332,16 @@ contains
       integer, dimension(:,:), intent(in) :: dirichletVelocityMask
 
       if (allocated(femVertexDynamicMask)) then
-         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask)
+         deallocate(femVertexDynamicMask, femCellDynamicMask, femDirichletMask, femVertexAlbanyActiveMask)
       endif
       allocate(femVertexDynamicMask(size(vertexMask)))
       allocate(femCellDynamicMask(size(cellMask)))
+      allocate(femVertexAlbanyActiveMask(size(vertexMask)))
       allocate(femDirichletMask(size(dirichletVelocityMask, 1), size(dirichletVelocityMask, 2)))
 
       femVertexDynamicMask(:) = li_mask_is_dynamic_ice_int(vertexMask)
       femCellDynamicMask(:) = li_mask_is_dynamic_ice_int(cellMask)
+      femVertexAlbanyActiveMask(:) = iand(vertexMask, li_mask_ValueAlbanyActive)
       femDirichletMask(:,:) = dirichletVelocityMask(:,:)
 
    !--------------------------------------------------------------------

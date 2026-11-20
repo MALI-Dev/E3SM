@@ -225,6 +225,9 @@ contains
       real(KIND=RKIND), dimension(:), pointer :: thickness
       logical, pointer :: config_do_restart
       integer, pointer :: config_num_halos, config_number_of_blocks
+      logical, pointer :: config_mask_floating_dynamic_persistence
+      logical, pointer :: config_mask_grounded_marine_front_rule
+      character (len=StrKIND), pointer :: config_calving
       integer :: err_tmp
 
       err = 0
@@ -240,6 +243,33 @@ contains
       if (config_num_halos < 3) then
          call mpas_log_write("MALI requires that config_num_halos >= 3.  (edgeMask calculations require it.)", MPAS_LOG_ERR)
          err_tmp = 1
+      endif
+      err = ior(err,err_tmp)
+
+      ! Persistence of dynamic floating cells would prevent rate-based calving laws from working properly
+      call mpas_pool_get_config(liConfigs, 'config_mask_floating_dynamic_persistence', config_mask_floating_dynamic_persistence)
+      call mpas_pool_get_config(liConfigs, 'config_calving', config_calving)
+      if (config_mask_floating_dynamic_persistence) then
+         select case (trim(config_calving))
+         case ('eigencalving', 'specified_calving_velocity', 'specified_retreat_velocity', 'von_Mises_stress', &
+               'damagecalving', 'ismip6_retreat')
+            call mpas_log_write("config_mask_floating_dynamic_persistence=.true. is not compatible with the rate-based " // &
+               "calving law config_calving='" // trim(config_calving) // "'.", MPAS_LOG_ERR)
+            err_tmp = 1
+         end select
+      endif
+      err = ior(err,err_tmp)
+
+      ! Non-dynamic grounded marine front cells are only handled by the damage-threshold calving laws
+      call mpas_pool_get_config(liConfigs, 'config_mask_grounded_marine_front_rule', config_mask_grounded_marine_front_rule)
+      if (config_mask_grounded_marine_front_rule) then
+         select case (trim(config_calving))
+         case ('eigencalving', 'specified_calving_velocity', 'specified_retreat_velocity', 'von_Mises_stress', &
+               'damagecalving', 'ismip6_retreat')
+            call mpas_log_write("config_mask_grounded_marine_front_rule=.true. is not compatible with the rate-based " // &
+               "calving law config_calving='" // trim(config_calving) // "'.", MPAS_LOG_ERR)
+            err_tmp = 1
+         end select
       endif
       err = ior(err,err_tmp)
 
@@ -320,6 +350,9 @@ contains
       logical :: aCellOnVertexHasIce, aCellOnVertexHasNoIce, aCellOnVertexHasDynamicIce, aCellOnVertexHasNoDynamicIce, &
          aCellOnVertexIsFloating, aCellOnVertexIsFloatingAndDynamic, aCellOnVertexIsAlbanyActive, aCellOnVertexIsDomainBoundary
       logical :: aCellOnVertexIsGrounded
+      logical :: allCellsOnVertexAreAlbanyActive
+      logical :: aCellOnVertexIsInactiveMarine
+      character (len=StrKIND), pointer :: femExtensionMethod
       logical :: aCellOnEdgeHasIce, aCellOnEdgeHasNoIce, aCellOnEdgeHasDynamicIce, aCellOnEdgeHasNoDynamicIce, &
          aCellOnEdgeIsFloating, aCellOnEdgeIsFloatingAndDynamic, aCellOnEdgeIsDomainBoundary
       logical :: aCellOnEdgeIsGrounded
@@ -330,6 +363,14 @@ contains
       real (kind=RKIND) :: thinnestNeighborHeight
       integer :: iCellNeighbor
       logical :: openOceanNeighbor
+      logical, pointer :: config_mask_floating_dynamic_persistence
+      logical, pointer :: config_mask_grounded_marine_front_rule
+      logical, dimension(:), allocatable :: wasDynamic
+      logical :: keepDynamic
+      logical :: isMarineFrontCandidate
+      logical, pointer :: config_fem_marine_cliff_extension
+      real (kind=RKIND), pointer :: config_fem_marine_cliff_height_start
+      logical, dimension(:), allocatable :: isCliffExtensionCell
 
       call mpas_timer_start('calculate mask')
 
@@ -368,6 +409,18 @@ contains
       ! ====
       !call mpas_log_write("Updating masks")  ! Disabled to avoid excessive logging from shared routine
       !call mpas_timer_start('calculate mask cell')
+      call mpas_pool_get_config(liConfigs, 'config_mask_grounded_marine_front_rule', config_mask_grounded_marine_front_rule)
+      call mpas_pool_get_config(liConfigs, 'config_mask_floating_dynamic_persistence', config_mask_floating_dynamic_persistence)
+      if (config_mask_floating_dynamic_persistence) then
+         ! Save the dynamic bit as it exists on input (from a previous time step or intermediate stage),
+         ! because the mask is reset below.
+         allocate(wasDynamic(nCells+1))
+         wasDynamic(:) = .false.
+         do i = 1, nCells
+            wasDynamic(i) = li_mask_is_dynamic_ice(cellMask(i))
+         enddo
+      endif
+
       ! Set mask to 0 everywhere, but need to preserve bits the initial ice extent bit
       do i=1, nCells
         cellMask(i) = iand(cellMask(i), li_mask_ValueInitialIceExtent)
@@ -407,8 +460,14 @@ contains
          cellMask = ior(cellMask, li_mask_ValueDynamicIce)
       end where
       ! Exclude floating margin cells that are thinner than all their non-margin neighbors
+      ! (and, with config_mask_grounded_marine_front_rule, grounded margin cells on beds below sea level)
        do i=1,nCells
-          if (li_mask_is_margin(cellMask(i)) .and. li_mask_is_floating_ice(cellMask(i))) then
+          isMarineFrontCandidate = li_mask_is_floating_ice(cellMask(i))
+          if (config_mask_grounded_marine_front_rule) then
+             isMarineFrontCandidate = isMarineFrontCandidate .or. &
+                (li_mask_is_grounded_ice(cellMask(i)) .and. (bedTopography(i) < config_sea_level))
+          endif
+          if (li_mask_is_margin(cellMask(i)) .and. isMarineFrontCandidate) then
               openOceanNeighbor = .false.
               thinnestNeighborHeight = 1.0e36_RKIND
               do j=1,nEdgesOnCell(i) ! Find height of thickest neighbor
@@ -420,15 +479,20 @@ contains
                     openOceanNeighbor = .true.
                  endif
               enddo
-              if ((openOceanNeighbor) .and. (thickness(i) < 0.95_RKIND * thinnestNeighborHeight)) then
+              keepDynamic = .false.
+              if (config_mask_floating_dynamic_persistence) keepDynamic = wasDynamic(i)
+              if ((openOceanNeighbor) .and. (thickness(i) < 0.95_RKIND * thinnestNeighborHeight) .and. &
+                  .not. keepDynamic) then
                  ! Consider this NOT dynamic if the ice shelf margin is not almost as tall as it's inland neighbors.
                  ! Only do this for a non-dynamic cell adjacent to open ocean.
                  ! (if the floating cell was marked as a margin because it is adjacent to ice-free land,
                  !  we want to still consider it as dynamic)
+                 ! With config_mask_floating_dynamic_persistence, a cell that was already dynamic stays dynamic.
                  cellMask(i) = iand(cellMask(i), not(li_mask_ValueDynamicIce))  ! (turn off this bit)
               endif
           endif
       enddo
+      if (allocated(wasDynamic)) deallocate(wasDynamic)
 
       ! Identify cells that Albany would consider as active
       if ( (trim(config_velocity_solver) == 'L1L2') .or. &
@@ -597,8 +661,45 @@ contains
       if ( (trim(config_velocity_solver) == 'L1L2') .or. &
            (trim(config_velocity_solver) == 'FO') .or. &
            (trim(config_velocity_solver) == 'Stokes') ) then
+         ! With config_fem_extension_method='none', a vertex (FE triangle) is only Albany active if
+         ! all of its cells are Albany active, so the FE mesh does not extend beyond the dynamic ice.
+         ! With 'terrestrial-only', a vertex is Albany active if any of its cells are, unless any of
+         ! its non-active cells is marine (bed < 0), so the FE mesh only extends onto terrestrial cells.
+         ! (This marine test must match the one in importFields in Interface_velocity_solver.cpp.)
+         ! Otherwise, a vertex is Albany active if any of its cells are, and the interface extends
+         ! fields to the non-dynamic nodes of those triangles.
+         call mpas_pool_get_array(meshPool, 'femExtensionMethod', femExtensionMethod)
+
+         ! With 'terrestrial-only' and config_fem_marine_cliff_extension, a non-active marine cell next to a tall
+         ! grounded marine cliff (an active neighbor grounded by flotation on a bed below 0, with its surface above
+         ! config_fem_marine_cliff_height_start) is not treated as marine below, so the FE mesh extends onto it.
+         ! (This test must match the cliff test in importFields in Interface_velocity_solver.cpp.)
+         call mpas_pool_get_config(liConfigs, 'config_fem_marine_cliff_extension', config_fem_marine_cliff_extension)
+         call mpas_pool_get_config(liConfigs, 'config_fem_marine_cliff_height_start', config_fem_marine_cliff_height_start)
+         allocate(isCliffExtensionCell(nCells+1))
+         isCliffExtensionCell(:) = .false.
+         if (config_fem_marine_cliff_extension .and. (trim(femExtensionMethod) == 'terrestrial-only')) then
+            do i = 1, nCells
+               if (li_mask_is_albany_active(cellMask(i)) .or. (bedTopography(i) >= 0.0_RKIND)) cycle
+               do j = 1, nEdgesOnCell(i)
+                  iCellNeighbor = cellsOnCell(j, i)
+                  if (iCellNeighbor > nCells) cycle
+                  if ( li_mask_is_albany_active(cellMask(iCellNeighbor)) .and. &
+                       (bedTopography(iCellNeighbor) < 0.0_RKIND) .and. &
+                       (config_ice_density * thickness(iCellNeighbor) >= &
+                        -config_ocean_density * bedTopography(iCellNeighbor)) .and. &
+                       (bedTopography(iCellNeighbor) + thickness(iCellNeighbor) > config_fem_marine_cliff_height_start) ) then
+                     isCliffExtensionCell(i) = .true.
+                     exit
+                  endif
+               enddo
+            enddo
+         endif
+
          do i = 1,nVertices
             aCellOnVertexIsAlbanyActive = .false.
+            allCellsOnVertexAreAlbanyActive = .true.
+            aCellOnVertexIsInactiveMarine = .false.
             numCellsOnVertex = 0
             validVertex = .false.
             numDiriDynamicCells = 0
@@ -608,8 +709,14 @@ contains
                iCell = cellsOnVertex(j,i)
                if (iCell < nCells+1) then
                   numCellsOnVertex = numCellsOnVertex + 1
+                  if ( (.not. li_mask_is_albany_active(cellMask(iCell))) .and. &
+                       (bedTopography(iCell) < 0.0_RKIND) .and. (.not. isCliffExtensionCell(iCell)) ) then
+                     aCellOnVertexIsInactiveMarine = .true.
+                  endif
                endif
                aCellOnVertexIsAlbanyActive = (aCellOnVertexIsAlbanyActive .or. li_mask_is_albany_active(cellMask(iCell)))
+               allCellsOnVertexAreAlbanyActive = (allCellsOnVertexAreAlbanyActive .and. &
+                                                  li_mask_is_albany_active(cellMask(iCell)))
 
                !if (li_mask_is_dynamic_ice(cellMask(iCell)) .and. .not. li_mask_is_albany_active(cellMask(iCell))) then
                !!< this finds diri cells
@@ -625,14 +732,23 @@ contains
                endif
             end do
             if (numCellsOnVertex == vertexDegree) validVertex = .true.
-            if (aCellOnVertexIsAlbanyActive .and. validVertex)  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
-            if ( (numDiriDynamicCells == 1) .and. (numDiriNondynamicCells == 1) .and. &
-                 (numExtendedCells == 1) .and. validVertex) then
-               ! This is a special case needed for MISMIP
-               vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
-               vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyMarginNeighbor)
+            if (trim(femExtensionMethod) == 'none') then
+               if (allCellsOnVertexAreAlbanyActive .and. validVertex) &
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+            elseif (trim(femExtensionMethod) == 'terrestrial-only') then
+               if (aCellOnVertexIsAlbanyActive .and. (.not. aCellOnVertexIsInactiveMarine) .and. validVertex) &
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+            else
+               if (aCellOnVertexIsAlbanyActive .and. validVertex)  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+               if ( (numDiriDynamicCells == 1) .and. (numDiriNondynamicCells == 1) .and. &
+                    (numExtendedCells == 1) .and. validVertex) then
+                  ! This is a special case needed for MISMIP
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyActive)
+                  vertexMask(i) = ior(vertexMask(i), li_mask_ValueAlbanyMarginNeighbor)
+               endif
             endif
          end do  ! vertices loop
+         deallocate(isCliffExtensionCell)
       endif  ! HO velocity solver
 
       !call mpas_timer_stop('calculate mask vertex')

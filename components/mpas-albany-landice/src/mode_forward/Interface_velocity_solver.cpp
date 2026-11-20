@@ -55,10 +55,54 @@ double rho_ocean;
 //unsigned char ice_present_bit_value;
 int dynamic_ice_bit_value;
 int ice_present_bit_value;
+int floating_ice_bit_value;
 // Selects the version of the margin (thickness/elevation) extension logic used in
 // importFields(): false => 'ismip6-era' (pre-ismip7-era scheme), true => 'ismip7-era'.
 // Set from the namelist option config_fem_extension_method via velocity_solver_set_parameters().
 bool useISMIP7Extension = false;
+// Whether fields are extended onto non-dynamic marine / terrestrial FE nodes in importFields().
+// The FE mesh is defined by the Albany-active bit of vertexMask in li_calculate_mask, consistent with these:
+//   'ismip6-era', 'ismip7-era': both true.  A triangle is in the FE mesh if any of its nodes is dynamic.
+//   'terrestrial-only': useMarineExtension is false.  A triangle is in the FE mesh if any of its nodes is dynamic
+//                       and none of its non-dynamic nodes is marine (bed < 0), so only terrestrial nodes are extended.
+//   'none': both false.  A triangle is in the FE mesh only if all three of its nodes are dynamic.
+// Without the marine extension, the solved velocity is extrapolated onto MPAS edges outside the FE mesh.
+bool useMarineExtension = true;
+bool useTerrestrialExtension = true;
+// Method used to extrapolate the solved velocity onto MPAS edges outside the FE mesh when useMarineExtension
+// is false.  Set from config_fem_velocity_extrapolation_method; codes must match mpas_li_velocity_external.F.
+const int extrapNearest = 0, extrapLinear = 1, extrapFlowline = 2;
+int velocityExtrapolationMethod = extrapNearest;
+// Set from config_fem_velocity_extrapolation_limiter ('relaxed' => true, 'none' => false).
+bool useVelocityExtrapolationLimiter = true;
+// isFENodeCell[iCell]: MPAS cell iCell is a node of at least one FE triangle (i.e., it has a solved velocity).
+// isFilledCell[iCell]: MPAS cell iCell is dynamic but not an FE node, and its velocity was filled from neighbors.
+// Both are only used when useMarineExtension is false.
+std::vector<bool> isFENodeCell, isFilledCell;
+// Whether the solved velocity is extrapolated onto edges (extrapTargetEdges; normal component only, the cells outside
+// the solved velocity extent get no velocity) or onto non-dynamic cells adjacent to cells with a solved velocity
+// (extrapTargetCells; the full cell vector is saved and the edge velocity is the mean of the two adjacent cells).
+// Set from config_fem_velocity_extrapolation_target; codes must match mpas_li_velocity_external.F.
+const int extrapTargetEdges = 0, extrapTargetCells = 1;
+int velocityExtrapolationTarget = extrapTargetEdges;
+// isExtrapCell[iCell]: MPAS cell iCell is non-dynamic and has a velocity vector extrapolated from neighboring cells.
+std::vector<bool> isExtrapCell;
+// Velocity condition at extended (non-dynamic) terrestrial FE nodes, only used with 'terrestrial-only'.
+// Set from config_fem_terrestrial_node_velocity; codes must match mpas_li_velocity_external.F.
+//   free: no condition.  zeroAtJunctions: zero velocity at terrestrial nodes of an excluded triangle
+//   that has a dynamic node.  zero: zero velocity at all non-dynamic FE nodes.
+const int terrestrialNodeFree = 0, terrestrialNodeZeroAtJunctions = 1, terrestrialNodeZero = 2;
+int terrestrialNodeVelocity = terrestrialNodeFree;
+// isPinnedTerrestrialCell[iCell]: MPAS cell iCell is an FE node given a zero-velocity Dirichlet condition
+// following terrestrialNodeVelocity.  Set when the FE mesh is built.
+std::vector<bool> isPinnedTerrestrialCell;
+// Extension at tall grounded marine cliffs, only used with 'terrestrial-only' (config_fem_marine_cliff_extension).
+// A non-dynamic marine cell next to a grounded marine dynamic cell whose surface is higher than
+// marineCliffHeightStart is an FE node (see li_calculate_mask), and importFields() gives it a column blended from
+// a flat continuation of the ice toward a floating ramp as that cliff grows to marineCliffHeightEnd.  Heights in km.
+bool useMarineCliffExtension = false;
+double marineCliffHeightStart = 0.05;
+double marineCliffHeightEnd = 0.1;
 
 // global variables used for handling logging
 char albany_log_filename[128];
@@ -121,14 +165,32 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                          double const* clausius_clapeyron_coeff,
                          double const* thermal_thickness_limit_F,
                          int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                         int const* use_GLP_F, int const* use_ISMIP7_extension_F) {
+                         int const* li_mask_ValueFloating,
+                         int const* use_GLP_F, int const* use_ISMIP7_extension_F,
+                         int const* use_marine_extension_F, int const* use_terrestrial_extension_F,
+                         int const* velocity_extrapolation_method_F,
+                         int const* use_velocity_extrapolation_limiter_F,
+                         int const* terrestrial_node_velocity_F,
+                         int const* velocity_extrapolation_target_F,
+                         int const* marine_cliff_extension_F,
+                         double const* marine_cliff_height_start_F, double const* marine_cliff_height_end_F) {
   // This function sets parameter values used by MPAS on the C/C++ side
   rho_ice = *ice_density_F;
   rho_ocean = *ocean_density_F;
   thermal_thickness_limit = *thermal_thickness_limit_F / unit_length; // Import with Albany scaling
   dynamic_ice_bit_value = *li_mask_ValueDynamicIce;
   ice_present_bit_value = *li_mask_ValueIce;
+  floating_ice_bit_value = *li_mask_ValueFloating;
   useISMIP7Extension = (*use_ISMIP7_extension_F != 0);
+  useMarineExtension = (*use_marine_extension_F != 0);
+  useTerrestrialExtension = (*use_terrestrial_extension_F != 0);
+  velocityExtrapolationMethod = *velocity_extrapolation_method_F;
+  useVelocityExtrapolationLimiter = (*use_velocity_extrapolation_limiter_F != 0);
+  terrestrialNodeVelocity = *terrestrial_node_velocity_F;
+  velocityExtrapolationTarget = *velocity_extrapolation_target_F;
+  useMarineCliffExtension = (*marine_cliff_extension_F != 0);
+  marineCliffHeightStart = *marine_cliff_height_start_F / unit_length;
+  marineCliffHeightEnd = *marine_cliff_height_end_F / unit_length;
   velocity_solver_set_physical_parameters__(*gravity_F, rho_ice, *ocean_density_F, *sea_level_F/unit_length, *flowParamA_F*std::pow(unit_length,4)*secondsInAYear, 
                                             *flowLawExponent_F, *dynamic_thickness_F/unit_length, (*use_GLP_F != 0), *clausius_clapeyron_coeff);
 }
@@ -264,6 +326,11 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
         velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
         velocityOnCells[index+sizeVelOnCell] = dirichletVelocitYValue[indexReversed];
       }
+      else if ((terrestrialNodeVelocity != terrestrialNodeFree) && isPinnedTerrestrialCell[iCell]) {
+        // zero-velocity Dirichlet condition at extended terrestrial FE nodes (see config_fem_terrestrial_node_velocity)
+        velocityOnCells[index] = 0.0;
+        velocityOnCells[index+sizeVelOnCell] = 0.0;
+      }
       else {
         velocityOnCells[index] = xVelocityOnCell[indexReversed];
         velocityOnCells[index+sizeVelOnCell] = yVelocityOnCell[indexReversed];
@@ -272,6 +339,7 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
   }
   mapCellsToVertices(velocityOnCells, velocityOnVertices, 2, nLayers, Ordering);
 
+  int localError = 0;
   if (!isDomainEmpty) {
 
     std::vector<std::pair<int, int> > marineBdyExtensionMap;
@@ -295,8 +363,14 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
         stiffnessFactorData, effecPressData, muFrictionData, bedRoughnessData, bulkFrictionData, basalDebrisData,
         temperatureDataOnPrisms, bodyForceOnBasalCell, dissipationHeatOnPrisms, velocityOnVertices,
         albany_error, dt);
-    *error=albany_error;
+    localError = albany_error;
   }
+
+  // Procs with no ice (isDomainEmpty) do not run Albany and would report 0 (e.g., rank 0 with no ice),
+  // so share any failure with all procs.
+  int globalError = 0;
+  MPI_Allreduce(&localError, &globalError, 1, MPI_INT, MPI_MAX, comm);
+  *error = globalError;
 
   exportDissipationHeat(dissipation_heat_F);
 
@@ -309,6 +383,16 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
 
   mapVerticesToCells(velocityOnVertices, &velocityOnCells[0], 2, nLayers,
       Ordering);
+
+  // Without the marine FEM extension, dynamic cells that are not FE nodes get no velocity from the solver,
+  // so fill them from their neighbors.  This is called on all procs because it includes a halo exchange.
+  if (!useMarineExtension) {
+    fillOrphanCellVelocities(dirichletVelocityXValue, dirichletVelocitYValue);
+    // Optionally extrapolate full velocity vectors onto the non-dynamic cells adjacent to the solved velocity extent
+    isExtrapCell.assign(nCells_F, false);
+    if (velocityExtrapolationTarget == extrapTargetCells)
+      extrapolateVelocityToCells();
+  }
 
   //computing x, yVelocityOnCell
   for(int iCell=0; iCell<nCells_F; ++iCell)
@@ -359,12 +443,103 @@ void velocity_solver_finalize() {
  *
  */
 
-void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F) {
+// Copy of the vertex mask from which unanchored FE triangles have been removed (see pruneUnanchoredTriangles).
+std::vector<int> prunedVerticesMask;
+
+// Without the marine extension, the FE mesh can contain patches of triangles (e.g., a floating ice tongue) that share
+// only a node, not an edge, with the rest of the mesh.  A patch with no grounded ice or Dirichlet node has no
+// resistance to rigid-body motion (only ocean pressure acts on it), so the FE problem is singular and the velocity
+// is unbounded.  Here we remove from the FE mesh every triangle that cannot be reached through shared edges from an
+// "anchored" triangle, i.e., a triangle with at least two nodes that are grounded ice (so an edge of the triangle is
+// on grounded ice), or a node that has a Dirichlet condition (or is a zero-velocity terrestrial node), or a node
+// outside the local MPAS domain (conservatively kept).  A single grounded node is not enough: a floating patch
+// joined to grounded ice only through one node (a "hinge") can still rotate about that node and is not constrained.
+// Removed triangles lose the dynamic bit in prunedVerticesMask, and verticesMask_F is pointed at that copy.
+// Cells that lose all their triangles get their velocity from the extrapolation done for non-FE dynamic cells.
+void pruneUnanchoredTriangles(double const* bedTopography_F) {
+  int me;
+  MPI_Comm_rank(comm, &me);
+  std::vector<int> reached(nVertices_F, 0);
+  int numActive = 0;
+  for (int i = 0; i < nVertices_F; i++) {
+    if (!(verticesMask_F[i] & dynamic_ice_bit_value))
+      continue;
+    numActive++;
+    bool anchored = false;
+    int numGrounded = 0;
+    for (int k = 0; k < 3; k++) {
+      int iCell = cellsOnVertex_F[3 * i + k] - 1;
+      if ((iCell < 0) || (iCell >= nCells_F)) {
+        anchored = true;
+        break;
+      }
+      bool isIce = cellsMask_F[iCell] & ice_present_bit_value;
+      bool isFloating = cellsMask_F[iCell] & floating_ice_bit_value;
+      if (isIce && !isFloating)
+        numGrounded++;
+      // A zero-velocity terrestrial node anchors the triangle; an ice-free marine node (a tall-cliff extension
+      // node, see config_fem_marine_cliff_extension) does not.
+      if ((dirichletCellsMask_F[(nLayers+1)*iCell] != 0) ||
+          (!isIce && (terrestrialNodeVelocity == terrestrialNodeZero) && (bedTopography_F[iCell] >= 0.0))) {
+        anchored = true;
+        break;
+      }
+    }
+    reached[i] = anchored || (numGrounded >= 2);
+  }
+  allToAll(reached, sendVerticesList_F, recvVerticesList_F);
+
+  // Propagate "reached" through edges shared by two FE triangles.  Only owned triangles are updated, and the halo
+  // is refreshed after each sweep, so that all procs agree.
+  while (true) {
+    int changed = 0;
+    for (int iEdge = 0; iEdge < nEdges_F; iEdge++) {
+      ID v1 = verticesOnEdge_F[2 * iEdge] - 1;
+      ID v2 = verticesOnEdge_F[2 * iEdge + 1] - 1;
+      if ((v1 >= nVertices_F) || (v2 >= nVertices_F))
+        continue;
+      if (!(verticesMask_F[v1] & dynamic_ice_bit_value) || !(verticesMask_F[v2] & dynamic_ice_bit_value))
+        continue;
+      if (reached[v1] && !reached[v2] && (v2 < nVerticesSolve_F)) {
+        reached[v2] = 1;
+        changed = 1;
+      } else if (reached[v2] && !reached[v1] && (v1 < nVerticesSolve_F)) {
+        reached[v1] = 1;
+        changed = 1;
+      }
+    }
+    int globalChanged;
+    MPI_Allreduce(&changed, &globalChanged, 1, MPI_INT, MPI_MAX, comm);
+    if (!globalChanged)
+      break;
+    allToAll(reached, sendVerticesList_F, recvVerticesList_F);
+  }
+
+  prunedVerticesMask.assign(verticesMask_F, verticesMask_F + nVertices_F);
+  int numPruned = 0;
+  for (int i = 0; i < nVertices_F; i++) {
+    if ((verticesMask_F[i] & dynamic_ice_bit_value) && !reached[i]) {
+      prunedVerticesMask[i] &= ~dynamic_ice_bit_value;
+      if (i < nVerticesSolve_F)
+        numPruned++;
+    }
+  }
+  int globalNumPruned;
+  MPI_Allreduce(&numPruned, &globalNumPruned, 1, MPI_INT, MPI_SUM, comm);
+  if ((me == 0) && (globalNumPruned > 0))
+    std::cout << "Removed " << globalNumPruned << " FE triangles that were not connected by an edge to any anchored"
+              << " (grounded or Dirichlet) triangle." << std::endl;
+  verticesMask_F = prunedVerticesMask.data();
+}
+
+void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cellsMask_F, int const* _dirichletCellsMask_F,
+    double const* bedTopography_F) {
   int numProcs, me;
   verticesMask_F = _verticesMask_F;
   cellsMask_F = _cellsMask_F;
-  verticesMask_F = _verticesMask_F;
   dirichletCellsMask_F = _dirichletCellsMask_F;
+  if (!useMarineExtension)
+    pruneUnanchoredTriangles(bedTopography_F);
 
   MPI_Comm_size(comm, &numProcs);
   MPI_Comm_rank(comm, &me);
@@ -474,6 +649,19 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
 #endif
   allToAll(fVertexToTriangleID, sendVerticesList_F, recvVerticesList_F);
   allToAll(fVertexToTriangle, sendVerticesList_F, recvVerticesList_F);
+
+  // Flag MPAS cells that are nodes of at least one FE triangle (owned or not).
+  // This is used to extrapolate velocity to edges outside the FE mesh when the FEM extension is disabled.
+  isFENodeCell.assign(nCells_F, false);
+  for (int iCell = 0; iCell < nCells_F; iCell++) {
+    for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+      ID fVertex = verticesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+      if ((fVertex < nVertices_F) && (fVertexToTriangleID[fVertex] != NotAnId)) {
+        isFENodeCell[iCell] = true;
+        break;
+      }
+    }
+  }
 
   //we define the vector of global triangles Ids and compute the stride between the largest and the smallest Id globally
   //This will be needed by the velocity solver to create the 3D FE mesh.
@@ -590,8 +778,28 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
           (dirichletCellsMask_F[(nLayers+1)*fCell0] == 0);
       bool isCell1OnMargin = !(cellsMask_F[fCell1] & dynamic_ice_bit_value) &&
           (dirichletCellsMask_F[(nLayers+1)*fCell1] == 0);
-      if(isCell0OnMargin || isCell1OnMargin)
+      if(isCell0OnMargin || isCell1OnMargin) {
         iceMarginEdgesLIds.push_back(index);
+      } else if (!useMarineExtension) {
+        // Without the marine extension, both nodes of a boundary edge can be dynamic (always, under 'none'),
+        // so the margin is also identified from the triangle that was excluded from the FE mesh: the edge is on the
+        // ice margin if the third cell of that triangle is a valid, non-dynamic, non-Dirichlet cell.
+        // (If the third cell is outside the MPAS domain, this is a domain boundary edge instead.)
+        ID fVertex0 = verticesOnEdge_F[2 * fEdge] - 1;
+        ID fVertex1 = verticesOnEdge_F[2 * fEdge + 1] - 1;
+        ID excludedFVertex = (fVertexToTriangleID[fVertex0] == NotAnId) ? fVertex0 : fVertex1;
+        int thirdCell = nCells_F;
+        for (int j = 0; j < 3; j++) {
+          int iCell = cellsOnVertex_F[3 * excludedFVertex + j] - 1;
+          if ((iCell != fCell0) && (iCell != fCell1))
+            thirdCell = iCell;
+        }
+        bool isThirdCellOnMargin = (thirdCell >= 0) && (thirdCell < nCells_F) &&
+            !(cellsMask_F[thirdCell] & dynamic_ice_bit_value) &&
+            (dirichletCellsMask_F[(nLayers+1)*thirdCell] == 0);
+        if(isThirdCellOnMargin)
+          iceMarginEdgesLIds.push_back(index);
+      }
     }
   }
 
@@ -667,13 +875,53 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
   dirichletNodesIDs.clear();
   dirichletNodesIDs.reserve(nVertices); //need to improve storage efficiency
   isVertexBoundary.assign(nVertices, false);
+  isPinnedTerrestrialCell.assign(nCells_F, false);
+  int numPinnedTerrestrialNodes = 0;
   for (int index = 0; index < nVertices; index++) {
     int fCell = vertexToFCell[index];
+    bool hasDirichletMask = false;
     for(int il=0; il< nLayers+1; ++il)
     {
       int imask_F = il+(nLayers+1)*fCell;
-      if(dirichletCellsMask_F[imask_F]!=0)
+      if(dirichletCellsMask_F[imask_F]!=0) {
         dirichletNodesIDs.push_back((nLayers-il)*vertexColumnShift+indexToVertexID[index]*vertexLayerShift);
+        hasDirichletMask = true;
+      }
+    }
+
+    // With 'terrestrial-only', every non-dynamic FE node is an extended terrestrial node.  Optionally give it a
+    // zero-velocity Dirichlet condition (unless it already has one).  A junction node is one that belongs to a
+    // valid triangle that has a dynamic node but is excluded from the FE mesh, which under 'terrestrial-only'
+    // means the triangle also has an ice-free marine node, so the mesh boundary passes between this node and a
+    // dynamic node.  All data used here is valid in the halo cells needed, so no communication is required.
+    // With config_fem_marine_cliff_extension, non-dynamic marine (bed < 0) FE nodes are tall-cliff extension
+    // nodes, which are never pinned.
+    if ((terrestrialNodeVelocity != terrestrialNodeFree) && !hasDirichletMask &&
+        !(cellsMask_F[fCell] & dynamic_ice_bit_value) && (bedTopography_F[fCell] >= 0.0)) {
+      bool pinNode = (terrestrialNodeVelocity == terrestrialNodeZero);
+      if (terrestrialNodeVelocity == terrestrialNodeZeroAtJunctions) {
+        for (int j = 0; (j < nEdgesOnCells_F[fCell]) && !pinNode; j++) {
+          ID fVertex = verticesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+          if ((fVertex >= nVertices_F) || (fVertexToTriangleID[fVertex] != NotAnId))
+            continue;
+          bool validTria = true, hasDynamicNode = false;
+          for (int k = 0; k < 3; k++) {
+            int iCell = cellsOnVertex_F[3 * fVertex + k] - 1;
+            if ((iCell < 0) || (iCell >= nCells_F)) {
+              validTria = false;
+              break;
+            }
+            hasDynamicNode = hasDynamicNode || (cellsMask_F[iCell] & dynamic_ice_bit_value);
+          }
+          pinNode = validTria && hasDynamicNode;
+        }
+      }
+      if (pinNode) {
+        isPinnedTerrestrialCell[fCell] = true;
+        numPinnedTerrestrialNodes++;
+        for(int il=0; il< nLayers+1; ++il)
+          dirichletNodesIDs.push_back((nLayers-il)*vertexColumnShift+indexToVertexID[index]*vertexLayerShift);
+      }
     }
 
     int nEdg = nEdgesOnCells_F[fCell];
@@ -686,6 +934,9 @@ void velocity_solver_compute_2d_grid(int const* _verticesMask_F, int const* _cel
     } while ((j < nEdg) && (!isBoundary));
     isVertexBoundary[index] = isBoundary;
   }
+  if (terrestrialNodeVelocity != terrestrialNodeFree)
+    std::cout << "Number of extended terrestrial FE nodes (owned or shared by this proc) with zero-velocity "
+              << "Dirichlet condition: " << numPinnedTerrestrialNodes << std::endl;
 
   // because we change the ownership of some vertices, we need to first communicate back to the processors that used to own those vertices
   // the data of the newly owned vertices. We do this by defining "reversed" send and receive lists, communicate back using that list, and
@@ -896,10 +1147,26 @@ void get_prism_velocity_on_FEdges(double * uNormal,
     if((fVertex0 >= nVertices_F) || (fVertex1 >= nVertices_F))
       continue;
 
+    //computing midpoint of fortran edge
+    double e_mid[2];
+    e_mid[0] =  0.5*(xVertex_F[fVertex0] + xVertex_F[fVertex1]);
+    e_mid[1] =  0.5*(yVertex_F[fVertex0] + yVertex_F[fVertex1]);
+
     int iTria0 = fVertexToTriangleID[fVertex0];
     int iTria1 = fVertexToTriangleID[fVertex1];
-    if((iTria0 == NotAnId) && (iTria1 == NotAnId)) 
+    if((iTria0 == NotAnId) && (iTria1 == NotAnId)) {
+      // Neither triangle sharing this edge is part of the FE mesh.
+      // With the marine FEM extension, this edge is outside the ice and its velocity is left at zero.
+      // Without the marine FEM extension, this can be an edge on the external side of the dynamic ice extent
+      // (or between dynamic cells that are not connected by an FE triangle), so extrapolate the solved velocity.
+      if (!useMarineExtension) {
+        if (velocityExtrapolationTarget == extrapTargetCells)
+          velocityOnEdgeFromCells(iEdge, iCell0, iCell1, nx, ny, uNormal, velocityOnCells);
+        else
+          extrapolateVelocityOnEdge(iEdge, iCell0, iCell1, nx, ny, e_mid, uNormal, velocityOnCells);
+      }
       continue;
+    }
 
     double t0[2*3], t1[2*3]; //t0[0] contains the x-coords of vertices of triangle 0 and t0[1] its y-coords.
     if(iTria0 != NotAnId) {
@@ -923,11 +1190,6 @@ void get_prism_velocity_on_FEdges(double * uNormal,
     double bcoords[3];
 
     ID iCells[3]; //iCells[k] is the array of cells indexes of triangle k on iEdge
-
-    //computing midpoint of fortran edge
-    double e_mid[2];
-    e_mid[0] =  0.5*(xVertex_F[fVertex0] + xVertex_F[fVertex1]);
-    e_mid[1] =  0.5*(yVertex_F[fVertex0] + yVertex_F[fVertex1]);
 
     if((iTria0 != NotAnId) && belongToTria(e_mid, t0, bcoords)) {
         // triangle1 is in the mesh  AND midpoint is in triangle1
@@ -989,6 +1251,586 @@ void get_prism_velocity_on_FEdges(double * uNormal,
     } //end loop over layers
   } //loop over edges
 }
+
+// ===================================================
+//! Velocity extrapolation outside the FE mesh (used when useMarineExtension is false)
+// ===================================================
+
+// Below this speed [m/yr], the flow direction is considered undefined and 'flowline' extrapolation
+// falls back to using the cell center velocity.
+const double minSpeedForFlowDirection = 1e-6;
+
+// An FE triangle (MPAS vertex) used for extrapolating velocity: its three nodes (MPAS cells),
+// the gradients of its linear basis functions, and its area.
+struct FETriangleGradient {
+  int cells[3];
+  double dphidx[3], dphidy[3];
+  double area;
+};
+
+// Collect the FE triangles that have the MPAS cell iCell as a node.
+static void getFETrianglesOfCell(int iCell, std::vector<FETriangleGradient>& triangles) {
+  triangles.clear();
+  for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+    ID fVertex = verticesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+    if ((fVertex >= nVertices_F) || (fVertexToTriangleID[fVertex] == NotAnId))
+      continue;
+
+    FETriangleGradient tria;
+    double x[3], y[3];
+    bool validTria = true;
+    for (int k = 0; k < 3; k++) {
+      tria.cells[k] = cellsOnVertex_F[3 * fVertex + k] - 1;
+      if ((tria.cells[k] < 0) || (tria.cells[k] >= nCells_F)) {
+        validTria = false;
+        break;
+      }
+      x[k] = xCell_F[tria.cells[k]];
+      y[k] = yCell_F[tria.cells[k]];
+    }
+    if (!validTria)
+      continue;
+
+    double det = (x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]);
+    if (det == 0.0)
+      continue;
+    tria.dphidx[0] = (y[1] - y[2]) / det;  tria.dphidy[0] = (x[2] - x[1]) / det;
+    tria.dphidx[1] = (y[2] - y[0]) / det;  tria.dphidy[1] = (x[0] - x[2]) / det;
+    tria.dphidx[2] = (y[0] - y[1]) / det;  tria.dphidy[2] = (x[1] - x[0]) / det;
+    tria.area = 0.5 * std::abs(det);
+    triangles.push_back(tria);
+  }
+}
+
+// Extrapolate the velocity vector of layer il from the center of MPAS cell iCell to the point e_mid,
+// following velocityExtrapolationMethod and useVelocityExtrapolationLimiter.
+// triangles are the FE triangles having iCell as a node (empty if iCell is not an FE node).
+// Returns the extrapolated velocity vector in (ue, ve).
+static void extrapolateVelocityFromCell(int iCell, int il, const double* e_mid,
+    const std::vector<FETriangleGradient>& triangles, const std::vector<double>& velocityOnCells,
+    double& ue, double& ve) {
+
+  int nLevels = nLayers + 1;
+  int sizeVelOnCell = nCells_F * nLevels;
+  double uc = velocityOnCells[il + nLevels * iCell];
+  double vc = velocityOnCells[il + nLevels * iCell + sizeVelOnCell];
+
+  // 'nearest' (also used if there is no gradient information, e.g. for filled orphan cells)
+  ue = uc;
+  ve = vc;
+  if ((velocityExtrapolationMethod == extrapNearest) || triangles.empty())
+    return;
+
+  // offset from cell center to edge midpoint
+  double dx = e_mid[0] - xCell_F[iCell];
+  double dy = e_mid[1] - yCell_F[iCell];
+
+  // indices of the triangles whose gradients are used
+  std::vector<int> usedTriangles;
+
+  if (velocityExtrapolationMethod == extrapFlowline) {
+    // Only extrapolate the along-flow variation of velocity, so that across-flow gradients
+    // (e.g., from shear margins) are not extrapolated onto the edge.
+    double speed = std::sqrt(uc * uc + vc * vc);
+    if (speed < minSpeedForFlowDirection)
+      return;  // flow direction undefined; use cell center velocity
+    double sx = uc / speed, sy = vc / speed;
+    double d = dx * sx + dy * sy;  // along-flow distance from cell center to edge midpoint
+    if (d <= 0.0)
+      return;  // edge is beside or upstream of the cell; use cell center velocity
+
+    // Use the gradient from the FE triangle immediately upstream of the cell along the flow direction.
+    double delta = 0.5 * std::sqrt(dx * dx + dy * dy);
+    double p[2] = {xCell_F[iCell] - delta * sx, yCell_F[iCell] - delta * sy};
+    for (int t = 0; t < int(triangles.size()); t++) {
+      double tCoords[2*3], bcoords[3];
+      for (int k = 0; k < 3; k++) {
+        tCoords[0 + 2 * k] = xCell_F[triangles[t].cells[k]];
+        tCoords[1 + 2 * k] = yCell_F[triangles[t].cells[k]];
+      }
+      if (belongToTria(p, tCoords, bcoords)) {
+        usedTriangles.push_back(t);
+        break;
+      }
+    }
+
+    // only the along-flow component of the offset is used
+    dx = d * sx;
+    dy = d * sy;
+  }
+
+  // 'linear', or 'flowline' if no upstream triangle was found: use all triangles of the cell
+  if (usedTriangles.empty()) {
+    for (int t = 0; t < int(triangles.size()); t++)
+      usedTriangles.push_back(t);
+  }
+
+  // area-weighted average gradient of the FE solution, and range of nodal speeds for the limiter
+  double dudx = 0.0, dudy = 0.0, dvdx = 0.0, dvdy = 0.0, areaSum = 0.0;
+  double sMin = std::numeric_limits<double>::max(), sMax = 0.0;
+  for (int t : usedTriangles) {
+    const FETriangleGradient& tria = triangles[t];
+    for (int k = 0; k < 3; k++) {
+      int c = tria.cells[k];
+      double uk = velocityOnCells[il + nLevels * c];
+      double vk = velocityOnCells[il + nLevels * c + sizeVelOnCell];
+      dudx += tria.area * uk * tria.dphidx[k];
+      dudy += tria.area * uk * tria.dphidy[k];
+      dvdx += tria.area * vk * tria.dphidx[k];
+      dvdy += tria.area * vk * tria.dphidy[k];
+      double sk = std::sqrt(uk * uk + vk * vk);
+      sMin = std::min(sMin, sk);
+      sMax = std::max(sMax, sk);
+    }
+    areaSum += tria.area;
+  }
+  dudx /= areaSum;  dudy /= areaSum;
+  dvdx /= areaSum;  dvdy /= areaSum;
+
+  ue = uc + dudx * dx + dudy * dy;
+  ve = vc + dvdx * dx + dvdy * dy;
+
+  if (useVelocityExtrapolationLimiter) {
+    // 'relaxed' limiter on speed (independent of mesh/edge orientation): allow the extrapolated speed to
+    // exceed the range of nodal speeds by up to that range, then rescale the vector, preserving its direction.
+    double range = sMax - sMin;
+    double sLow = std::max(0.0, sMin - range);
+    double sHigh = sMax + range;
+    double se = std::sqrt(ue * ue + ve * ve);
+    double sLimited = std::min(std::max(se, sLow), sHigh);
+    if ((se > 0.0) && (sLimited != se)) {
+      ue *= sLimited / se;
+      ve *= sLimited / se;
+    }
+  }
+}
+
+// Compute the normal velocity on an owned MPAS edge for which neither adjacent triangle is part of
+// the FE mesh, by extrapolating the velocity from the adjacent dynamic cells that have a velocity
+// (FE nodes or filled orphan cells).  Non-dynamic FE nodes (extended terrestrial nodes under
+// 'terrestrial-only') are not extrapolated from.  If only one of the two cells is dynamic, only
+// outflow from the dynamic cell is allowed.
+void extrapolateVelocityOnEdge(int iEdge, int iCell0, int iCell1, double nx, double ny,
+    const double* e_mid, double* uNormal, const std::vector<double>& velocityOnCells) {
+
+  int cells[2] = {iCell0, iCell1};
+  bool hasVelocity[2], isDynamic[2];
+  std::vector<FETriangleGradient> triangles[2];
+  int nSides = 0;
+  for (int k = 0; k < 2; k++) {
+    int c = cells[k];
+    isDynamic[k] = (cellsMask_F[c] & dynamic_ice_bit_value) != 0;
+    hasVelocity[k] = isDynamic[k] && (isFENodeCell[c] || isFilledCell[c]);
+    if (hasVelocity[k]) {
+      nSides++;
+      if (isFENodeCell[c] && ((velocityExtrapolationMethod == extrapLinear) ||
+                              (velocityExtrapolationMethod == extrapFlowline)))
+        getFETrianglesOfCell(c, triangles[k]);
+    }
+  }
+
+  for (int il = 0; il < nLayers+1; il++) { //loop over layers
+    int ilReversed = nLayers - il;
+    int index = iEdge * (nLayers+1) + ilReversed;
+    uNormal[index] = 0;
+    if (nSides == 0)
+      continue;
+
+    // Extrapolate the full velocity vector from each side, then take the normal component.
+    double uNormalSum = 0;
+    for (int k = 0; k < 2; k++) {
+      if (!hasVelocity[k])
+        continue;
+      double ue, ve;
+      extrapolateVelocityFromCell(cells[k], il, e_mid, triangles[k], velocityOnCells, ue, ve);
+      uNormalSum += nx * ue + ny * ve;
+    }
+    double un = uNormalSum / nSides;
+
+    // Only allow outflow from dynamic ice onto non-dynamic cells (n points from iCell0 to iCell1).
+    if (isDynamic[0] && !isDynamic[1])
+      un = std::max(0.0, un);
+    else if (isDynamic[1] && !isDynamic[0])
+      un = std::min(0.0, un);
+
+    uNormal[index] = un;
+  } //end loop over layers
+}
+
+// Fill the velocity of owned dynamic cells that are not FE nodes (and thus get no velocity from the
+// solver, e.g. one-cell-wide tongues, isolated cells, or cells whose triangles were pruned as floating hinges)
+// with the Dirichlet velocity where specified, otherwise with the average velocity of their dynamic
+// neighbors that have one.  The first pass uses only FE-node neighbors.  Later passes also use cells
+// filled in earlier passes, so a chain of non-FE dynamic cells (common at jagged fronts) is filled from its
+// end: with a single pass, the second cell of a chain had no velocity at all, so it received ice from its
+// moving neighbor but could not advect it out, melt it or calve it, and grew without bound.  Each pass only
+// uses values from earlier passes, so the result does not depend on the cell ordering.  Also sets
+// isFilledCell.  Must be called on all procs because it includes halo exchanges.
+void fillOrphanCellVelocities(double const* dirichletVelocityXValue, double const* dirichletVelocityYValue) {
+  const int maxPasses = 20;
+  int nLevels = nLayers + 1;
+  int sizeVelOnCell = nCells_F * nLevels;
+  std::vector<int> isFilled(nCells_F, 0);
+  std::vector<int> neighbors;
+  neighbors.reserve(maxNEdgesOnCell_F);
+  std::vector<int> newlyFilled;
+  std::vector<double> newU, newV;
+
+  for (int pass = 0; pass < maxPasses; pass++) {
+    newlyFilled.clear();
+    newU.clear();
+    newV.clear();
+    for (int iCell = 0; iCell < nCellsSolve_F; iCell++) {
+      if (isFENodeCell[iCell] || isFilled[iCell] || !(cellsMask_F[iCell] & dynamic_ice_bit_value))
+        continue;
+
+      // neighboring dynamic cells with a velocity: FE nodes (not extended terrestrial nodes under
+      // 'terrestrial-only'), or cells filled in an earlier pass
+      neighbors.clear();
+      for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+        int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+        if ((fEdge < 0) || (fEdge >= nEdges_F))
+          continue;
+        int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+        int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+        if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+          continue;
+        int c = (c0 == iCell) ? c1 : c0;
+        // (isFilled is only used after the first pass, whose values are written as they are computed)
+        if ((isFENodeCell[c] || ((pass > 0) && isFilled[c])) && (cellsMask_F[c] & dynamic_ice_bit_value))
+          neighbors.push_back(c);
+      }
+
+      if (pass == 0) {
+        // First pass, as before: per layer, the Dirichlet value if specified, else the mean of the FE-node
+        // neighbors.  The sources are FE nodes, whose values this pass does not change, so write directly.
+        for (int il = 0; il < nLevels; il++) {
+          int ilReversed = nLayers - il;
+          int indexReversed = iCell * nLevels + ilReversed;
+          int index = iCell * nLevels + il;
+          if (dirichletCellsMask_F[indexReversed] != 0) {
+            velocityOnCells[index] = dirichletVelocityXValue[indexReversed];
+            velocityOnCells[index + sizeVelOnCell] = dirichletVelocityYValue[indexReversed];
+            isFilled[iCell] = 1;
+          } else if (!neighbors.empty()) {
+            double u = 0, v = 0;
+            for (int c : neighbors) {
+              u += velocityOnCells[c * nLevels + il];
+              v += velocityOnCells[c * nLevels + il + sizeVelOnCell];
+            }
+            velocityOnCells[index] = u / neighbors.size();
+            velocityOnCells[index + sizeVelOnCell] = v / neighbors.size();
+            isFilled[iCell] = 1;
+          }
+        }
+        if (isFilled[iCell])
+          newlyFilled.push_back(-1);  // counted below, already applied
+        continue;
+      }
+      if (neighbors.empty())
+        continue;
+
+      newlyFilled.push_back(iCell);
+      for (int il = 0; il < nLevels; il++) {
+        double u = 0, v = 0;
+        for (int c : neighbors) {
+          u += velocityOnCells[c * nLevels + il];
+          v += velocityOnCells[c * nLevels + il + sizeVelOnCell];
+        }
+        newU.push_back(u / neighbors.size());
+        newV.push_back(v / neighbors.size());
+      }
+    }
+    // apply this pass's values only now, so that they are not used within the same pass
+    for (size_t k = 0, kv = 0; k < newlyFilled.size(); k++) {
+      int iCell = newlyFilled[k];
+      if (iCell < 0)
+        continue;  // first-pass cell, already applied
+      for (int il = 0; il < nLevels; il++) {
+        velocityOnCells[iCell * nLevels + il] = newU[kv * nLevels + il];
+        velocityOnCells[iCell * nLevels + il + sizeVelOnCell] = newV[kv * nLevels + il];
+      }
+      kv++;
+      isFilled[iCell] = 1;
+    }
+
+    for (int dim = 0; dim < 2; dim++)
+      allToAll(&velocityOnCells[dim * sizeVelOnCell], sendCellsList_F, recvCellsList_F, nLevels);
+    allToAll(isFilled, sendCellsList_F, recvCellsList_F);
+
+    int numNew = newlyFilled.size(), globalNumNew = 0;
+    MPI_Allreduce(&numNew, &globalNumNew, 1, MPI_INT, MPI_SUM, comm);
+    if (globalNumNew == 0)
+      break;
+  }
+
+  isFilledCell.assign(nCells_F, false);
+  for (int iCell = 0; iCell < nCells_F; iCell++)
+    isFilledCell[iCell] = (isFilled[iCell] != 0);
+}
+
+// Distance between the two vertices of an MPAS edge (dvEdge) in the FE coordinates.
+static double getEdgeLength(int fEdge) {
+  int v0 = verticesOnEdge_F[2 * fEdge] - 1;
+  int v1 = verticesOnEdge_F[2 * fEdge + 1] - 1;
+  return std::hypot(xVertex_F[v0] - xVertex_F[v1], yVertex_F[v0] - yVertex_F[v1]);
+}
+
+// True if cell c can be a source of extrapolated velocity: dynamic with a solved or filled velocity.
+static bool hasSolvedVelocity(int c) {
+  return (cellsMask_F[c] & dynamic_ice_bit_value) && (isFENodeCell[c] || isFilledCell[c]);
+}
+
+// Weighted least-squares plane fit of the velocity (layer il) at the points pts (MPAS cells), evaluated at the center
+// of cell iCell.  Returns false if the fit is under-determined or ill-conditioned (e.g., collinear points).
+static bool fitPlaneVelocityAtCell(int iCell, int il, const std::vector<int>& pts,
+    const std::vector<double>& vel, double& ue, double& ve) {
+  if (pts.size() < 3)
+    return false;
+  int nLevels = nLayers + 1;
+  int sizeVelOnCell = nCells_F * nLevels;
+  double L = 0;
+  for (int c : pts)
+    L += std::hypot(xCell_F[c] - xCell_F[iCell], yCell_F[c] - yCell_F[iCell]);
+  L /= pts.size();
+  if (L <= 0.0)
+    return false;
+
+  double M[3][3] = {{0}}, rhsU[3] = {0}, rhsV[3] = {0};
+  double sMin = std::numeric_limits<double>::max(), sMax = 0.0;
+  for (int c : pts) {
+    double dx = (xCell_F[c] - xCell_F[iCell]) / L;
+    double dy = (yCell_F[c] - yCell_F[iCell]) / L;
+    double w = 1.0 / std::max(std::hypot(dx, dy), 1e-12);
+    double b[3] = {1.0, dx, dy};
+    double uc = vel[il + nLevels * c], vc = vel[il + nLevels * c + sizeVelOnCell];
+    for (int r = 0; r < 3; r++) {
+      for (int k = 0; k < 3; k++)
+        M[r][k] += w * b[r] * b[k];
+      rhsU[r] += w * b[r] * uc;
+      rhsV[r] += w * b[r] * vc;
+    }
+    double sc = std::hypot(uc, vc);
+    sMin = std::min(sMin, sc);
+    sMax = std::max(sMax, sc);
+  }
+  auto det3 = [](double A[3][3]) {
+    return A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+         - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+         + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+  };
+  double det = det3(M);
+  // The ratio of det to the product of the diagonal is 1 for a perfectly conditioned (orthogonal) system and 0 if singular.
+  if (det <= 1e-3 * M[0][0] * M[1][1] * M[2][2])
+    return false;
+  // Cramer's rule for the intercept (the value at the center of iCell)
+  double MU[3][3], MV[3][3];
+  for (int r = 0; r < 3; r++)
+    for (int k = 0; k < 3; k++) {
+      MU[r][k] = (k == 0) ? rhsU[r] : M[r][k];
+      MV[r][k] = (k == 0) ? rhsV[r] : M[r][k];
+    }
+  ue = det3(MU) / det;
+  ve = det3(MV) / det;
+
+  if (useVelocityExtrapolationLimiter) {
+    // same 'relaxed' limiter as in extrapolateVelocityFromCell, using the speeds at the fit points
+    double range = sMax - sMin;
+    double sLow = std::max(0.0, sMin - range);
+    double sHigh = sMax + range;
+    double se = std::hypot(ue, ve);
+    double sLimited = std::min(std::max(se, sLow), sHigh);
+    if ((se > 0.0) && (sLimited != se)) {
+      ue *= sLimited / se;
+      ve *= sLimited / se;
+    }
+  }
+  return true;
+}
+
+// Remove the component of (u,v) that points toward the source cells, i.e. only allow outflow from the solved
+// velocity extent.  (nx,ny) is a unit vector pointing from the source cell(s) to the extrapolation target.
+static void removeInflow(double nx, double ny, double& u, double& v) {
+  double un = u * nx + v * ny;
+  if (un < 0.0) {
+    u -= un * nx;
+    v -= un * ny;
+  }
+}
+
+// Extrapolate the full velocity vector onto each owned non-dynamic cell that is adjacent to at least one dynamic cell
+// with a solved (or filled) velocity, following velocityExtrapolationMethod and useVelocityExtrapolationLimiter.
+// Only cells with a solved/filled velocity are sources, so the result does not depend on the order of the cells.
+//  'nearest':  dvEdge-weighted mean of the velocities of the source neighbors.
+//  'linear':   weighted least-squares plane fit through the source neighbors and their own solved neighbors.
+//  'flowline': like 'nearest', but each source velocity is first extrapolated to the target using the FE gradient
+//              along the flow direction of that source (see extrapolateVelocityFromCell), and sources whose flow
+//              does not point toward the target are down-weighted to zero (unless none points toward it).
+// In all cases only outflow from the source cells is allowed.
+// Must be called on all procs because it includes halo exchanges.
+void extrapolateVelocityToCells() {
+  int nLevels = nLayers + 1;
+  int sizeVelOnCell = nCells_F * nLevels;
+  std::vector<int> isExtrap(nCells_F, 0);
+
+  struct Source { int cell; double len; double nx, ny; double cosFlow; };
+  std::vector<Source> sources;
+  std::vector<int> fitPts;
+  std::vector<FETriangleGradient> triangles;
+
+  for (int iCell = 0; iCell < nCellsSolve_F; iCell++) {
+    if (isFENodeCell[iCell] || (cellsMask_F[iCell] & dynamic_ice_bit_value))
+      continue;
+
+    sources.clear();
+    for (int j = 0; j < nEdgesOnCells_F[iCell]; j++) {
+      int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * iCell + j] - 1;
+      if ((fEdge < 0) || (fEdge >= nEdges_F))
+        continue;
+      int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+      int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+      if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+        continue;
+      int c = (c0 == iCell) ? c1 : c0;
+      if (!hasSolvedVelocity(c))
+        continue;
+      double dx = xCell_F[iCell] - xCell_F[c], dy = yCell_F[iCell] - yCell_F[c];
+      double d = std::hypot(dx, dy);
+      sources.push_back({c, getEdgeLength(fEdge), dx / d, dy / d, 0.0});
+    }
+    if (sources.empty())
+      continue;
+    isExtrap[iCell] = 1;
+
+    // mean unit vector from the sources toward the target, used to limit inflow for the fitted velocity
+    double wsum = 0, nxm = 0, nym = 0;
+    for (const Source& s : sources) {
+      wsum += s.len;
+      nxm += s.len * s.nx;
+      nym += s.len * s.ny;
+    }
+    double nm = std::hypot(nxm, nym);
+    if (nm > 0.0) { nxm /= nm; nym /= nm; }
+
+    // points for the plane fit: the sources and their own neighbors that have a solved velocity
+    bool useFit = (velocityExtrapolationMethod == extrapLinear);
+    if (useFit) {
+      fitPts.clear();
+      for (const Source& s : sources) {
+        fitPts.push_back(s.cell);
+        for (int j = 0; j < nEdgesOnCells_F[s.cell]; j++) {
+          int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * s.cell + j] - 1;
+          if ((fEdge < 0) || (fEdge >= nEdges_F))
+            continue;
+          int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+          int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+          if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+            continue;
+          int c = (c0 == s.cell) ? c1 : c0;
+          if (c != iCell && hasSolvedVelocity(c))
+            fitPts.push_back(c);
+        }
+      }
+      std::sort(fitPts.begin(), fitPts.end());
+      fitPts.erase(std::unique(fitPts.begin(), fitPts.end()), fitPts.end());
+    }
+
+    double target[2] = {xCell_F[iCell], yCell_F[iCell]};
+    for (int il = 0; il < nLevels; il++) {
+      double ue = 0, ve = 0;
+      bool done = false;
+      if (useFit)
+        done = fitPlaneVelocityAtCell(iCell, il, fitPts, velocityOnCells, ue, ve);
+      if (done) {
+        removeInflow(nxm, nym, ue, ve);
+      } else {
+        // 'nearest' (also the fallback for 'linear'), or 'flowline'
+        double wTot = 0, uSum = 0, vSum = 0;
+        std::vector<double> w(sources.size()), uc(sources.size()), vc(sources.size());
+        double wAligned = 0;
+        for (size_t k = 0; k < sources.size(); k++) {
+          const Source& s = sources[k];
+          if (velocityExtrapolationMethod == extrapFlowline) {
+            getFETrianglesOfCell(s.cell, triangles);
+            extrapolateVelocityFromCell(s.cell, il, target, triangles, velocityOnCells, uc[k], vc[k]);
+          } else {
+            uc[k] = velocityOnCells[il + nLevels * s.cell];
+            vc[k] = velocityOnCells[il + nLevels * s.cell + sizeVelOnCell];
+          }
+          removeInflow(s.nx, s.ny, uc[k], vc[k]);
+          w[k] = s.len;
+          if (velocityExtrapolationMethod == extrapFlowline) {
+            double u0 = velocityOnCells[il + nLevels * s.cell];
+            double v0 = velocityOnCells[il + nLevels * s.cell + sizeVelOnCell];
+            double sp = std::hypot(u0, v0);
+            double cosFlow = (sp < minSpeedForFlowDirection) ? 1.0 : (u0 * s.nx + v0 * s.ny) / sp;
+            w[k] = s.len * std::max(0.0, cosFlow);
+            wAligned += w[k];
+          }
+        }
+        if (velocityExtrapolationMethod == extrapFlowline && wAligned <= 0.0)
+          for (size_t k = 0; k < sources.size(); k++)
+            w[k] = sources[k].len;
+        for (size_t k = 0; k < sources.size(); k++) {
+          wTot += w[k];
+          uSum += w[k] * uc[k];
+          vSum += w[k] * vc[k];
+        }
+        ue = uSum / wTot;
+        ve = vSum / wTot;
+      }
+      velocityOnCells[il + nLevels * iCell] = ue;
+      velocityOnCells[il + nLevels * iCell + sizeVelOnCell] = ve;
+    }
+  }
+
+  for (int dim = 0; dim < 2; dim++)
+    allToAll(&velocityOnCells[dim * sizeVelOnCell], sendCellsList_F, recvCellsList_F, nLevels);
+  allToAll(isExtrap, sendCellsList_F, recvCellsList_F);
+  for (int iCell = 0; iCell < nCells_F; iCell++)
+    isExtrapCell[iCell] = (isExtrap[iCell] != 0);
+}
+
+// Compute the normal velocity on an owned MPAS edge for which neither adjacent triangle is part of the FE mesh as the
+// mean of the normal components of the velocity vectors of the two adjacent cells, where a cell vector is available
+// (dynamic cells with a solved/filled velocity, and cells with an extrapolated velocity, see extrapolateVelocityToCells).
+// Edges without an adjacent dynamic cell with a velocity are left at zero.  Only outflow from dynamic ice is allowed
+// onto non-dynamic cells (n points from iCell0 to iCell1).
+void velocityOnEdgeFromCells(int iEdge, int iCell0, int iCell1, double nx, double ny,
+    double* uNormal, const std::vector<double>& velocityOnCells) {
+  int nLevels = nLayers + 1;
+  int sizeVelOnCell = nCells_F * nLevels;
+  int cells[2] = {iCell0, iCell1};
+  bool isDynamic[2], hasVector[2];
+  bool anyDynamicSource = false;
+  for (int k = 0; k < 2; k++) {
+    isDynamic[k] = (cellsMask_F[cells[k]] & dynamic_ice_bit_value) != 0;
+    hasVector[k] = hasSolvedVelocity(cells[k]) || isExtrapCell[cells[k]];
+    anyDynamicSource = anyDynamicSource || (isDynamic[k] && hasVector[k]);
+  }
+  for (int il = 0; il < nLevels; il++) {
+    int ilReversed = nLayers - il;
+    int index = iEdge * nLevels + ilReversed;
+    uNormal[index] = 0;
+    if (!anyDynamicSource)
+      continue;
+    double sum = 0;
+    int n = 0;
+    for (int k = 0; k < 2; k++) {
+      if (!hasVector[k])
+        continue;
+      sum += nx * velocityOnCells[il + nLevels * cells[k]] + ny * velocityOnCells[il + nLevels * cells[k] + sizeVelOnCell];
+      n++;
+    }
+    double un = sum / n;
+    if (isDynamic[0] && !isDynamic[1])
+      un = std::max(0.0, un);
+    else if (isDynamic[1] && !isDynamic[0])
+      un = std::min(0.0, un);
+    uNormal[index] = un;
+  }
+}
+
 
 void mapVerticesToCells(const std::vector<double>& velocityOnVertices,
     double* velocityOnCells, int fieldDim, int numLayers, int ordering) {
@@ -1123,6 +1965,71 @@ double signedTriangleAreaOnSphere(const double* x, const double* y,
 }
 
 
+// Statistics over the dynamic (Albany-active) edge-neighbors of MPAS cell fCell, used for the tall-cliff extension
+// (config_fem_marine_cliff_extension).  Geometry in Albany units (km); sea level is 0, as elsewhere in importFields.
+struct DynamicNeighborStats {
+  int count = 0;
+  double minElev = 1e10;   // lowest surface elevation
+  double meanThick = 0.0;  // mean thickness
+  double maxMarineCliffElev = -1e10;  // highest surface of a grounded neighbor whose bed is below sea level
+};
+
+static DynamicNeighborStats dynamicNeighborStats(int fCell,
+    double const* lowerSurface_F, double const* thickness_F, double const* bedTopography_F) {
+  DynamicNeighborStats stats;
+  for (int j = 0; j < nEdgesOnCells_F[fCell]; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    double elev = (lowerSurface_F[c] + thickness_F[c]) / unit_length;
+    stats.count++;
+    stats.minElev = std::min(stats.minElev, elev);
+    stats.meanThick += thickness_F[c] / unit_length;
+    if ((bedTopography_F[c] < 0.0) && (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]))
+      stats.maxMarineCliffElev = std::max(stats.maxMarineCliffElev, elev);
+  }
+  if (stats.count > 0)
+    stats.meanThick /= stats.count;
+  return stats;
+}
+
+// Mean of the MPAS cell field field_F over the dynamic edge-neighbors of cell fCell that are grounded by flotation
+// (sea level at 0), or over all dynamic neighbors if none is grounded.  Gives a grounded-cliff extension node the
+// basal properties of the ice it continues rather than those of the ice-free ocean cell it occupies.
+static double groundedNeighborMean(int fCell, double const* field_F,
+    double const* thickness_F, double const* bedTopography_F) {
+  double sumGrounded = 0.0, sumAll = 0.0;
+  int nGrounded = 0, nAll = 0;
+  for (int j = 0; j < nEdgesOnCells_F[fCell]; j++) {
+    int fEdge = edgesOnCell_F[maxNEdgesOnCell_F * fCell + j] - 1;
+    if ((fEdge < 0) || (fEdge >= nEdges_F))
+      continue;
+    int c0 = cellsOnEdge_F[2 * fEdge] - 1;
+    int c1 = cellsOnEdge_F[2 * fEdge + 1] - 1;
+    if ((c0 < 0) || (c1 < 0) || (c0 >= nCells_F) || (c1 >= nCells_F))
+      continue;
+    int c = (c0 == fCell) ? c1 : c0;
+    if (!(cellsMask_F[c] & dynamic_ice_bit_value))
+      continue;
+    sumAll += field_F[c];
+    nAll++;
+    if (rho_ice * thickness_F[c] >= -rho_ocean * bedTopography_F[c]) {
+      sumGrounded += field_F[c];
+      nGrounded++;
+    }
+  }
+  if (nGrounded > 0)
+    return sumGrounded / nGrounded;
+  return (nAll > 0) ? sumAll / nAll : field_F[fCell];
+}
+
 void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double const* bedTopography_F, double const * lowerSurface_F, double const * thickness_F,
     double const * beta_F, double const* stiffnessFactor_F, double const* effecPress_F, double const* muFriction_F,
@@ -1206,6 +2113,14 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
 
   //extend thickness and elevation data to the border for marine vertices
   marineBdyExtensionMap.clear();
+
+  // With config_fem_extension_method='none', all FE vertices are dynamic ice, so there is nothing to extend.
+  // With 'terrestrial-only', the only non-dynamic marine (bed < 0) FE vertices are tall-cliff extension nodes
+  // (config_fem_marine_cliff_extension; see li_calculate_mask), so without that option only the terrestrial
+  // branch below is used and marineBdyExtensionMap stays empty.
+  if (!useTerrestrialExtension)
+    return;
+
   marineBdyExtensionMap.reserve(nVertices);
 
   for (int iV = 0; iV < nVertices; iV++) {
@@ -1328,7 +2243,55 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     double elev = -1e10;
     double thick = eps;
 
-    if (useISMIP7Extension) {
+    if (!useMarineExtension) {
+      // 'terrestrial-only' with config_fem_marine_cliff_extension: this node is next to a grounded marine cliff
+      // taller than marineCliffHeightStart.  Without an extension the full cliff is the edge of the FE mesh, and
+      // the calving-front force grows with its height.  Grounded marine cliffs more than about 100 m high are not
+      // generally stable (marine ice-cliff instability), and MALI has no parameterization of their failure, so
+      // treat a tall cliff as adjusting viscously to a ramp: continue the ice flat to this node (the lowest
+      // neighbor surface, so no neighbor sees a reverse slope, with the neighbors' mean thickness, limited by the
+      // bed and by flotation), then blend that column linearly, in surface and thickness, toward a floating ramp to
+      // near-zero thickness as the tallest marine cliff next to it grows from marineCliffHeightStart to
+      // marineCliffHeightEnd.  The column is a continuous function of the neighbors, so it does not jump when
+      // their ordering changes; it only appears when a cliff first exceeds marineCliffHeightStart.
+      DynamicNeighborStats stats = dynamicNeighborStats(vertexToFCell[iv], lowerSurface_F, thickness_F, bedTopography_F);
+      if (stats.count == 0)  // cannot happen (ic is a dynamic neighbor), but don't use empty stats
+        stats = {1, (lowerSurface_F[ic] + thickness_F[ic]) / unit_length, thickness_F[ic] / unit_length,
+                 (lowerSurface_F[ic] + thickness_F[ic]) / unit_length};
+      elev = stats.minElev;
+      double floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+      thick = std::min(std::min(stats.meanThick, elev - bed), floatThick);
+      if (thick < floatThick) {  // grounded column: blend toward the floating ramp; a floating one is left alone
+        double w = (stats.maxMarineCliffElev - marineCliffHeightStart) / (marineCliffHeightEnd - marineCliffHeightStart);
+        w = std::min(1.0, std::max(0.0, w));
+        if (w > 0.0) {
+          const double hBlend = (1.0 - w) * thick + w * eps;
+          elev = (1.0 - w) * elev + w * (1.0 - rho_ice / rho_ocean) * eps;
+          floatThick = rho_ocean / (rho_ocean - rho_ice) * elev;
+          thick = std::min(std::min(hBlend, elev - bed), floatThick);
+        }
+      }
+      // If the thickness (not the bed or flotation) limits the column, it is lighter than flotation but its base
+      // lies above the natural bed: a grounded cliff, so raise the FEM bed (not the MPAS bed) to its base, and give
+      // it the basal properties of the grounded ice it continues (these are FEM inputs only; scaling as above).
+      if ((thick < elev - bed) && (thick < floatThick)) {
+        bed = elev - thick;
+        bedTopographyData[iv] = bed;
+        const int fCellE = vertexToFCell[iv];
+        if (beta_F != 0)
+          betaData[iv] = groundedNeighborMean(fCellE, beta_F, thickness_F, bedTopography_F) / unit_length;
+        if (effecPress_F != 0)
+          effecPressData[iv] = groundedNeighborMean(fCellE, effecPress_F, thickness_F, bedTopography_F) / unit_length;
+        if (muFriction_F != 0)
+          muFrictionData[iv] = groundedNeighborMean(fCellE, muFriction_F, thickness_F, bedTopography_F);
+        if (bedRoughnessRC_F != 0)
+          bedRoughnessData[iv] = groundedNeighborMean(fCellE, bedRoughnessRC_F, thickness_F, bedTopography_F) / unit_length;
+        if (bulkFriction_F != 0)
+          bulkFrictionData[iv] = groundedNeighborMean(fCellE, bulkFriction_F, thickness_F, bedTopography_F);
+        if (basalDebris_F != 0)
+          basalDebrisData[iv] = groundedNeighborMean(fCellE, basalDebris_F, thickness_F, bedTopography_F);
+      }
+    } else if (useISMIP7Extension) {
       // check if loan cell bed is above sea level or not
       // Note: ic is a raw MPAS cell index (not an FE vertex index), so use bedTopography_F here.
       if (bedTopography_F[ic] / unit_length > 0.0) {
@@ -1365,8 +2328,8 @@ void importFields(std::vector<std::pair<int, int> >& marineBdyExtensionMap,
     }
   } // map vector loop
 
-  if (useISMIP7Extension) {
-    // 'ismip7-era' extension only: do another pass.  For any extended marine margin
+  if (useISMIP7Extension && useMarineExtension) {
+    // 'ismip7-era' extension only (not the tall-cliff nodes of 'terrestrial-only'): do another pass.  For any extended marine margin
     // locations that are connected to any grounded neighbors but have at least one
     // floating neighbor, create a ramp down to zero thickness instead of whatever they
     // are currently doing.
@@ -1841,8 +2804,8 @@ bool belongToTria(double const* x, double const* t, double bcoords[3], double ep
 
        for (int index = 0; index < nVertices; index++) { //coordinates lines
           int iCell = vertexToFCell[index];
-          //setting boundary vertices labels, 2 for dirichlet nodes, 1 otherwise
-          bool isDirichletVertex = dirichletCellsMask_F[(nLayers+1)*iCell] != 0;
+          //setting boundary vertices labels, 3 for dirichlet nodes (including pinned terrestrial nodes), 1 otherwise
+          bool isDirichletVertex = (dirichletCellsMask_F[(nLayers+1)*iCell] != 0) || isPinnedTerrestrialCell[iCell];
           int vertexLabel = (!isVertexBoundary[index]) ? 0 :
                             isDirichletVertex ? 3 : 1;
 
