@@ -482,8 +482,13 @@ module li_time_integration_fe_rk
          ! the full time step, with surface or basal ablation applied. Advection may have
          ! removed some ice before ablation, so the stage-1 state alone does not establish that
          ! the forcing can remove the final-stage residual. The cleanup below is limited by
-         ! unused full-step ablation capacity. (The 4-stage SSP RK3 ends with a plain forward-
-         ! Euler substep and does not have this problem.)
+         ! unused full-step ablation capacity.
+         ! The 4-stage SSP RK3 is not handled: its stage 1 is a half step, so melt-out in
+         ! stage 1 does not show that the full-step forcing can remove the residual. It does
+         ! not have a persistent residual: because it ends with a plain forward-Euler half
+         ! step, any residual left by strong melt is at most 1/6 of the start-of-step
+         ! thickness, and on the next step the melt is at least three times that, so the
+         ! cell melts out exactly.
          if ( (rkStage == 1) .and. ((nRKstages == 2) .or. (nRKstages == 3)) ) then
             call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
             call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
