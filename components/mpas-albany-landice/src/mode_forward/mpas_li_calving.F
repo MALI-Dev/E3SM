@@ -663,7 +663,7 @@ module li_calving
                   endif
 
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                  call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                              calvingThicknessGrounded(iCell), do_augment=.true.)
                   thickness(iCell) = 0.0_RKIND
                   ! Assign flow speed to calving speed - this allows calculation of licalvf in ISMIP6 postprocessing
@@ -1255,7 +1255,7 @@ module li_calving
                   calvingThickness(connectedCellsList(n)) = calvingThickness(connectedCellsList(n)) + &
                                                             thickness(connectedCellsList(n))
                   call li_update_calving_thickness_grounded(cellMask(connectedCellsList(n)), &
-                                                             calvingThickness(connectedCellsList(n)), &
+                                                             thickness(connectedCellsList(n)), &
                                                              calvingThicknessGrounded(connectedCellsList(n)), do_augment=.true.)
                   calvingThicknessFromThreshold(connectedCellsList(n)) = &
                      calvingThicknessFromThreshold(connectedCellsList(n)) + thickness(connectedCellsList(n))
@@ -1291,7 +1291,7 @@ module li_calving
          do iCell = 1, nCells
             if (li_mask_is_floating_ice(cellMask(iCell)) .and. seedMask(iCell) == 0) then
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                  call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                              calvingThicknessGrounded(iCell), do_augment=.true.)
                   calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                   thickness(iCell) = 0.0_RKIND
@@ -1408,7 +1408,7 @@ module li_calving
                enddo
                if (.not. hasDynamicNeighbor) then
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                  call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                              calvingThicknessGrounded(iCell), do_augment=.true.)
                   calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                   thickness(iCell) = 0.0_RKIND
@@ -1729,7 +1729,7 @@ module li_calving
          do iCell = 1, nCells
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                           calvingThicknessGrounded(iCell), do_augment=.true.)
                thickness(iCell) = 0.0_RKIND
             endif
@@ -1754,7 +1754,7 @@ module li_calving
               enddo
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                 call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                 call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
@@ -1931,7 +1931,7 @@ module li_calving
          do iCell = 1, nCells
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                           calvingThicknessGrounded(iCell), do_augment=.true.)
                thickness(iCell) = 0.0_RKIND
             endif
@@ -1956,7 +1956,7 @@ module li_calving
               enddo
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                 call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                 call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
@@ -3716,7 +3716,7 @@ module li_calving
          do iCell = 1, nCells
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                           calvingThicknessGrounded(iCell), do_augment=.true.)
                thickness(iCell) = 0.0_RKIND
             endif
@@ -3740,7 +3740,7 @@ module li_calving
               enddo
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                 call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                 call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
@@ -4791,7 +4791,7 @@ module li_calving
          do iCell = 1, nCells
             if (seedMask(iCell) == 1) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                           calvingThicknessGrounded(iCell), do_augment=.true.)
                calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                thickness(iCell) = 0.0_RKIND
@@ -5032,7 +5032,7 @@ module li_calving
          do iCell = 1, nCellsSolve
             if (seedMask(iCell) == 0 .and. li_mask_is_floating_ice(cellMask(iCell))) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)  ! remove any remaining ice here
-               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
                                                           calvingThicknessGrounded(iCell), do_augment=.true.)
                calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)  ! remove any remaining ice here
                thickness(iCell) = 0.0_RKIND
