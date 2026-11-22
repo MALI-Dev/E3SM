@@ -164,6 +164,7 @@ module li_calving
       integer :: err_tmp
 
       real (kind=RKIND), dimension(1) :: calvingSumLocal, calvingSumGlobal
+      integer :: nDynamicChangedLocal, nDynamicChangedGlobal
 
       err = 0
       err_tmp = 0
@@ -410,7 +411,15 @@ module li_calving
          calvingSumLocal(1) = sum(calvingThickness(1:nCellsSolve) * areaCell(1:nCellsSolve) * &
                                real(li_mask_is_dynamic_ice_int(cellMaskTemporaryField % array(1:nCellsSolve)), RKIND))
          call mpas_dmpar_sum_real_array(domain % dminfo, 1, calvingSumLocal(1), calvingSumGlobal(1))
-         if (calvingSumGlobal(1) > smallNumber) then
+         ! Calving and cleanup of non-dynamic ice can also change the dynamic status of cells
+         ! that keep their ice (e.g., a floating margin cell whose thinnest non-margin neighbor
+         ! changes; see li_calculate_mask). Those cells change the velocity solver domain,
+         ! so count them too.
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         nDynamicChangedLocal = count(li_mask_is_dynamic_ice(cellMask(1:nCellsSolve)) .neqv. &
+                                      li_mask_is_dynamic_ice(cellMaskTemporaryField % array(1:nCellsSolve)))
+         call mpas_dmpar_sum_int(domain % dminfo, nDynamicChangedLocal, nDynamicChangedGlobal)
+         if ( (calvingSumGlobal(1) > smallNumber) .or. (nDynamicChangedGlobal > 0) ) then
             solveVeloAfterCalving = .true.
          else
             solveVeloAfterCalving = .false.
