@@ -177,11 +177,13 @@ module li_time_integration_fe_rk
       real (kind=RKIND), dimension(:), pointer :: bedTopography
       integer, pointer :: nCellsSolve
       logical, dimension(:), allocatable :: meltedOutStage1 ! cells with ice whose stage-1 forward-Euler update melted them out
-      real (kind=RKIND), dimension(:), allocatable :: sfcMassBalAppliedStage1, &
-                                                      basalMassBalAppliedStage1
-      real (kind=RKIND), dimension(:), allocatable :: ablationCapacity, ablationAppliedAccum
-      real (kind=RKIND) :: residualThickness, thicknessToRemove, unusedAblationCapacity, &
-                           sfcMelt1, basalMelt1, sfcFrac, sfcCorrection, basalCorrection
+      ! Prescribed full-step ablation rates and RK-weighted applied ablation rates (kg m^-2 s^-1, positive for melt),
+      ! tracked separately for surface and basal ablation
+      real (kind=RKIND), dimension(:), allocatable :: sfcAblationCapacity, basalAblationCapacity, &
+                                                      sfcAblationAppliedAccum, basalAblationAppliedAccum
+      real (kind=RKIND) :: residualThickness, thicknessToRemove, &
+                           unusedSfcAblation, unusedBasalAblation, sfcFrac, &
+                           sfcCorrection, basalCorrection
       integer :: nResidualCellsLocal, nResidualCellsGlobal
 
       err = 0
@@ -255,15 +257,15 @@ module li_time_integration_fe_rk
       allocate(calvingThicknessAccum(nCells+1))
       allocate(calvingThicknessGroundedAccum(nCells+1))
       allocate(meltedOutStage1(nCells+1))
-      allocate(sfcMassBalAppliedStage1(nCells+1))
-      allocate(basalMassBalAppliedStage1(nCells+1))
-      allocate(ablationCapacity(nCells+1))
-      allocate(ablationAppliedAccum(nCells+1))
+      allocate(sfcAblationCapacity(nCells+1))
+      allocate(basalAblationCapacity(nCells+1))
+      allocate(sfcAblationAppliedAccum(nCells+1))
+      allocate(basalAblationAppliedAccum(nCells+1))
       meltedOutStage1(:) = .false.
-      sfcMassBalAppliedStage1(:) = 0.0_RKIND
-      basalMassBalAppliedStage1(:) = 0.0_RKIND
-      ablationCapacity(:) = 0.0_RKIND
-      ablationAppliedAccum(:) = 0.0_RKIND
+      sfcAblationCapacity(:) = 0.0_RKIND
+      basalAblationCapacity(:) = 0.0_RKIND
+      sfcAblationAppliedAccum(:) = 0.0_RKIND
+      basalAblationAppliedAccum(:) = 0.0_RKIND
       nResidualCellsLocal = 0
 
       temperaturePrev(:,:) = 0.0_RKIND
@@ -462,8 +464,13 @@ module li_time_integration_fe_rk
 
          call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
          call mpas_pool_get_array(geometryPool, 'basalMassBalApplied', basalMassBalApplied)
-         ablationAppliedAccum(1:nCells) = ablationAppliedAccum(1:nCells) + rkTendWeights(rkStage) * &
-            (max(-sfcMassBalApplied(1:nCells), 0.0_RKIND) + max(-basalMassBalApplied(1:nCells), 0.0_RKIND))
+         if ( (nRKstages == 2) .or. (nRKstages == 3) ) then
+            ! RK-weighted ablation actually applied so far, by component
+            sfcAblationAppliedAccum(1:nCells) = sfcAblationAppliedAccum(1:nCells) + rkTendWeights(rkStage) * &
+               max(-sfcMassBalApplied(1:nCells), 0.0_RKIND)
+            basalAblationAppliedAccum(1:nCells) = basalAblationAppliedAccum(1:nCells) + rkTendWeights(rkStage) * &
+               max(-basalMassBalApplied(1:nCells), 0.0_RKIND)
+         endif
 
          ! For 2-stage SSP RK2 and 3-stage SSP RK3, record cells that had ice at the start of
          ! the time step and are ice-free after the stage-1 forward-Euler update, which spans
@@ -477,12 +484,10 @@ module li_time_integration_fe_rk
             call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
             call mpas_pool_get_array(geometryPool, 'sfcMassBalGradientCorrection', sfcMassBalGradientCorrection)
             call mpas_pool_get_array(geometryPool, 'basalMassBal', basalMassBal)
-            sfcMassBalAppliedStage1(:) = sfcMassBalApplied(:)
-            basalMassBalAppliedStage1(:) = basalMassBalApplied(:)
             do iCell = 1, nCells
-               ablationCapacity(iCell) = (max(-(sfcMassBal(iCell) + sfcMassBalGradientCorrection(iCell)), &
-                                              0.0_RKIND) + max(-basalMassBal(iCell), 0.0_RKIND)) * &
-                                         deltatFull / config_ice_density
+               ! Prescribed (unlimited) ablation rates, as initialized in apply_mass_balance
+               sfcAblationCapacity(iCell) = max(-(sfcMassBal(iCell) + sfcMassBalGradientCorrection(iCell)), 0.0_RKIND)
+               basalAblationCapacity(iCell) = max(-basalMassBal(iCell), 0.0_RKIND)
                meltedOutStage1(iCell) = (sum(layerThicknessPrev(:,iCell)) > 0.0_RKIND) .and. &
                                         (sum(layerThickness(:,iCell)) == 0.0_RKIND) .and. &
                                         ( (sfcMassBalApplied(iCell) < 0.0_RKIND) .or. &
@@ -553,16 +558,21 @@ module li_time_integration_fe_rk
             enddo
 
             ! In the final stage, remove only the residual supported by the unused
-            ! full-step ablation capacity. Stage contributions are weighted by the RK
-            ! tendency weights, so advection cannot make the cleanup exceed the forcing.
+            ! full-step ablation capacity, evaluated separately for surface and basal
+            ! ablation. Stage contributions are weighted by the RK tendency weights, so
+            ! neither advection nor the surface/basal split can make the cleanup exceed
+            ! the prescribed forcing of either component.
             if ( (rkStage == nRKstages) .and. ((nRKstages == 2) .or. (nRKstages == 3)) ) then
                do iCell = 1, nCells
                   if ( meltedOutStage1(iCell) .and. (thickness(iCell) > 0.0_RKIND) .and. &
                        (sum(layerThicknessTmp(:,iCell)) == 0.0_RKIND) ) then
                      residualThickness = thickness(iCell)
-                     unusedAblationCapacity = max(ablationCapacity(iCell) - &
-                        ablationAppliedAccum(iCell) * deltatFull / config_ice_density, 0.0_RKIND)
-                     thicknessToRemove = min(residualThickness, unusedAblationCapacity)
+                     ! Unused ablation over the full step for each component, as thickness (m)
+                     unusedSfcAblation = max(sfcAblationCapacity(iCell) - sfcAblationAppliedAccum(iCell), 0.0_RKIND) * &
+                                         deltatFull / config_ice_density
+                     unusedBasalAblation = max(basalAblationCapacity(iCell) - basalAblationAppliedAccum(iCell), 0.0_RKIND) * &
+                                           deltatFull / config_ice_density
+                     thicknessToRemove = min(residualThickness, unusedSfcAblation + unusedBasalAblation)
                      if (thicknessToRemove > 0.0_RKIND) then
                         if (thicknessToRemove >= residualThickness) then
                            ! Cell is emptied. The tracer blends above ran before this cleanup, so
@@ -583,10 +593,10 @@ module li_time_integration_fe_rk
                         endif
                         if (iCell <= nCellsSolve) nResidualCellsLocal = nResidualCellsLocal + 1
 
-                        ! Partition the removed mass between SMB and BMB budgets
-                        sfcMelt1 = max(-sfcMassBalAppliedStage1(iCell), 0.0_RKIND)
-                        basalMelt1 = max(-basalMassBalAppliedStage1(iCell), 0.0_RKIND)
-                        sfcFrac = sfcMelt1 / (sfcMelt1 + basalMelt1)  ! denominator > 0 by meltedOutStage1
+                        ! Partition the removed mass between SMB and BMB budgets in proportion to each
+                        ! component's unused capacity, so neither exceeds its prescribed ablation.
+                        ! (denominator > 0 because thicknessToRemove > 0)
+                        sfcFrac = unusedSfcAblation / (unusedSfcAblation + unusedBasalAblation)
                         ! convert thickness (m) to applied rate (kg m^-2 s^-1); negative for ablation
                         sfcCorrection = -sfcFrac * thicknessToRemove * config_ice_density / deltatFull
                         basalCorrection = -(1.0_RKIND - sfcFrac) * thicknessToRemove * config_ice_density / deltatFull
@@ -809,10 +819,10 @@ module li_time_integration_fe_rk
       deallocate(calvingThicknessAccum)
       deallocate(calvingThicknessGroundedAccum)
       deallocate(meltedOutStage1)
-      deallocate(sfcMassBalAppliedStage1)
-      deallocate(basalMassBalAppliedStage1)
-      deallocate(ablationCapacity)
-      deallocate(ablationAppliedAccum)
+      deallocate(sfcAblationCapacity)
+      deallocate(basalAblationCapacity)
+      deallocate(sfcAblationAppliedAccum)
+      deallocate(basalAblationAppliedAccum)
    !--------------------------------------------------------------------
    end subroutine li_time_integrator_forwardeuler_rungekutta
 
