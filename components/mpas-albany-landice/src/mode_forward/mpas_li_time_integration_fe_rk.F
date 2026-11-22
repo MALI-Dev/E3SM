@@ -185,6 +185,7 @@ module li_time_integration_fe_rk
                                                       sfcAblationAppliedAccum, basalAblationAppliedAccum
       real (kind=RKIND) :: residualThickness, thicknessToRemove, &
                            unusedSfcAblation, unusedBasalAblation, sfcFrac, &
+                           ablationCapacityThickness, roundoffTolerance, &
                            sfcCorrection, basalCorrection
       integer :: nResidualCellsLocal, nResidualCellsGlobal
 
@@ -577,6 +578,19 @@ module li_time_integration_fe_rk
                      unusedBasalAblation = max(basalAblationCapacity(iCell) - basalAblationAppliedAccum(iCell), 0.0_RKIND) * &
                                            deltatFull / config_ice_density
                      thicknessToRemove = min(residualThickness, unusedSfcAblation + unusedBasalAblation)
+                     ! The residual (from the thickness blend) and the unused capacity (from
+                     ! weighted rates) are computed differently, so when the forcing exactly
+                     ! balances the ice they can differ by roundoff. Treat a shortfall within a
+                     ! roundoff tolerance as complete removal so no ~1e-17 m sliver is left.
+                     ! Errors in the unused capacity scale with the full capacity, so use the
+                     ! larger of the residual and the full-step capacity as the scale.
+                     ablationCapacityThickness = (sfcAblationCapacity(iCell) + basalAblationCapacity(iCell)) * &
+                                                 deltatFull / config_ice_density
+                     roundoffTolerance = 100.0_RKIND * epsilon(1.0_RKIND) * &
+                                         max(residualThickness, ablationCapacityThickness)
+                     if (residualThickness - thicknessToRemove <= roundoffTolerance) then
+                        thicknessToRemove = residualThickness
+                     endif
                      if (thicknessToRemove > 0.0_RKIND) then
                         if (thicknessToRemove >= residualThickness) then
                            ! Cell is emptied. The tracer blends above ran before this cleanup, so
@@ -599,8 +613,15 @@ module li_time_integration_fe_rk
 
                         ! Partition the removed mass between SMB and BMB budgets in proportion to each
                         ! component's unused capacity, so neither exceeds its prescribed ablation.
-                        ! (denominator > 0 because thicknessToRemove > 0)
-                        sfcFrac = unusedSfcAblation / (unusedSfcAblation + unusedBasalAblation)
+                        ! If both unused capacities round to zero (removal allowed only by the
+                        ! roundoff tolerance), split by the full-step capacities instead, which are
+                        ! positive because meltedOutStage1 requires applied ablation.
+                        if (unusedSfcAblation + unusedBasalAblation > 0.0_RKIND) then
+                           sfcFrac = unusedSfcAblation / (unusedSfcAblation + unusedBasalAblation)
+                        else
+                           sfcFrac = sfcAblationCapacity(iCell) / &
+                                     (sfcAblationCapacity(iCell) + basalAblationCapacity(iCell))
+                        endif
                         ! convert thickness (m) to applied rate (kg m^-2 s^-1); negative for ablation
                         sfcCorrection = -sfcFrac * thicknessToRemove * config_ice_density / deltatFull
                         basalCorrection = -(1.0_RKIND - sfcFrac) * thicknessToRemove * config_ice_density / deltatFull
