@@ -191,7 +191,10 @@ module li_core
          call MPAS_stream_mgr_get_att(domain % streamManager, trim(meshStreamID), &
             'fem_extension_method', resolvedFemExtensionMethod, ierr=femExtAttErr)
          if ( (femExtAttErr /= MPAS_STREAM_MGR_NOERR) .or. &
-              ( (trim(resolvedFemExtensionMethod) /= 'ismip6-era') .and. (trim(resolvedFemExtensionMethod) /= 'ismip7-era') ) ) then
+              ( (trim(resolvedFemExtensionMethod) /= 'ismip6-era') .and. &
+                (trim(resolvedFemExtensionMethod) /= 'ismip7-era') .and. &
+                (trim(resolvedFemExtensionMethod) /= 'flat-cliff') .and. &
+                (trim(resolvedFemExtensionMethod) /= 'ismip6-era-landcap') ) ) then
             call mpas_log_write("config_fem_extension_method='auto' but a valid " // &
                "'fem_extension_method' global attribute was not found in stream '" // &
                trim(meshStreamID) // "'.  Defaulting to 'ismip6-era'.", MPAS_LOG_WARN)

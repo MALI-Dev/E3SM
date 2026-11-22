@@ -76,7 +76,13 @@ void velocity_solver_set_parameters(double const* gravity_F, double const* ice_d
                         double const* clausius_clapeyron_coeff,
                         double const* thermal_thickness_limit_F,
                         int const* li_mask_ValueDynamicIce, int const* li_mask_ValueIce,
-                        int const* use_GLP_F, int const* use_ISMIP7_extension_F);
+                        int const* use_GLP_F, int const* fem_extension_method_code_F,
+                        double const* flat_cliff_slope_limit_F,
+                        int const* land_wall_velocity_code_F, double const* land_wall_slope_F,
+                        int const* flat_cliff_mixed_ramp_F,
+                        double const* flat_cliff_freeboard_ramp_start_F, double const* flat_cliff_freeboard_ramp_end_F,
+                        double const* flat_cliff_surface_slope_max_floating_F,
+                        double const* flat_cliff_surface_slope_max_grounded_F);
 
 void velocity_solver_init_l1l2(double const* levelsRatio);
 
@@ -97,7 +103,8 @@ void velocity_solver_solve_fo(double const* bedTopography_F, double const* lower
     int *error = 0 );
 
 
-void velocity_solver_compute_2d_grid(int const* verticesMask_F, int const* _cellsMask_F, int const* dirichletNodesMask_F);
+void velocity_solver_compute_2d_grid(int const* verticesMask_F, int const* _cellsMask_F, int const* dirichletNodesMask_F,
+    double const* bedTopography_F);
 
 void velocity_solver_set_grid_data(int const* _nCells_F, int const* _nEdges_F,
     int const* _nVertices_F, int const* _nLayers, int const* _nCellsSolve_F,
