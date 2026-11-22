@@ -354,6 +354,14 @@ module li_calving
 
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
 
+      ! Remove non-dynamic marine ice that extends more than one cell beyond dynamic ice.
+      ! This must come after all calving routines (some of which overwrite calvingThickness)
+      ! and after island/iceberg removal, which can leave additional stranded cells.
+      call remove_stranded_nondynamic_marine_ice(domain, err_tmp)
+      err = ior(err, err_tmp)
+
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+
       ! Final operations after calving has been applied, including removal
       ! of small islands
       block => domain % blocklist
@@ -1297,6 +1305,141 @@ module li_calving
       call mpas_deallocate_scratch_field(growMaskField, single_block_in=.true.)
 
    end subroutine remove_small_islands
+
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!    routine remove_stranded_nondynamic_marine_ice
+!
+!> \brief Remove non-dynamic marine ice that is not adjacent to dynamic ice
+!> \author Matthew Hoffman
+!> \date   November 2026
+!> \details This routine ensures that non-dynamic marine ice (ice thinner
+!> than config_dynamic_thickness on a bed below sea level, either grounded
+!> or floating) never extends more than one row of cells beyond dynamic ice.
+!> Any non-dynamic marine ice cell that has no dynamic neighbor is removed
+!> and its thickness is added to calvingThickness.  Non-dynamic ice on land
+!> (bed at or above sea level) is not affected.
+!> Because removing ice can change the dynamic state of neighboring floating
+!> margin cells (see li_calculate_mask), the procedure is repeated until no
+!> further cells are removed.
+!> Like remove_small_islands, this assumes one block per MPI task.
+!-----------------------------------------------------------------------
+
+   subroutine remove_stranded_nondynamic_marine_ice(domain, err)
+      type (domain_type), intent(inout) :: domain !< Input/Output: domain object
+      integer, intent(out) :: err !< Output: error flag
+
+      type (mpas_pool_type), pointer :: meshPool, geometryPool, velocityPool
+      logical, pointer :: config_remove_stranded_nondynamic_marine_ice
+      logical, pointer :: config_restore_calving_front
+      real (kind=RKIND), pointer :: config_sea_level
+      real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
+      real (kind=RKIND), dimension(:), pointer :: thickness
+      real (kind=RKIND), dimension(:), pointer :: bedTopography
+      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:,:), pointer :: cellsOnCell
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, pointer :: nCellsSolve
+      logical :: hasDynamicNeighbor
+      integer :: iCell, jCell, n, iPass
+      integer :: nRemovedLocal, nRemovedGlobal, nRemovedTotal
+      integer :: err_tmp
+      integer, parameter :: maxPasses = 10
+
+      err = 0
+      err_tmp = 0
+
+      call mpas_pool_get_config(liConfigs, 'config_remove_stranded_nondynamic_marine_ice', &
+                                config_remove_stranded_nondynamic_marine_ice)
+      if (.not. config_remove_stranded_nondynamic_marine_ice) then
+         return  ! skip this entire routine if disabled
+      endif
+
+      call mpas_pool_get_config(liConfigs, 'config_restore_calving_front', config_restore_calving_front)
+      if (config_restore_calving_front) then
+         ! li_restore_calving_front intentionally places thin, non-dynamic ice over the
+         ! original ice extent, so removing it here would just cause churn and a spurious calving flux.
+         call mpas_log_write("remove_stranded_nondynamic_marine_ice: skipped because " // &
+                             "config_restore_calving_front is true.")
+         return
+      endif
+
+      call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
+
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
+
+      call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
+      call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
+      call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+      call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
+      call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
+      call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+
+      ! Make sure the mask is current (including halos) before evaluating neighbors
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      err = ior(err, err_tmp)
+
+      nRemovedTotal = 0
+      iPass = 0
+      nRemovedGlobal = 1  ! ensure we enter the loop
+      do while ( (nRemovedGlobal > 0) .and. (iPass < maxPasses) )
+         iPass = iPass + 1
+         nRemovedLocal = 0
+
+         do iCell = 1, nCellsSolve
+            if ( li_mask_is_ice(cellMask(iCell)) .and. &
+                 (.not. li_mask_is_dynamic_ice(cellMask(iCell))) .and. &
+                 (bedTopography(iCell) < config_sea_level) ) then
+               hasDynamicNeighbor = .false.
+               do n = 1, nEdgesOnCell(iCell)
+                  jCell = cellsOnCell(n, iCell)
+                  if (li_mask_is_dynamic_ice(cellMask(jCell))) then
+                     hasDynamicNeighbor = .true.
+                     exit
+                  endif
+               enddo
+               if (.not. hasDynamicNeighbor) then
+                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
+                  calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
+                  thickness(iCell) = 0.0_RKIND
+                  nRemovedLocal = nRemovedLocal + 1
+               endif
+            endif
+         enddo
+
+         call mpas_dmpar_sum_int(domain % dminfo, nRemovedLocal, nRemovedGlobal)
+         nRemovedTotal = nRemovedTotal + nRemovedGlobal
+
+         if (nRemovedGlobal > 0) then
+            call mpas_timer_start("halo updates")
+            call mpas_dmpar_field_halo_exch(domain, 'thickness')
+            call mpas_dmpar_field_halo_exch(domain, 'calvingThickness')
+            call mpas_timer_stop("halo updates")
+            ! Removing ice can change the dynamic state of neighboring cells, so update the mask
+            call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+            err = ior(err, err_tmp)
+         endif
+      enddo
+
+      if (nRemovedGlobal > 0) then
+         call mpas_log_write("remove_stranded_nondynamic_marine_ice: reached maximum of $i passes " // &
+                             "with cells still being removed.", MPAS_LOG_WARN, intArgs=(/maxPasses/))
+      endif
+
+      call mpas_log_write("Removed $i stranded non-dynamic marine ice cells in $i passes.", &
+                          intArgs=(/nRemovedTotal, iPass/))
+
+   end subroutine remove_stranded_nondynamic_marine_ice
 
 
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||

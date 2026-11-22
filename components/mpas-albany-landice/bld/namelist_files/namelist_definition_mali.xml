@@ -435,6 +435,14 @@ Valid values: .true. or .false.
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_remove_stranded_nondynamic_marine_ice" type="logical"
+	category="calving" group="calving">
+If true, then non-dynamic marine ice (thinner than config_dynamic_thickness on a bed below sea level, grounded or floating) that is not adjacent to any dynamic ice is removed, so that non-dynamic marine ice never extends more than one cell beyond dynamic ice.  Not applied when config_restore_calving_front is true.  The ice removed is added to the calvingThickness field.
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
 <entry id="config_calving_speed_limit" type="real"
 	category="calving" group="calving">
 Limit calvingVelocity to this value. Currently only supported for von Mises calving.
