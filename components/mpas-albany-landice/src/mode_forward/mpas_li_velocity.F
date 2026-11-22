@@ -996,7 +996,10 @@ contains
       exy = 0.5_RKIND * (dudy + dvdx)
 
       ! Calculate principal strain rate angle
-      eTheta = 0.5_RKIND * atan2(2.0_RKIND * exy, exx - eyy)
+      eTheta = 0.0_RKIND
+      where (exy /= 0.0_RKIND .or. exx /= eyy)
+         eTheta = 0.5_RKIND * atan2(2.0_RKIND * exy, exx - eyy)
+      end where
 
       ! Calculate principal strain rates
       eMax = 0.5_RKIND * (exx + eyy) + sqrt( (0.5_RKIND * (exx - eyy))**2 + exy**2)
