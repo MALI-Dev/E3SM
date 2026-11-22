@@ -1343,6 +1343,7 @@ module li_calving
       logical, pointer :: config_remove_stranded_nondynamic_marine_ice
       logical, pointer :: config_restore_calving_front
       real (kind=RKIND), pointer :: config_sea_level
+      real (kind=RKIND), pointer :: deltat
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
@@ -1379,6 +1380,17 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
 
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+
+      ! li_calve_ice is called with deltat = 0 during initialization (rate-based calving laws,
+      ! after the initial velocity solve) specifically so that no ice is removed. Skip here too,
+      ! so the initial geometry is not changed without a velocity solve; the first time step
+      ! removes any stranded cells.
+      call mpas_pool_get_array(meshPool, 'deltat', deltat)
+      if (deltat == 0.0_RKIND) then
+         call mpas_log_write("remove_stranded_nondynamic_marine_ice: skipped because deltat = 0.")
+         return
+      endif
+
       call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
 
