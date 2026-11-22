@@ -1027,12 +1027,6 @@ module li_advection
 
          endif   ! sfcMassBal > 0
 
-         ! calculate bare ice ablation applied field 
-         bareIceAblationApplied(:) = 0.0_RKIND 
-         where (sfcMassBalApplied < 0.0_RKIND)
-            bareIceAblationApplied = -1.0_RKIND * sfcMassBalApplied
-         end where
-
          ! apply basal mass balance
          if (basalMassBalApplied(iCell) > 0.0_RKIND) then
 
@@ -1077,6 +1071,13 @@ module li_advection
          endif   ! basalMassBalApplied > 0
 
       enddo   ! iCell
+
+      ! calculate bare ice ablation applied field
+      ! (done once after the cell loop; sfcMassBalApplied is final for all cells here)
+      bareIceAblationApplied(:) = 0.0_RKIND
+      where (sfcMassBalApplied < 0.0_RKIND)
+         bareIceAblationApplied = -1.0_RKIND * sfcMassBalApplied
+      end where
 
       ! Separate grounded and floating components, as necessary.
       where (li_mask_is_grounded_ice(cellMask) .or. bedTopography > config_sea_level)
