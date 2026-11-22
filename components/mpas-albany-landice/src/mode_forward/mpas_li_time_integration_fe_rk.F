@@ -140,7 +140,8 @@ module li_time_integration_fe_rk
                                                   calvingThickness, &
                                                   calvingThicknessGrounded, &
                                                   calvingVelocity, &
-                                                  calvingThicknessFromThreshold
+                                                  calvingThicknessFromThreshold, &
+                                                  bareIceAblationApplied
       real (kind=RKIND), dimension(:), allocatable :: sfcMassBalAccum, &
                                                       basalMassBalAccum, &
                                                       groundedSfcMassBalAccum, &
@@ -149,7 +150,8 @@ module li_time_integration_fe_rk
                                                       fluxAcrossGroundingLineAccum, &
                                                       fluxAcrossGroundingLineOnCellsAccum, &
                                                       calvingThicknessAccum, &
-                                                      calvingThicknessGroundedAccum
+                                                      calvingThicknessGroundedAccum, &
+                                                      bareIceAblationAccum
       real (kind=RKIND), dimension(:), pointer :: layerCenterSigma, layerThicknessFractions
       integer, dimension(:), allocatable :: cellMaskPrev, edgeMaskPrev, vertexMaskPrev  ! cell mask before advection
       real (kind=RKIND), dimension(:,:), allocatable :: layerThicknessPrev, &
@@ -256,6 +258,7 @@ module li_time_integration_fe_rk
       allocate(fluxAcrossGroundingLineOnCellsAccum(nCells+1))
       allocate(calvingThicknessAccum(nCells+1))
       allocate(calvingThicknessGroundedAccum(nCells+1))
+      allocate(bareIceAblationAccum(nCells+1))
       allocate(meltedOutStage1(nCells+1))
       allocate(sfcAblationCapacity(nCells+1))
       allocate(basalAblationCapacity(nCells+1))
@@ -289,6 +292,7 @@ module li_time_integration_fe_rk
       fluxAcrossGroundingLineOnCellsAccum(:) = 0.0_RKIND
       calvingThicknessAccum(:) = 0.0_RKIND
       calvingThicknessGroundedAccum(:) = 0.0_RKIND
+      bareIceAblationAccum(:) = 0.0_RKIND
 
 ! === Prepare for advection (including CFL checks) ===========
 ! This has to come first currently, because it sets the time step!
@@ -604,6 +608,8 @@ module li_time_integration_fe_rk
                         ! Masks are held fixed during the RK loop, so cellMaskPrev is the mask that
                         ! apply_mass_balance used to split grounded/floating components.
                         sfcMassBalAccum(iCell) = sfcMassBalAccum(iCell) + sfcCorrection
+                        ! The added surface melt is also bare-ice ablation (runoff in coupled runs)
+                        bareIceAblationAccum(iCell) = bareIceAblationAccum(iCell) - sfcCorrection
                         if (li_mask_is_grounded_ice(cellMaskPrev(iCell)) .or. &
                             (bedTopography(iCell) > config_sea_level)) then
                            groundedSfcMassBalAccum(iCell) = groundedSfcMassBalAccum(iCell) + sfcCorrection
@@ -637,9 +643,11 @@ module li_time_integration_fe_rk
          call mpas_pooL_get_array(velocityPool, 'fluxAcrossGroundingLine', fluxAcrossGroundingLine)
          call mpas_pooL_get_array(velocityPool, 'fluxAcrossGroundingLineOnCells', fluxAcrossGroundingLineOnCells)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+         call mpas_pool_get_array(geometryPool, 'bareIceAblationApplied', bareIceAblationApplied)
 
          ! update budgets
          sfcMassBalAccum = sfcMassBalAccum + rkTendWeights(rkStage) * sfcMassBalApplied
+         bareIceAblationAccum = bareIceAblationAccum + rkTendWeights(rkStage) * bareIceAblationApplied
          groundedSfcMassBalAccum = groundedSfcMassBalAccum + rkTendWeights(rkStage) * groundedSfcMassBalApplied
          basalMassBalAccum = basalMassBalAccum + rkTendWeights(rkStage) * basalMassBalApplied
          groundedBasalMassBalAccum = groundedBasalMassBalAccum + rkTendWeights(rkStage) * groundedBasalMassBalApplied
@@ -715,6 +723,7 @@ module li_time_integration_fe_rk
       call li_grounded_to_floating(cellMaskPrev, cellMask, sum(layerThicknessPrev, 1), thickness, groundedToFloatingThickness, nCells)
 
       sfcMassBalApplied(:) = sfcMassBalAccum(:)
+      bareIceAblationApplied(:) = bareIceAblationAccum(:)
       groundedSfcMassBalApplied(:) = groundedSfcMassBalAccum(:)
       basalMassBalApplied(:) = basalMassBalAccum(:)
       groundedBasalMassBalApplied(:) = groundedBasalMassBalAccum(:)
@@ -818,6 +827,7 @@ module li_time_integration_fe_rk
       deallocate(fluxAcrossGroundingLineOnCellsAccum)
       deallocate(calvingThicknessAccum)
       deallocate(calvingThicknessGroundedAccum)
+      deallocate(bareIceAblationAccum)
       deallocate(meltedOutStage1)
       deallocate(sfcAblationCapacity)
       deallocate(basalAblationCapacity)
