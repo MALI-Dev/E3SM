@@ -1884,7 +1884,7 @@ module li_calving
                                         calvingThicknessGrounded, &
                                         floatingVonMisesThresholdStress, &
                                         groundedVonMisesThresholdStress, &
-                                        surfaceSpeed
+                                        surfaceSpeed, stiffnessFactor
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA, &
                                         temperature, layerThickness
       real (kind=RKIND), pointer :: config_default_flowParamA
@@ -1949,6 +1949,7 @@ module li_calving
           call mpas_pool_get_array(velocityPool, 'xvelmean', xvelmean)
           call mpas_pool_get_array(velocityPool, 'yvelmean', yvelmean)
           call mpas_pool_get_array(velocityPool, 'surfaceSpeed', surfaceSpeed)
+          call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
           call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
           call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
           call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
@@ -1987,7 +1988,7 @@ module li_calving
                       config_floating_von_Mises_threshold_stress_source, MPAS_LOG_ERR)
           endif
 
-          if ( minval(floatingVonMisesThresholdStress(:)) < 0.0_RKIND ) then
+          if ( minval(floatingVonMisesThresholdStress(1:nCells)) < 0.0_RKIND ) then
                 err = 1
                 call mpas_log_write("floatingVonMisesThresholdStress must be >=0.0", MPAS_LOG_ERR)
           endif
@@ -2005,6 +2006,7 @@ module li_calving
           !calculate Albany-type flowParamA
              call mpas_log_write("config_use_Albany_flowA_eqn_for_vM not yet supported", MPAS_LOG_ERR)
              err = 1
+             return
           else
              if (.not. (trim(config_flowParamA_calculation) == "PB1982" .or. &
                         trim(config_flowParamA_calculation) == "Fan2025")) then
@@ -2024,7 +2026,7 @@ module li_calving
 
           do iCell = 1,nCells
              if ( thickness(iCell) > 0.0_RKIND ) then
-                vonMisesStress(iCell) = sqrt(3.0_RKIND) * sum(layerThickness(:,iCell) * &
+                vonMisesStress(iCell) = sqrt(3.0_RKIND) * stiffnessFactor(iCell) * sum(layerThickness(:,iCell) * &
                               flowParamA(:,iCell)**(-1.0_RKIND/config_flowLawExponent),dim=1) / &
                               thickness(iCell) * ( 0.5_RKIND * ( (max(0.0_RKIND, eMax(iCell)))**2.0_RKIND + &
                               (max(0.0_RKIND, eMin(iCell)))**2.0_RKIND) )**(1.0_RKIND / (2.0_RKIND * config_flowLawExponent))
@@ -2120,12 +2122,13 @@ module li_calving
              if ( .not. li_mask_is_floating_ice(cellMask(iCell)) ) then
                 calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2.0_RKIND + yvelmean(iCell)**2.0_RKIND) * &
                                          vonMisesStress(iCell) / groundedVonMisesThresholdStress(iCell), config_calving_speed_limit)
-             ! If config_floating_von_Mises_threshold_stress is not 0.0, calculate
-             ! calvingVelocity. If config_floating_von_Mises_threshold_stress is
-             ! 0.0, remove floating ice in loop below.
-             elseif ( li_mask_is_floating_ice(cellMask(iCell)) .and. config_floating_von_Mises_threshold_stress .ne. 0.0_RKIND) then
-                calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
-                                         vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
+            elseif ( li_mask_is_floating_ice(cellMask(iCell)) ) then
+               ! A zero local threshold requests instantaneous removal below.
+               if (floatingVonMisesThresholdStress(iCell) > 0.0_RKIND) then
+                  calvingVelocity(iCell) = min( &
+                      sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
+                      vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
+               endif
              endif
           enddo
 
@@ -2157,8 +2160,9 @@ module li_calving
           ! non-dynamic cells adjacent to grounded ice.
           ! TODO: Make an exception for the case of floating ice surrounded by grounded ice
           ! (i.e., floating on a subglacial lake) using a flood fill routine
-          if ( config_floating_von_Mises_threshold_stress .eq. 0.0_RKIND ) then
-             do iCell = 1,nCells
+          ! A zero local threshold requests instantaneous floating-ice removal.
+          do iCell = 1,nCells
+             if (floatingVonMisesThresholdStress(iCell) /= 0.0_RKIND) cycle
                 if ( li_mask_is_floating_ice(cellMask(iCell)) .and. &
                      li_mask_is_dynamic_ice(cellMask(iCell)) ) then
                      calvingThickness(iCell) = thickness(iCell)
@@ -2180,7 +2184,6 @@ module li_calving
                     endif
                 endif
              enddo
-          endif
 
           if ( trim(config_damage_calving_method) == 'none' ) then
              ! do nothing
@@ -4122,11 +4125,14 @@ module li_calving
                                                   stiffnessFactor
       integer, dimension(:), pointer :: cellMask
       real (kind=RKIND), pointer :: deltat  !< time step (s)
-      real (kind=RKIND), pointer :: config_flowLawExponent, &
+      real (kind=RKIND), pointer :: config_sea_level, &
+                                    config_flowLawExponent, &
                                     config_crevasse_water_depth, &
                                     config_smb_fraction_to_water_depth
       real (kind=RKIND) :: dryCrevasseDepth, waterAvailable, eEff, &
-                           tauMaxForCalving, meanA
+                           e1, e2, ezz, stressScale, tauMaxForCalving, &
+                           tauMinForCalving, resistiveStress, &
+                           heightAboveBuoyancy, meanA
 
       err = 0
       err_tmp = 0
@@ -4136,6 +4142,7 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_smb_fraction_to_water_depth', config_smb_fraction_to_water_depth)
       call mpas_pool_get_config(liConfigs, 'config_flowParamA_calculation', config_flowParamA_calculation)
       call mpas_pool_get_config(liConfigs, 'config_flowLawExponent', config_flowLawExponent)
+      call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_method', config_damage_calving_method)
@@ -4208,20 +4215,37 @@ module li_calving
 
 
       do iCell = 1, nCells
-         ! use effective strain rate to determine crevasse depths. Apply strainRateEnhancementForCalving
-         ! to first principal strain rate eMax, as this is likely to dominate mode I crevasse opening.
-         eEff = sqrt(0.5_RKIND * ( (strainRateEnhancementForCalving(iCell) * eMax(iCell))**2.0_RKIND + eMin(iCell)**2.0_RKIND ))
-         ! avoid divide-by-zero and only calculate crevasses where eEff is positive
+         ! F_EF-SM-1 (Reynolds et al., 2025): calculate the full
+         ! incompressible effective strain rate in the maximum-principal
+         ! direction and form R_n = 2*tau_1 + tau_2.  For the default
+         ! strainRateEnhancementForCalving=1, this is exactly F_EF-SM-1.
+         ! Retain the optional MALI enhancement by applying it to e_1 and
+         ! calculating the compensating vertical strain rate by continuity.
+         e1 = strainRateEnhancementForCalving(iCell) * eMax(iCell)
+         e2 = eMin(iCell)
+         ezz = -(e1 + e2)
+         eEff = sqrt(0.5_RKIND * (e1**2.0_RKIND + e2**2.0_RKIND + &
+                                   ezz**2.0_RKIND))
+
+         ! Avoid divide-by-zero and only calculate crevasses where eEff is positive.
          if ( (thickness(iCell) > 1.0e-6_RKIND) .and. &
               (eEff > 1.0e-12_RKIND) .and. &
               (sum(layerThickness(:,iCell) * flowParamA(:,iCell), dim=1)) > 0.0_RKIND ) then
-            ! Calculate dry crevasse depth using first principal deviatoric stress (Ranganathan et al., 2025; eq 13).
-            ! Calculate first principal deviatoric stress following Cuffey & Paterson (2010) eq. 3.25.
+            ! Calculate principal deviatoric stresses from the full effective
+            ! strain rate.  stiffnessFactor multiplies the effective viscosity.
             meanA = sum(layerThickness(:,iCell) * flowParamA(:,iCell), dim=1) / thickness(iCell)
-            tauMaxForCalving = stiffnessFactor(iCell) * meanA**(-1.0_RKIND / config_flowLawExponent) * &
-                eEff**((1.0_RKIND - config_flowLawExponent) / config_flowLawExponent) * &
-                strainRateEnhancementForCalving(iCell) * eMax(iCell)
-            dryCrevasseDepth = max(0.0_RKIND, tauMaxForCalving) / (config_ice_density * gravity)
+            stressScale = stiffnessFactor(iCell) * &
+                meanA**(-1.0_RKIND / config_flowLawExponent) * &
+                eEff**((1.0_RKIND - config_flowLawExponent) / config_flowLawExponent)
+            tauMaxForCalving = stressScale * e1
+            tauMinForCalving = stressScale * e2
+
+            ! R_n is the resistive stress perpendicular to a crevasse whose
+            ! normal follows the maximum principal-stress direction, not the
+            ! principal deviatoric stress alone.
+            resistiveStress = max(0.0_RKIND, 2.0_RKIND * tauMaxForCalving + &
+                                  tauMinForCalving)
+            dryCrevasseDepth = resistiveStress / (config_ice_density * gravity)
             ! Crevasses can only be water-filled if SMB is negative
             if (sfcMassBalApplied(iCell) < 0.0_RKIND) then
                waterAvailable = 1.0_RKIND
@@ -4233,9 +4257,11 @@ module li_calving
                 crevasseWaterDepth(iCell) * rho_water / config_ice_density
             ! Use dry crevasse depth to calculate basal crevasse depth,
             ! after Nick et al. (2010) eq 6
+            heightAboveBuoyancy = max(0.0_RKIND, thickness(iCell) - &
+                config_ocean_density / config_ice_density * &
+                (config_sea_level - bedTopography(iCell)))
             basalCrevasseDepth(iCell) = &
-                max(0.0_RKIND, (dryCrevasseDepth - max(0.0_RKIND, thickness(iCell) + &
-                 config_ocean_density / config_ice_density * bedTopography(iCell)))) * &
+                max(0.0_RKIND, dryCrevasseDepth - heightAboveBuoyancy) * &
                 config_ice_density / (config_ocean_density - config_ice_density)
             if (li_mask_is_dynamic_ice(cellMask(iCell))) then
                ! do not assign damage to non-dynamic cells.  It will not actually be used
@@ -4308,6 +4334,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: damageCalvingThreshold
       real(kind=RKIND), pointer :: config_damage_calving_threshold
       character (len=StrKIND), pointer :: config_damage_calving_threshold_source
+      real(kind=RKIND), pointer :: config_sea_level
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: cellMask
@@ -4320,6 +4347,7 @@ module li_calving
 
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold_source', config_damage_calving_threshold_source)
+      call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
 
       ! get fields
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
@@ -4403,14 +4431,14 @@ module li_calving
 
       ! define seed and grow masks for flood fill.
       where ( marineDynMarginMask .and. &
-              bedTopography < 0.0 .and. &
+              bedTopography < config_sea_level .and. &
               (damage .ge. damageCalvingThreshold) )
               seedMask = 1
       end where
       deallocate(marineDynMarginMask)
 
       where ( seedMask == 0 .and. &
-              bedTopography < 0.0 .and. &
+              bedTopography < config_sea_level .and. &
               (damage .ge. damageCalvingThreshold) )
               growMask = 1
       end where

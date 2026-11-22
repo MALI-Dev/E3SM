@@ -996,7 +996,10 @@ contains
       exy = 0.5_RKIND * (dudy + dvdx)
 
       ! Calculate principal strain rate angle
-      eTheta = 0.5_RKIND * atan( (2.0_RKIND * exy) / (exx - eyy + 1.0e-42_RKIND) )
+      eTheta = 0.0_RKIND
+      where (exy /= 0.0_RKIND .or. exx /= eyy)
+         eTheta = 0.5_RKIND * atan2(2.0_RKIND * exy, exx - eyy)
+      end where
 
       ! Calculate principal strain rates
       eMax = 0.5_RKIND * (exx + eyy) + sqrt( (0.5_RKIND * (exx - eyy))**2 + exy**2)
@@ -1012,7 +1015,10 @@ contains
 
       ! calculate effective viscosity from strain rate and flow param.
       do iCell = 1, nCells
-         eEff = sqrt(0.5_RKIND * (eMax(iCell)**2.0_RKIND + eMin(iCell)**2.0_RKIND ))
+         ! Full 3-D incompressible effective strain rate.  Since
+         ! ezz = -(eMax + eMin), include its contribution to the invariant.
+         eEff = sqrt(0.5_RKIND * (eMax(iCell)**2.0_RKIND + eMin(iCell)**2.0_RKIND + &
+             (eMax(iCell) + eMin(iCell))**2.0_RKIND))
          if ( (eEff == 0.0_RKIND) .or. (meanFlowParamA(iCell) == 0.0_RKIND) ) then
             effectiveViscosity(iCell) = 0.0_RKIND
          else
