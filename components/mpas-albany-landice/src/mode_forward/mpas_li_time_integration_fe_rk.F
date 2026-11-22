@@ -128,6 +128,9 @@ module li_time_integration_fe_rk
       real (kind=RKIND), dimension(:), pointer :: thickness, damage, passiveTracer2d
       real (kind=RKIND), dimension(:), pointer :: sfcMassBalApplied, &
                                                   basalMassBalApplied, &
+                                                  sfcMassBal, &
+                                                  sfcMassBalGradientCorrection, &
+                                                  basalMassBal, &
                                                   groundedSfcMassBalApplied, &
                                                   groundedBasalMassBalApplied, &
                                                   floatingBasalMassBalApplied, &
@@ -176,8 +179,9 @@ module li_time_integration_fe_rk
       logical, dimension(:), allocatable :: meltedOutStage1 ! cells with ice whose stage-1 forward-Euler update melted them out
       real (kind=RKIND), dimension(:), allocatable :: sfcMassBalAppliedStage1, &
                                                       basalMassBalAppliedStage1
-      real (kind=RKIND) :: residualThickness, sfcMelt1, basalMelt1, sfcFrac, &
-                           sfcCorrection, basalCorrection
+      real (kind=RKIND), dimension(:), allocatable :: ablationCapacity, ablationAppliedAccum
+      real (kind=RKIND) :: residualThickness, thicknessToRemove, unusedAblationCapacity, &
+                           sfcMelt1, basalMelt1, sfcFrac, sfcCorrection, basalCorrection
       integer :: nResidualCellsLocal, nResidualCellsGlobal
 
       err = 0
@@ -253,9 +257,13 @@ module li_time_integration_fe_rk
       allocate(meltedOutStage1(nCells+1))
       allocate(sfcMassBalAppliedStage1(nCells+1))
       allocate(basalMassBalAppliedStage1(nCells+1))
+      allocate(ablationCapacity(nCells+1))
+      allocate(ablationAppliedAccum(nCells+1))
       meltedOutStage1(:) = .false.
       sfcMassBalAppliedStage1(:) = 0.0_RKIND
       basalMassBalAppliedStage1(:) = 0.0_RKIND
+      ablationCapacity(:) = 0.0_RKIND
+      ablationAppliedAccum(:) = 0.0_RKIND
       nResidualCellsLocal = 0
 
       temperaturePrev(:,:) = 0.0_RKIND
@@ -452,22 +460,29 @@ module li_time_integration_fe_rk
          err = ior(err, err_tmp)
          call mpas_timer_stop("advect thickness and tracers")
 
+         call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
+         call mpas_pool_get_array(geometryPool, 'basalMassBalApplied', basalMassBalApplied)
+         ablationAppliedAccum(1:nCells) = ablationAppliedAccum(1:nCells) + rkTendWeights(rkStage) * &
+            (max(-sfcMassBalApplied(1:nCells), 0.0_RKIND) + max(-basalMassBalApplied(1:nCells), 0.0_RKIND))
+
          ! For 2-stage SSP RK2 and 3-stage SSP RK3, record cells that had ice at the start of
-         ! the time step and were completely melted out (by surface and/or basal ablation) by the
-         ! stage-1 forward-Euler update, which spans the full time step. For these cells the
-         ! available melt exceeded the ice present, so the correct end-of-step thickness is zero.
-         ! However, the SSP convex combination with the start-of-step thickness in the final
-         ! stage leaves a residual of w*H^n (w = 1/2 or 1/3), which then decays geometrically
-         ! from step to step but never reaches zero. These cells are cleaned up after the final
-         ! stage below. (The 4-stage SSP RK3 ends with a plain forward-Euler substep and does
-         ! not have this problem.)
+         ! the time step and are ice-free after the stage-1 forward-Euler update, which spans
+         ! the full time step, with surface or basal ablation applied. Advection may have
+         ! removed some ice before ablation, so the stage-1 state alone does not establish that
+         ! the forcing can remove the final-stage residual. The cleanup below is limited by
+         ! unused full-step ablation capacity. (The 4-stage SSP RK3 ends with a plain forward-
+         ! Euler substep and does not have this problem.)
          if ( (rkStage == 1) .and. ((nRKstages == 2) .or. (nRKstages == 3)) ) then
             call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
-            call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
-            call mpas_pool_get_array(geometryPool, 'basalMassBalApplied', basalMassBalApplied)
+            call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
+            call mpas_pool_get_array(geometryPool, 'sfcMassBalGradientCorrection', sfcMassBalGradientCorrection)
+            call mpas_pool_get_array(geometryPool, 'basalMassBal', basalMassBal)
             sfcMassBalAppliedStage1(:) = sfcMassBalApplied(:)
             basalMassBalAppliedStage1(:) = basalMassBalApplied(:)
             do iCell = 1, nCells
+               ablationCapacity(iCell) = (max(-(sfcMassBal(iCell) + sfcMassBalGradientCorrection(iCell)), &
+                                              0.0_RKIND) + max(-basalMassBal(iCell), 0.0_RKIND)) * &
+                                         deltatFull / config_ice_density
                meltedOutStage1(iCell) = (sum(layerThicknessPrev(:,iCell)) > 0.0_RKIND) .and. &
                                         (sum(layerThickness(:,iCell)) == 0.0_RKIND) .and. &
                                         ( (sfcMassBalApplied(iCell) < 0.0_RKIND) .or. &
@@ -493,47 +508,6 @@ module li_time_integration_fe_rk
             thickness = sum(layerThickness, 1)
             ! Do not calculate masks after updating thickness! We need to keep masks
             ! constant for now to preserve accuracy of time integration
-
-            ! In the final stage, remove the SSP residual (w*H^n) in cells that were melted
-            ! out in stage 1 and are also ice-free after this stage's forward-Euler update
-            ! (i.e., any inflow during later stages was melted as well). See comment above
-            ! where meltedOutStage1 is set. The removed ice is added to the surface and basal
-            ! mass balance budgets in proportion to the stage-1 surface and basal ablation,
-            ! so that the budgets remain closed. Doing this only in the final stage means the
-            ! removed thickness maps directly onto the end-of-step thickness change.
-            if ( (rkStage == nRKstages) .and. ((nRKstages == 2) .or. (nRKstages == 3)) ) then
-               do iCell = 1, nCells
-                  if ( meltedOutStage1(iCell) .and. (thickness(iCell) > 0.0_RKIND) .and. &
-                       (sum(layerThicknessTmp(:,iCell)) == 0.0_RKIND) ) then
-                     residualThickness = thickness(iCell)
-                     layerThickness(:,iCell) = 0.0_RKIND
-                     thickness(iCell) = 0.0_RKIND
-                     if (iCell <= nCellsSolve) nResidualCellsLocal = nResidualCellsLocal + 1
-
-                     ! Partition the removed mass between SMB and BMB budgets
-                     sfcMelt1 = max(-sfcMassBalAppliedStage1(iCell), 0.0_RKIND)
-                     basalMelt1 = max(-basalMassBalAppliedStage1(iCell), 0.0_RKIND)
-                     sfcFrac = sfcMelt1 / (sfcMelt1 + basalMelt1)  ! denominator > 0 by meltedOutStage1
-                     ! convert thickness (m) to applied rate (kg m^-2 s^-1); negative for ablation
-                     sfcCorrection = -sfcFrac * residualThickness * config_ice_density / deltatFull
-                     basalCorrection = -(1.0_RKIND - sfcFrac) * residualThickness * config_ice_density / deltatFull
-
-                     ! Masks are held fixed during the RK loop, so cellMaskPrev is the mask that
-                     ! apply_mass_balance used to split grounded/floating components.
-                     sfcMassBalAccum(iCell) = sfcMassBalAccum(iCell) + sfcCorrection
-                     if (li_mask_is_grounded_ice(cellMaskPrev(iCell)) .or. &
-                         (bedTopography(iCell) > config_sea_level)) then
-                        groundedSfcMassBalAccum(iCell) = groundedSfcMassBalAccum(iCell) + sfcCorrection
-                     endif
-                     basalMassBalAccum(iCell) = basalMassBalAccum(iCell) + basalCorrection
-                     if (li_mask_is_grounded_ice(cellMaskPrev(iCell))) then
-                        groundedBasalMassBalAccum(iCell) = groundedBasalMassBalAccum(iCell) + basalCorrection
-                     elseif (li_mask_is_floating_ice(cellMaskPrev(iCell))) then
-                        floatingBasalMassBalAccum(iCell) = floatingBasalMassBalAccum(iCell) + basalCorrection
-                     endif
-                  endif
-               enddo
-            endif
 
             if (trim(config_thermal_solver) .ne. 'none') then
                do iCell = 1, nCells
@@ -577,6 +551,49 @@ module li_time_integration_fe_rk
                enddo
                passiveTracer2d(iCell) = sum(passiveTracer3d(:,iCell) * layerThicknessFractions)
             enddo
+
+            ! In the final stage, remove only the residual supported by the unused
+            ! full-step ablation capacity. Stage contributions are weighted by the RK
+            ! tendency weights, so advection cannot make the cleanup exceed the forcing.
+            if ( (rkStage == nRKstages) .and. ((nRKstages == 2) .or. (nRKstages == 3)) ) then
+               do iCell = 1, nCells
+                  if ( meltedOutStage1(iCell) .and. (thickness(iCell) > 0.0_RKIND) .and. &
+                       (sum(layerThicknessTmp(:,iCell)) == 0.0_RKIND) ) then
+                     residualThickness = thickness(iCell)
+                     unusedAblationCapacity = max(ablationCapacity(iCell) - &
+                        ablationAppliedAccum(iCell) * deltatFull / config_ice_density, 0.0_RKIND)
+                     thicknessToRemove = min(residualThickness, unusedAblationCapacity)
+                     if (thicknessToRemove > 0.0_RKIND) then
+                        layerThickness(:,iCell) = layerThickness(:,iCell) * &
+                           (residualThickness - thicknessToRemove) / residualThickness
+                        thickness(iCell) = sum(layerThickness(:,iCell))
+                        if (iCell <= nCellsSolve) nResidualCellsLocal = nResidualCellsLocal + 1
+
+                        ! Partition the removed mass between SMB and BMB budgets
+                        sfcMelt1 = max(-sfcMassBalAppliedStage1(iCell), 0.0_RKIND)
+                        basalMelt1 = max(-basalMassBalAppliedStage1(iCell), 0.0_RKIND)
+                        sfcFrac = sfcMelt1 / (sfcMelt1 + basalMelt1)  ! denominator > 0 by meltedOutStage1
+                        ! convert thickness (m) to applied rate (kg m^-2 s^-1); negative for ablation
+                        sfcCorrection = -sfcFrac * thicknessToRemove * config_ice_density / deltatFull
+                        basalCorrection = -(1.0_RKIND - sfcFrac) * thicknessToRemove * config_ice_density / deltatFull
+
+                        ! Masks are held fixed during the RK loop, so cellMaskPrev is the mask that
+                        ! apply_mass_balance used to split grounded/floating components.
+                        sfcMassBalAccum(iCell) = sfcMassBalAccum(iCell) + sfcCorrection
+                        if (li_mask_is_grounded_ice(cellMaskPrev(iCell)) .or. &
+                            (bedTopography(iCell) > config_sea_level)) then
+                           groundedSfcMassBalAccum(iCell) = groundedSfcMassBalAccum(iCell) + sfcCorrection
+                        endif
+                        basalMassBalAccum(iCell) = basalMassBalAccum(iCell) + basalCorrection
+                        if (li_mask_is_grounded_ice(cellMaskPrev(iCell))) then
+                           groundedBasalMassBalAccum(iCell) = groundedBasalMassBalAccum(iCell) + basalCorrection
+                        elseif (li_mask_is_floating_ice(cellMaskPrev(iCell))) then
+                           floatingBasalMassBalAccum(iCell) = floatingBasalMassBalAccum(iCell) + basalCorrection
+                        endif
+                     endif
+                  endif
+               enddo
+            endif
 
          endif
        
@@ -780,6 +797,8 @@ module li_time_integration_fe_rk
       deallocate(meltedOutStage1)
       deallocate(sfcMassBalAppliedStage1)
       deallocate(basalMassBalAppliedStage1)
+      deallocate(ablationCapacity)
+      deallocate(ablationAppliedAccum)
    !--------------------------------------------------------------------
    end subroutine li_time_integrator_forwardeuler_rungekutta
 
@@ -1790,4 +1809,3 @@ module li_time_integration_fe_rk
 
 
 end module li_time_integration_fe_rk
-
