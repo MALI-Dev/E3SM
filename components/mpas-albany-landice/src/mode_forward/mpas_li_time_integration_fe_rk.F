@@ -564,9 +564,23 @@ module li_time_integration_fe_rk
                         ablationAppliedAccum(iCell) * deltatFull / config_ice_density, 0.0_RKIND)
                      thicknessToRemove = min(residualThickness, unusedAblationCapacity)
                      if (thicknessToRemove > 0.0_RKIND) then
-                        layerThickness(:,iCell) = layerThickness(:,iCell) * &
-                           (residualThickness - thicknessToRemove) / residualThickness
-                        thickness(iCell) = sum(layerThickness(:,iCell))
+                        if (thicknessToRemove >= residualThickness) then
+                           ! Cell is emptied. The tracer blends above ran before this cleanup, so
+                           ! zero the tracers here as they would be for any zero-thickness layer.
+                           layerThickness(:,iCell) = 0.0_RKIND
+                           thickness(iCell) = 0.0_RKIND
+                           passiveTracer3d(:,iCell) = 0.0_RKIND
+                           passiveTracer2d(iCell) = 0.0_RKIND
+                           if (config_calculate_damage) then
+                              damage3d(:,iCell) = 0.0_RKIND
+                              damage(iCell) = 0.0_RKIND
+                           endif
+                        else
+                           ! Partial removal: scale layers uniformly; tracer concentrations are unchanged
+                           layerThickness(:,iCell) = layerThickness(:,iCell) * &
+                              (residualThickness - thicknessToRemove) / residualThickness
+                           thickness(iCell) = sum(layerThickness(:,iCell))
+                        endif
                         if (iCell <= nCellsSolve) nResidualCellsLocal = nResidualCellsLocal + 1
 
                         ! Partition the removed mass between SMB and BMB budgets
