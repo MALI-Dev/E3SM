@@ -1884,7 +1884,7 @@ module li_calving
                                         calvingThicknessGrounded, &
                                         floatingVonMisesThresholdStress, &
                                         groundedVonMisesThresholdStress, &
-                                        surfaceSpeed
+                                        surfaceSpeed, stiffnessFactor
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA, &
                                         temperature, layerThickness
       real (kind=RKIND), pointer :: config_default_flowParamA
@@ -1949,6 +1949,7 @@ module li_calving
           call mpas_pool_get_array(velocityPool, 'xvelmean', xvelmean)
           call mpas_pool_get_array(velocityPool, 'yvelmean', yvelmean)
           call mpas_pool_get_array(velocityPool, 'surfaceSpeed', surfaceSpeed)
+          call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
           call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
           call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
           call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
@@ -1987,7 +1988,7 @@ module li_calving
                       config_floating_von_Mises_threshold_stress_source, MPAS_LOG_ERR)
           endif
 
-          if ( minval(floatingVonMisesThresholdStress(:)) < 0.0_RKIND ) then
+          if ( minval(floatingVonMisesThresholdStress(1:nCells)) < 0.0_RKIND ) then
                 err = 1
                 call mpas_log_write("floatingVonMisesThresholdStress must be >=0.0", MPAS_LOG_ERR)
           endif
@@ -2005,6 +2006,7 @@ module li_calving
           !calculate Albany-type flowParamA
              call mpas_log_write("config_use_Albany_flowA_eqn_for_vM not yet supported", MPAS_LOG_ERR)
              err = 1
+             return
           else
              if (.not. (trim(config_flowParamA_calculation) == "PB1982" .or. &
                         trim(config_flowParamA_calculation) == "Fan2025")) then
@@ -2024,7 +2026,7 @@ module li_calving
 
           do iCell = 1,nCells
              if ( thickness(iCell) > 0.0_RKIND ) then
-                vonMisesStress(iCell) = sqrt(3.0_RKIND) * sum(layerThickness(:,iCell) * &
+                vonMisesStress(iCell) = sqrt(3.0_RKIND) * stiffnessFactor(iCell) * sum(layerThickness(:,iCell) * &
                               flowParamA(:,iCell)**(-1.0_RKIND/config_flowLawExponent),dim=1) / &
                               thickness(iCell) * ( 0.5_RKIND * ( (max(0.0_RKIND, eMax(iCell)))**2.0_RKIND + &
                               (max(0.0_RKIND, eMin(iCell)))**2.0_RKIND) )**(1.0_RKIND / (2.0_RKIND * config_flowLawExponent))
@@ -2120,12 +2122,13 @@ module li_calving
              if ( .not. li_mask_is_floating_ice(cellMask(iCell)) ) then
                 calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2.0_RKIND + yvelmean(iCell)**2.0_RKIND) * &
                                          vonMisesStress(iCell) / groundedVonMisesThresholdStress(iCell), config_calving_speed_limit)
-             ! If config_floating_von_Mises_threshold_stress is not 0.0, calculate
-             ! calvingVelocity. If config_floating_von_Mises_threshold_stress is
-             ! 0.0, remove floating ice in loop below.
-             elseif ( li_mask_is_floating_ice(cellMask(iCell)) .and. config_floating_von_Mises_threshold_stress .ne. 0.0_RKIND) then
-                calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
-                                         vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
+            elseif ( li_mask_is_floating_ice(cellMask(iCell)) ) then
+               ! A zero local threshold requests instantaneous removal below.
+               if (floatingVonMisesThresholdStress(iCell) > 0.0_RKIND) then
+                  calvingVelocity(iCell) = min( &
+                      sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
+                      vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
+               endif
              endif
           enddo
 
@@ -2157,8 +2160,9 @@ module li_calving
           ! non-dynamic cells adjacent to grounded ice.
           ! TODO: Make an exception for the case of floating ice surrounded by grounded ice
           ! (i.e., floating on a subglacial lake) using a flood fill routine
-          if ( config_floating_von_Mises_threshold_stress .eq. 0.0_RKIND ) then
-             do iCell = 1,nCells
+          ! A zero local threshold requests instantaneous floating-ice removal.
+          do iCell = 1,nCells
+             if (floatingVonMisesThresholdStress(iCell) /= 0.0_RKIND) cycle
                 if ( li_mask_is_floating_ice(cellMask(iCell)) .and. &
                      li_mask_is_dynamic_ice(cellMask(iCell)) ) then
                      calvingThickness(iCell) = thickness(iCell)
@@ -2180,7 +2184,6 @@ module li_calving
                     endif
                 endif
              enddo
-          endif
 
           if ( trim(config_damage_calving_method) == 'none' ) then
              ! do nothing
