@@ -1392,9 +1392,18 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
-      ! Make sure the mask is current (including halos) before evaluating neighbors
+      ! Make sure the mask is current (including halos) before evaluating neighbors.
+      ! The outermost halo cells' dynamic bit can be wrong when computed locally (the
+      ! floating-margin rule in li_calculate_mask needs neighbor-of-neighbor information),
+      ! so take cellMask halos from their owners, as li_velocity_solve does.
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'thickness')
+      call mpas_timer_stop("halo updates")
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
       err = ior(err, err_tmp)
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'cellMask')
+      call mpas_timer_stop("halo updates")
 
       nRemovedTotal = 0
       iPass = 0
@@ -1435,8 +1444,12 @@ module li_calving
             call mpas_dmpar_field_halo_exch(domain, 'calvingThickness')
             call mpas_timer_stop("halo updates")
             ! Removing ice can change the dynamic state of neighboring cells, so update the mask
+            ! and again take cellMask halos from their owners
             call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
             err = ior(err, err_tmp)
+            call mpas_timer_start("halo updates")
+            call mpas_dmpar_field_halo_exch(domain, 'cellMask')
+            call mpas_timer_stop("halo updates")
          endif
       enddo
 
