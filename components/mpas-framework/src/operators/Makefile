@@ -5,6 +5,7 @@ OBJS = mpas_vector_operations.o \
        mpas_tensor_operations.o \
        mpas_rbf_interpolation.o \
        mpas_vector_reconstruction.o \
+	mpas_plane_slope_operators.o \
        mpas_spline_interpolation.o \
        mpas_tracer_advection_helpers.o \
        mpas_tracer_advection_mono.o \
@@ -23,6 +24,7 @@ mpas_matrix_operations.o: $(DEPS)
 mpas_tensor_operations.o: mpas_vector_operations.o mpas_matrix_operations.o $(DEPS)
 mpas_rbf_interpolation.o: mpas_vector_operations.o
 mpas_vector_reconstruction.o: mpas_rbf_interpolation.o
+mpas_plane_slope_operators.o:
 mpas_spline_interpolation:
 mpas_tracer_advection_helpers.o: mpas_geometry_utils.o $(DEPS)
 mpas_tracer_advection_mono.o: mpas_tracer_advection_helpers.o
