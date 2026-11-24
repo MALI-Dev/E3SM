@@ -126,6 +126,7 @@ module li_time_integration_fe_rk
                                                     temperature, &
                                                     waterFrac
       real (kind=RKIND), dimension(:), pointer :: thickness, damage, passiveTracer2d
+      real (kind=RKIND), dimension(:), pointer :: referenceThickness
       real (kind=RKIND), dimension(:), pointer :: sfcMassBalApplied, &
                                                   basalMassBalApplied, &
                                                   sfcMassBal, &
@@ -154,6 +155,7 @@ module li_time_integration_fe_rk
                                                       bareIceAblationAccum
       real (kind=RKIND), dimension(:), pointer :: layerCenterSigma, layerThicknessFractions
       integer, dimension(:), allocatable :: cellMaskPrev, edgeMaskPrev, vertexMaskPrev  ! cell mask before advection
+      real (kind=RKIND), dimension(:), allocatable :: referenceThicknessPrev  ! referenceThickness before advection
       real (kind=RKIND), dimension(:,:), allocatable :: layerThicknessPrev, &
                                                         layerThicknessTmp, &
                                                         temperaturePrev, &
@@ -249,6 +251,7 @@ module li_time_integration_fe_rk
       allocate(cellMaskPrev(nCells+1))
       allocate(edgeMaskPrev(nEdges+1))
       allocate(vertexMaskPrev(nVertices+1))
+      allocate(referenceThicknessPrev(nCells+1))
 
       allocate(sfcMassBalAccum(nCells+1))
       allocate(basalMassBalAccum(nCells+1))
@@ -282,6 +285,7 @@ module li_time_integration_fe_rk
       cellMaskPrev(:) = 0
       edgeMaskPrev(:) = 0
       vertexMaskPrev(:) = 0
+      referenceThicknessPrev(:) = 0.0_RKIND
       passiveTracer3d(:,:) = 0.0_RKIND
 
       sfcMassBalAccum(:) = 0.0_RKIND
@@ -344,6 +348,7 @@ module li_time_integration_fe_rk
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'vertexMask', vertexMask, timeLevel=1)
+      call mpas_pool_get_array(geometryPool, 'referenceThickness', referenceThickness)
 
       call mpas_pool_get_array(thermalPool, 'temperature', temperature)
       call mpas_pool_get_array(thermalPool, 'waterFrac', waterFrac)
@@ -359,6 +364,7 @@ module li_time_integration_fe_rk
       cellMaskPrev(:) = cellMask(:)
       edgeMaskPrev(:) = edgeMask(:)
       vertexMaskPrev(:) = vertexMask(:)
+      referenceThicknessPrev(:) = referenceThickness(:)
       do k = 1, nVertLevels
          damage3dPrev(k,:) = damage(:)
          passiveTracer3dPrev(k,:) = passiveTracer2d(:)
@@ -716,6 +722,7 @@ module li_time_integration_fe_rk
             cellMask(:) = cellMaskPrev(:)
             edgeMask(:) = edgeMaskPrev(:)
             vertexMask(:) = vertexMaskPrev(:)
+            referenceThickness(:) = referenceThicknessPrev(:)
             call li_velocity_solve(domain, solveVelo=.true., updateMask=.false., err=err_tmp)
             err = ior(err, err_tmp)
          endif
@@ -844,6 +851,7 @@ module li_time_integration_fe_rk
       deallocate(cellMaskPrev)
       deallocate(edgeMaskPrev)
       deallocate(vertexMaskPrev)
+      deallocate(referenceThicknessPrev)
       deallocate(sfcMassBalAccum)
       deallocate(basalMassBalAccum)
       deallocate(groundedSfcMassBalAccum)
