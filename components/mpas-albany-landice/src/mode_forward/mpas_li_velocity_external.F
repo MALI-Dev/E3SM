@@ -65,7 +65,8 @@ module li_velocity_external
          config_default_flowParamA, &
          config_flowLawExponent, config_dynamic_thickness, iceMeltingPointPressureDependence, &
          config_thermal_thickness, &
-         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, use_ismip7_fem_extension) &
+         li_mask_ValueDynamicIce, li_mask_ValueIce, config_use_glp, use_ismip7_fem_extension, &
+         melting_temperature, seconds_per_year, gas_constant) &
          bind(C, name="velocity_solver_set_parameters")
 
          use iso_c_binding, only: C_INT, C_DOUBLE
@@ -78,7 +79,8 @@ module li_velocity_external
          REAL(C_DOUBLE) :: config_ice_density, config_ocean_density, config_sea_level, config_default_flowParamA, &
                            config_flowLawExponent, config_dynamic_thickness, gravity, &
                            iceMeltingPointPressureDependence, &
-                           config_thermal_thickness
+                           config_thermal_thickness, &
+                           melting_temperature, seconds_per_year, gas_constant
       end subroutine velocity_solver_set_parameters
 
    end interface
@@ -380,7 +382,8 @@ contains
          config_thermal_thickness, &
          li_mask_ValueAlbanyActive, li_mask_ValueIce, &
          merge(1_C_INT, 0_C_INT, config_use_glp), &
-         merge(1_C_INT, 0_C_INT, use_ismip7_fem_extension) )
+         merge(1_C_INT, 0_C_INT, use_ismip7_fem_extension), &
+         kelvin_to_celsius, scyr, idealGasConstant )
 
       call interface_reset_stdout()
 #endif
@@ -491,7 +494,7 @@ contains
       integer :: iEdge
       integer :: iCell
       integer :: albanyVelocityErrorTmp
-      real(kind=RKIND), parameter :: secondsInYear = 365.0_RKIND * 24.0_RKIND * 3600.0_RKIND
+      real(kind=RKIND), parameter :: secondsInYear = scyr
          !< The value of seconds in a year assumed by external dycores
       integer, pointer :: albanyVelocityError
 
@@ -671,7 +674,7 @@ contains
           call velocity_solver_solve_stokes(lowerSurface, thickness, betaSolve, temperature, &
                 uReconstructX, uReconstructY,  &  ! Dirichlet boundary values to apply where dirichletVelocityMask=1
                 normalVelocity, uReconstructX, uReconstructY, uReconstructZ)  ! return values
-          uReconstructZ = uReconstructZ / (365.0_RKIND * 24.0_RKIND * 3600.0_RKIND)  ! convert from m/yr to m/s
+          uReconstructZ = uReconstructZ / secondsInYear  ! convert from m/yr to m/s
           call mpas_timer_stop("velocity_solver_solve_stokes")
 #else
           call mpas_log_write("External Stokes library needed to run stokes dycore.", MPAS_LOG_ERR)
