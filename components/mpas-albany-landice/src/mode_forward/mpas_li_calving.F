@@ -1756,14 +1756,16 @@ module li_calving
          ! Tests of the current implementation show reasonable behavior.
          ! calvingFrontMask must be calculated from the post-calving mask (updated above).
          call calculate_calving_front_mask(meshPool, geometryPool, calvingFrontMask)
-         do iCell = 1, nCells
-            if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
-               calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
-                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
-               thickness(iCell) = 0.0_RKIND
-            endif
-         enddo
+         if (deltat > 0.0_RKIND) then
+            do iCell = 1, nCells
+               if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
+                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
+                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
+                  thickness(iCell) = 0.0_RKIND
+               endif
+            enddo
+         endif
 
          ! Abandoned floating ice (icebergs) is removed after all calving routines by li_remove_icebergs
          ! (if config_remove_icebergs is true) and remove_stranded_nondynamic_marine_ice, both called
@@ -1944,14 +1946,16 @@ module li_calving
          ! Tests of the current implementation show reasonable behavior.
          ! calvingFrontMask must be calculated from the post-calving mask (updated above).
          call calculate_calving_front_mask(meshPool, geometryPool, calvingFrontMask)
-         do iCell = 1, nCells
-            if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
-               calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
-                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
-               thickness(iCell) = 0.0_RKIND
-            endif
-         enddo
+         if (deltat > 0.0_RKIND) then
+            do iCell = 1, nCells
+               if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
+                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
+                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
+                  thickness(iCell) = 0.0_RKIND
+               endif
+            enddo
+         endif
 
          ! Abandoned floating ice (icebergs) is removed after all calving routines by li_remove_icebergs
          ! (if config_remove_icebergs is true) and remove_stranded_nondynamic_marine_ice, both called
