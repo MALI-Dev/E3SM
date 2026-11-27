@@ -2656,6 +2656,14 @@ module li_calving
           err = 1
       endif
 
+      ! Calving can only act on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the
+      ! two cells on each edge touching a front cell when calculating the calving CFL timestep limit.  The local ice
+      ! speed added above is nonzero in some ice-free cells next to the margin, so a calvingVelocity there could
+      ! needlessly limit the timestep.  Remove it from ice-free cells.
+      where (.not. li_mask_is_ice(cellMask(:)))
+         calvingVelocity(:) = 0.0_RKIND
+      end where
+
       ! Testing indicates this halo update is necessary before calling li_apply_front_ablation_velocity.
       call mpas_timer_start("halo updates")
       call mpas_dmpar_field_halo_exch(domain, 'calvingVelocity')
