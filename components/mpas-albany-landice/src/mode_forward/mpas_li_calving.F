@@ -1929,6 +1929,14 @@ module li_calving
             calvingVelocity = calvingVelocity + sqrt(xvelmean**2.0_RKIND + yvelmean**2.0_RKIND)
          endif
 
+         ! Calving can only act on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the
+         ! two cells on each edge touching a front cell when calculating the calving CFL timestep limit.  A calvingVelocity
+         ! in an ice-free neighbor of the front (e.g., from nonzero velocity there) could therefore needlessly limit
+         ! the timestep, so remove it from ice-free cells.
+         where (.not. li_mask_is_ice(cellMask(:)))
+            calvingVelocity(:) = 0.0_RKIND
+         end where
+
          ! Convert calvingVelocity to calvingThickness
          call li_apply_front_ablation_velocity(meshPool, geometryPool, velocityPool, calvingThickness, calvingVelocity, &
                                               applyToGrounded=.true., applyToFloating=.true., applyToGroundingLine=.false., &
@@ -2301,6 +2309,14 @@ module li_calving
                endif
              endif
           enddo
+
+          ! Calving can only act on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the
+          ! two cells on each edge touching a front cell when calculating the calving CFL timestep limit.  Ice-free
+          ! cells next to the margin can have nonzero velocity and (extrapolated) stress, so a calvingVelocity there
+          ! could needlessly limit the timestep.  Remove it from ice-free cells.
+          where (.not. li_mask_is_ice(cellMask(:)))
+             calvingVelocity(:) = 0.0_RKIND
+          end where
 
           call mpas_timer_start("halo updates")
           call mpas_dmpar_field_halo_exch(domain, 'calvingVelocity')
