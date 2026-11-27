@@ -1605,6 +1605,7 @@ module li_calving
       character (len=StrKIND), pointer :: config_damage_calving_threshold_source
       logical, pointer :: config_print_calving_info
       real(kind=RKIND), pointer :: config_calving_thickness
+      real(kind=RKIND), pointer :: config_calving_speed_limit
       real (kind=RKIND), dimension(:), pointer :: eigencalvingParameter
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin
@@ -1612,19 +1613,14 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
-      integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
-      integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:), pointer :: cellMask
       integer, dimension(:), pointer :: calvingFrontMask
       real (kind=RKIND), pointer :: deltat  !< time step (s)
-      real (kind=RKIND), dimension(:), pointer :: dvEdge
-      real (kind=RKIND), dimension(:), pointer :: areaCell
       integer, pointer :: nCells
-      integer :: iCell, jCell, iNeighbor
-      logical :: dynamicNeighbor
-      real(kind=RKIND) :: calvingSubtotal
+      integer :: iCell
       integer :: err_tmp
       logical :: applyToGrounded, applyToFloating, applyToGroundingLine
       real (kind=RKIND), pointer :: totalRatebasedCalvedVolume, totalRatebasedUncalvedVolume
@@ -1642,6 +1638,7 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_calving_eigencalving_parameter_source', &
               config_calving_eigencalving_parameter_source)
       call mpas_pool_get_config(liConfigs, 'config_calving_thickness', config_calving_thickness)
+      call mpas_pool_get_config(liConfigs, 'config_calving_speed_limit', config_calving_speed_limit)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold_source', config_damage_calving_threshold_source)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_method', config_damage_calving_method)
@@ -1671,13 +1668,11 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
          call mpas_pool_get_array(geometryPool, 'dtCalvingCFLratio', dtCalvingCFLratio)
          call mpas_pool_get_array(geometryPool, 'totalRatebasedCalvedVolume', totalRatebasedCalvedVolume)
          call mpas_pool_get_array(geometryPool, 'totalRatebasedUncalvedVolume', totalRatebasedUncalvedVolume)
-         call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
-         call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
-         call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
 
          ! get parameter value
          if (trim(config_calving_eigencalving_parameter_source) == 'scalar') then
@@ -1688,6 +1683,7 @@ module li_calving
             err = 1
             call mpas_log_write("Invalid value specified for option config_calving_eigencalving_parameter_source" // &
                   config_calving_eigencalving_parameter_source, MPAS_LOG_ERR)
+            return
          endif
 
          if (config_print_calving_info) then
@@ -1699,7 +1695,25 @@ module li_calving
          ! First calculate the front retreat rate (Levermann eq. 1)
          calvingVelocity(:) = eigencalvingParameter(:) * max(0.0_RKIND, eMax(:)) * max(0.0_RKIND, eMin(:)) ! m/s
 
-         call mpas_log_write("calling li_apply_front_ablation_velocity from eigencalving")
+         ! The product of the two strain rates in a single cell is very heavy-tailed, so a small fraction of cells
+         ! can have calving velocities orders of magnitude above the ice velocity.  Because the calving CFL timestep
+         ! limit is set by the largest calving velocity, limit it (as for von Mises calving).  Choose
+         ! config_calving_speed_limit of order twice the maximum ice speed to keep the calving CFL limit from being
+         ! much more restrictive than the advective CFL limit.
+         calvingVelocity(:) = min(calvingVelocity(:), config_calving_speed_limit)
+
+         ! eMax and eMin are also calculated in ice-free cells next to the ice margin, where the zero velocity on the
+         ! ice-free side can produce large strain rates that are extensional in both directions.  Calving can only act
+         ! on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the two cells on each edge
+         ! touching a front cell when calculating the calving CFL timestep limit.  A spurious calvingVelocity in an
+         ! ice-free neighbor of the front can therefore collapse the timestep, so remove it from ice-free cells.
+         where (.not. li_mask_is_ice(cellMask(:)))
+            calvingVelocity(:) = 0.0_RKIND
+         end where
+
+         if (config_print_calving_info) then
+            call mpas_log_write("calling li_apply_front_ablation_velocity from eigencalving")
+         endif
          ! Convert calvingVelocity to calvingThickness
          call li_apply_front_ablation_velocity(meshPool, geometryPool, velocityPool, &
                                               calvingThickness, calvingVelocity, applyToGrounded, &
@@ -1760,43 +1774,40 @@ module li_calving
          ! meaning just one 'row' of cells per timestep.  This could be expanded to continue
          ! removing ice backward until all connected too-thin ice has been removed.
          ! Tests of the current implementation show reasonable behavior.
-         do iCell = 1, nCells
-            if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
-               calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
-                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
-               thickness(iCell) = 0.0_RKIND
-            endif
-         enddo
-         ! TODO: global reduce & reporting on amount of calving generated in this step
+         ! calvingFrontMask must be calculated from the post-calving mask (updated above).
+         call calculate_calving_front_mask(meshPool, geometryPool, calvingFrontMask)
+         if (deltat > 0.0_RKIND) then
+            do iCell = 1, nCells
+               if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
+                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
+                  call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
+                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
+                  thickness(iCell) = 0.0_RKIND
+               endif
+            enddo
+         endif
 
-         ! update mask
+         ! Abandoned floating ice (icebergs) is removed after all calving routines by li_remove_icebergs
+         ! (if config_remove_icebergs is true) and remove_stranded_nondynamic_marine_ice, both called
+         ! from li_calve_ice before the velocity solve.
+
+         block => block % next
+      enddo
+
+      ! thickness was modified on halo cells locally above; make sure halos are consistent before updating mask
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'thickness')
+      call mpas_timer_stop("halo updates")
+
+      ! update mask after thin-ice removal
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
+         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
          err = ior(err, err_tmp)
-
-         ! remove abandoned floating ice (i.e. icebergs) and add it to the calving flux
-         ! Defined as: floating ice (dynamic or non-dynamic) that is not adjacent to dynamic ice (floating or grounded)
-         ! This won't necessarily find all abandoned ice, but in practice it does a pretty good job at general cleanup
-         calvingSubtotal = 0.0_RKIND
-         do iCell = 1, nCells
-           if (li_mask_is_floating_ice(cellMask(iCell))) then
-              ! check neighbors for dynamic ice (floating or grounded)
-              dynamicNeighbor = .false.
-              do iNeighbor = 1, nEdgesOnCell(iCell)
-                 jCell = cellsOnCell(iNeighbor, iCell)
-                 if (li_mask_is_dynamic_ice(cellMask(jCell))) dynamicNeighbor = .true.
-              enddo
-              if (.not. dynamicNeighbor) then  ! calve this ice
-                 calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                 call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
-                                                            calvingThicknessGrounded(iCell), do_augment=.true.)
-                 thickness(iCell) = 0.0_RKIND
-                 calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
-              endif
-           endif
-         enddo
-         ! TODO: global reduce & reporting on amount of calving generated in this step
-
          block => block % next
       enddo
 
@@ -1854,20 +1865,16 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
       real (kind=RKIND), dimension(:), pointer :: xvelmean, yvelmean
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
-      integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
-      integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:), pointer :: cellMask
       integer, dimension(:), pointer :: calvingFrontMask
       real (kind=RKIND), pointer :: deltat  !< time step (s)
       real (kind=RKIND), dimension(:), pointer :: dvEdge
-      real (kind=RKIND), dimension(:), pointer :: areaCell
       integer, pointer :: nCells
-      integer :: iCell, jCell, iNeighbor
-      logical :: dynamicNeighbor
-      real(kind=RKIND) :: calvingSubtotal
+      integer :: iCell
       real (kind=RKIND), pointer :: totalRatebasedCalvedVolume, totalRatebasedUncalvedVolume
       integer :: err_tmp
 
@@ -1902,13 +1909,11 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
          call mpas_pool_get_array(geometryPool, 'dtCalvingCFLratio', dtCalvingCFLratio)
          call mpas_pool_get_array(geometryPool, 'totalRatebasedCalvedVolume', totalRatebasedCalvedVolume)
          call mpas_pool_get_array(geometryPool, 'totalRatebasedUncalvedVolume', totalRatebasedUncalvedVolume)
-         call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
-         call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
-         call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
 
 
          ! get parameter value
@@ -1932,6 +1937,14 @@ module li_calving
             call mpas_pool_get_array(velocityPool, 'yvelmean', yvelmean)
             calvingVelocity = calvingVelocity + sqrt(xvelmean**2.0_RKIND + yvelmean**2.0_RKIND)
          endif
+
+         ! Calving can only act on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the
+         ! two cells on each edge touching a front cell when calculating the calving CFL timestep limit.  A calvingVelocity
+         ! in an ice-free neighbor of the front (e.g., from nonzero velocity there) could therefore needlessly limit
+         ! the timestep, so remove it from ice-free cells.
+         where (.not. li_mask_is_ice(cellMask(:)))
+            calvingVelocity(:) = 0.0_RKIND
+         end where
 
          ! Convert calvingVelocity to calvingThickness
          call li_apply_front_ablation_velocity(meshPool, geometryPool, velocityPool, calvingThickness, calvingVelocity, &
@@ -1962,43 +1975,40 @@ module li_calving
          ! meaning just one 'row' of cells per timestep.  This could be expanded to continue
          ! removing ice backward until all connected too-thin ice has been removed.
          ! Tests of the current implementation show reasonable behavior.
-         do iCell = 1, nCells
-            if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
-               calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-               call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
-                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
-               thickness(iCell) = 0.0_RKIND
-            endif
-         enddo
-         ! TODO: global reduce & reporting on amount of calving generated in this step
+         ! calvingFrontMask must be calculated from the post-calving mask (updated above).
+         call calculate_calving_front_mask(meshPool, geometryPool, calvingFrontMask)
+         if (deltat > 0.0_RKIND) then
+            do iCell = 1, nCells
+               if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
+                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
+                  call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
+                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
+                  thickness(iCell) = 0.0_RKIND
+               endif
+            enddo
+         endif
 
-         ! update mask
+         ! Abandoned floating ice (icebergs) is removed after all calving routines by li_remove_icebergs
+         ! (if config_remove_icebergs is true) and remove_stranded_nondynamic_marine_ice, both called
+         ! from li_calve_ice before the velocity solve.
+
+         block => block % next
+      enddo
+
+      ! thickness was modified on halo cells locally above; make sure halos are consistent before updating mask
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'thickness')
+      call mpas_timer_stop("halo updates")
+
+      ! update mask after thin-ice removal
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
+         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
          err = ior(err, err_tmp)
-
-         ! remove abandoned floating ice (i.e. icebergs) and add it to the calving flux
-         ! Defined as: floating ice (dynamic or non-dynamic) that is not adjacent to dynamic ice (floating or grounded)
-         ! This won't necessarily find all abandoned ice, but in practice it does a pretty good job at general cleanup
-         calvingSubtotal = 0.0_RKIND
-         do iCell = 1, nCells
-           if (li_mask_is_floating_ice(cellMask(iCell))) then
-              ! check neighbors for dynamic ice (floating or grounded)
-              dynamicNeighbor = .false.
-              do iNeighbor = 1, nEdgesOnCell(iCell)
-                 jCell = cellsOnCell(iNeighbor, iCell)
-                 if (li_mask_is_dynamic_ice(cellMask(jCell))) dynamicNeighbor = .true.
-              enddo
-              if (.not. dynamicNeighbor) then  ! calve this ice
-                 calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                 call li_update_calving_thickness_grounded(cellMask(iCell), thickness(iCell), &
-                                                            calvingThicknessGrounded(iCell), do_augment=.true.)
-                 thickness(iCell) = 0.0_RKIND
-                 calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
-              endif
-           endif
-         enddo
-         ! TODO: global reduce & reporting on amount of calving generated in this step
-
          block => block % next
       enddo
 
@@ -2308,6 +2318,14 @@ module li_calving
                endif
              endif
           enddo
+
+          ! Calving can only act on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the
+          ! two cells on each edge touching a front cell when calculating the calving CFL timestep limit.  Ice-free
+          ! cells next to the margin can have nonzero velocity and (extrapolated) stress, so a calvingVelocity there
+          ! could needlessly limit the timestep.  Remove it from ice-free cells.
+          where (.not. li_mask_is_ice(cellMask(:)))
+             calvingVelocity(:) = 0.0_RKIND
+          end where
 
           call mpas_timer_start("halo updates")
           call mpas_dmpar_field_halo_exch(domain, 'calvingVelocity')
@@ -2646,6 +2664,14 @@ module li_calving
           call mpas_log_write("Forcings used in ismip6_retreat have the same timestamp. Check xtime in the input file(s).")
           err = 1
       endif
+
+      ! Calving can only act on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the
+      ! two cells on each edge touching a front cell when calculating the calving CFL timestep limit.  The local ice
+      ! speed added above is nonzero in some ice-free cells next to the margin, so a calvingVelocity there could
+      ! needlessly limit the timestep.  Remove it from ice-free cells.
+      where (.not. li_mask_is_ice(cellMask(:)))
+         calvingVelocity(:) = 0.0_RKIND
+      end where
 
       ! Testing indicates this halo update is necessary before calling li_apply_front_ablation_velocity.
       call mpas_timer_start("halo updates")

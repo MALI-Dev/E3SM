@@ -445,7 +445,7 @@ Default: Defined in namelist_defaults.xml
 
 <entry id="config_calving_speed_limit" type="real"
 	category="calving" group="calving">
-Limit calvingVelocity to this value. Currently only supported for von Mises calving.
+Limit calvingVelocity to this value. Currently only supported for von Mises and eigencalving calving. Because the calving CFL timestep limit is set by the largest calvingVelocity, a value of order twice the maximum ice speed keeps the calving CFL limit from being much more restrictive than the advective CFL limit.
 
 Valid values: Any positive real value
 Default: Defined in namelist_defaults.xml

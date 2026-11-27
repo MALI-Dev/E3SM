@@ -276,7 +276,7 @@
 	                possible_values=".true. or .false."
 		/>
 		<nml_option name="config_calving_speed_limit" type="real" default_value="100.0" units="m s^-1"
-			description="Limit calvingVelocity to this value. Currently only supported for von Mises calving."
+			description="Limit calvingVelocity to this value. Currently only supported for von Mises and eigencalving calving. Because the calving CFL timestep limit is set by the largest calvingVelocity, a value of order twice the maximum ice speed keeps the calving CFL limit from being much more restrictive than the advective CFL limit."
 			possible_values="Any positive real value"
 		/>
 		<nml_option name="config_apply_facemelt_strainrate_enhancement" type="logical" default_value=".false." units="unitless"
