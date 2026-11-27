@@ -1693,6 +1693,15 @@ module li_calving
          ! First calculate the front retreat rate (Levermann eq. 1)
          calvingVelocity(:) = eigencalvingParameter(:) * max(0.0_RKIND, eMax(:)) * max(0.0_RKIND, eMin(:)) ! m/s
 
+         ! eMax and eMin are also calculated in ice-free cells next to the ice margin, where the zero velocity on the
+         ! ice-free side can produce large strain rates that are extensional in both directions.  Calving can only act
+         ! on ice, but li_apply_front_ablation_velocity takes the larger calving velocity of the two cells on each edge
+         ! touching a front cell when calculating the calving CFL timestep limit.  A spurious calvingVelocity in an
+         ! ice-free neighbor of the front can therefore collapse the timestep, so remove it from ice-free cells.
+         where (.not. li_mask_is_ice(cellMask(:)))
+            calvingVelocity(:) = 0.0_RKIND
+         end where
+
          if (config_print_calving_info) then
             call mpas_log_write("calling li_apply_front_ablation_velocity from eigencalving")
          endif
