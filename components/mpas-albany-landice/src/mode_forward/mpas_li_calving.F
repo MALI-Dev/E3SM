@@ -1605,6 +1605,7 @@ module li_calving
       character (len=StrKIND), pointer :: config_damage_calving_threshold_source
       logical, pointer :: config_print_calving_info
       real(kind=RKIND), pointer :: config_calving_thickness
+      real(kind=RKIND), pointer :: config_calving_speed_limit
       real (kind=RKIND), dimension(:), pointer :: eigencalvingParameter
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin
@@ -1637,6 +1638,7 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_calving_eigencalving_parameter_source', &
               config_calving_eigencalving_parameter_source)
       call mpas_pool_get_config(liConfigs, 'config_calving_thickness', config_calving_thickness)
+      call mpas_pool_get_config(liConfigs, 'config_calving_speed_limit', config_calving_speed_limit)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold_source', config_damage_calving_threshold_source)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_method', config_damage_calving_method)
@@ -1692,6 +1694,13 @@ module li_calving
          calvingVelocity(:) = 0.0_RKIND
          ! First calculate the front retreat rate (Levermann eq. 1)
          calvingVelocity(:) = eigencalvingParameter(:) * max(0.0_RKIND, eMax(:)) * max(0.0_RKIND, eMin(:)) ! m/s
+
+         ! The product of the two strain rates in a single cell is very heavy-tailed, so a small fraction of cells
+         ! can have calving velocities orders of magnitude above the ice velocity.  Because the calving CFL timestep
+         ! limit is set by the largest calving velocity, limit it (as for von Mises calving).  Choose
+         ! config_calving_speed_limit of order twice the maximum ice speed to keep the calving CFL limit from being
+         ! much more restrictive than the advective CFL limit.
+         calvingVelocity(:) = min(calvingVelocity(:), config_calving_speed_limit)
 
          ! eMax and eMin are also calculated in ice-free cells next to the ice margin, where the zero velocity on the
          ! ice-free side can produce large strain rates that are extensional in both directions.  Calving can only act
